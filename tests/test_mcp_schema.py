@@ -44,16 +44,16 @@ class TestModels:
 
     def test_server_info(self) -> None:
         info = ServerInfo(
-            server_version="0.6.0",
-            tool_schema_version="0.6.0",
+            server_version="0.6.1",
+            tool_schema_version="0.6.1",
             transport="streamable-http",
-            tool_count=43,
+            tool_count=44,
             write_commands_enabled=False,
             content_commits_enabled=False,
             pr_merge_enabled=False,
         )
         assert info.server_name == "mcp-gh-server"
-        assert info.server_version == "0.6.0"
+        assert info.server_version == "0.6.1"
 
     def test_issue_info(self) -> None:
         issue = IssueInfo(

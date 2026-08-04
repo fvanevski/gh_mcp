@@ -16,6 +16,7 @@ from mcp_gh_server.server import (
     AppContext,
     gh_commit_files,
     gh_create_branch,
+    gh_create_branch_from_sha,
     gh_create_comment,
     gh_create_issue,
     gh_create_label,
@@ -89,10 +90,10 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     result = await gh_server_info(ctx=_context(client))
 
     assert result.server_name == "mcp-gh-server"
-    assert result.server_version == "0.6.0"
-    assert result.tool_schema_version == "0.6.0"
+    assert result.server_version == "0.6.1"
+    assert result.tool_schema_version == "0.6.1"
     assert result.transport == "stdio"
-    assert result.tool_count == 43
+    assert result.tool_count == 44
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert result.pr_merge_enabled is True
@@ -653,6 +654,96 @@ async def test_comment_branch_and_pr_edit_use_raw_writes() -> None:
     assert result.title == "Updated PR"
     assert pr_client.calls[0][1] == {"json_output": False, "stdin_text": None}
     assert pr_client.calls[1][0][:3] == ("pr", "view", "9")
+
+
+@pytest.mark.asyncio
+async def test_issue_branch_rejects_commit_sha_before_client_execution() -> None:
+    client = FakeGhClient([])
+
+    with pytest.raises(ValueError, match="gh_create_branch_from_sha"):
+        await gh_create_branch(
+            "octo",
+            "repo",
+            4,
+            "feature",
+            ctx=_context(client),
+            base="a" * 40,
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_create_branch_from_sha_verifies_commit_and_creates_exact_ref() -> None:
+    base_sha = "A" * 40
+    client = FakeGhClient(
+        [
+            {"sha": "a" * 40},
+            {"ref": "refs/heads/feature/exact", "object": {"sha": "a" * 40}},
+        ]
+    )
+
+    result = await gh_create_branch_from_sha(
+        "octo",
+        "repo",
+        "feature/exact",
+        base_sha,
+        ctx=_context(client),
+    )
+
+    assert result.created is True
+    assert result.base_sha == "a" * 40
+    assert result.ref == "refs/heads/feature/exact"
+    assert result.write_completed is True
+    assert client.calls[0] == (
+        ("api", f"repos/octo/repo/git/commits/{'a' * 40}", "-X", "GET"),
+        {},
+    )
+    assert client.calls[1][0][:3] == ("api", "repos/octo/repo/git/refs", "-X")
+    assert client.payloads == [{"ref": "refs/heads/feature/exact", "sha": "a" * 40}]
+
+
+@pytest.mark.asyncio
+async def test_create_branch_from_sha_recovers_same_ref_without_duplicate_write() -> None:
+    base_sha = "a" * 40
+    client = FakeGhClient(
+        [
+            {"sha": base_sha},
+            RuntimeError("create response was interrupted"),
+            {"ref": "refs/heads/feature", "object": {"sha": base_sha}},
+        ]
+    )
+
+    result = await gh_create_branch_from_sha(
+        "octo", "repo", "feature", base_sha, ctx=_context(client)
+    )
+
+    assert result.created is False
+    assert result.write_completed is False
+    assert result.readback_completed is True
+    assert "no write was performed" in result.message
+    assert client.calls[2] == (
+        ("api", "repos/octo/repo/git/ref/heads/feature", "-X", "GET"),
+        {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_branch_from_sha_never_overwrites_conflicting_ref() -> None:
+    base_sha = "a" * 40
+    other_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            {"sha": base_sha},
+            RuntimeError("Reference already exists"),
+            {"ref": "refs/heads/feature", "object": {"sha": other_sha}},
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match=f"already exists at {other_sha}"):
+        await gh_create_branch_from_sha("octo", "repo", "feature", base_sha, ctx=_context(client))
+
+    assert len(client.calls) == 3
 
 
 @pytest.mark.asyncio

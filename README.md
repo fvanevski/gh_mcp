@@ -39,7 +39,7 @@ direct JSON output or a post-write readback.
 - `gh_list_milestones`: list milestones in a repository.
 - `gh_get_file_contents`: read a complete file at an exact branch, tag, or commit ref.
 
-### Write (16)
+### Write (17)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
@@ -52,7 +52,10 @@ direct JSON output or a post-write readback.
 - `gh_edit_label`: edit an existing label (write, disabled by default).
 - `gh_create_milestone`: create a new milestone (write, disabled by default).
 - `gh_create_comment`: create a comment on an issue or PR (write, disabled by default).
-- `gh_create_branch`: create a branch from an issue's PR (write, disabled by default).
+- `gh_create_branch`: create an issue development branch from a branch-name base
+  (additive write, disabled by default).
+- `gh_create_branch_from_sha`: create a branch at one exact 40-character commit SHA
+  without moving an existing ref (additive write, disabled by default).
 - `gh_edit_pr`: edit an existing pull request (write, disabled by default).
 - `gh_submit_pr_review`: submit a formal review pinned to an exact PR head SHA
   (additive write, disabled by default).
@@ -136,7 +139,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.6.0`, but availability in
+The action surface is version `0.6.1`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -222,7 +225,7 @@ MCP tool invocation reached server: tool=gh_get_pr
 ```
 
 After deploying the current release, delete and reinstall the Plus custom plugin and
-verify `gh_server_info` reports both versions as 0.6.0. An immediate namespace-disabled
+verify `gh_server_info` reports both versions as 0.6.1. An immediate namespace-disabled
 response with no `gh_get_pr` marker still proves rejection occurred in the host before
 the revised server operation. It does not indicate GitHub authentication, repository,
 PR, or readback failure and must not be retried as though a GitHub write partially ran.
@@ -408,6 +411,34 @@ MCP_GH_ALLOW_PR_MERGE=true
 
 Enable only the operations the deployment actually needs; all five default to
 `false`.
+
+### Exact-SHA branch creation
+
+The two branch tools intentionally have different contracts:
+
+- `gh_create_branch` delegates to `gh issue develop`. Its optional `base` is an
+  existing **branch name**, because GitHub CLI resolves that field as a branch. The
+  tool rejects a 40-character commit SHA before starting `gh` and directs the caller
+  to the exact-SHA primitive.
+- `gh_create_branch_from_sha` accepts no issue number or moving base name. It requires
+  an exact 40-character `base_sha`, verifies that exact commit in the target
+  repository, and creates only `refs/heads/<name>` through GitHub's Git refs API.
+
+Use `gh_create_branch_from_sha` whenever the base is an immutable reviewed commit.
+The operation is additive: it never force-updates, moves, overwrites, or deletes an
+existing ref. If GitHub rejects or interrupts the create response, the tool reads the
+requested branch. A branch already at the requested SHA is returned as a safe
+no-write result; a branch at any other SHA is an error and remains unchanged. An
+unexpected successful response produces an explicit partial-success warning telling
+the caller to read the branch and not retry automatically.
+
+Both tools use the ordinary server write gate, repository/owner allowlists, and the
+`branch_create` operation policy. Their schemas contain canonical repository bounds,
+positive issue-number constraints where applicable, bounded branch names, and an
+exact SHA pattern. They are classified as additive external writes and contain no
+generic command input, nested MCP elicitation, interactive stdin, force option, ref
+update, or issue-content mutation. Host approval remains the only interactive approval
+layer.
 
 `gh_commit_files` accepts complete UTF-8 file contents, validates repository-relative
 paths, and creates all supplied files in one Git tree and one commit. It conditionally

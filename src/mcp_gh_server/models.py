@@ -350,6 +350,16 @@ class BranchCreate(WriteResult):
     message: str
 
 
+class BranchCreateFromSha(WriteResult):
+    """Result of creating a branch at an immutable commit."""
+
+    name: str
+    base_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    ref: str
+    created: bool
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # Release tools
 # ---------------------------------------------------------------------------
