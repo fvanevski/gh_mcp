@@ -1,0 +1,40 @@
+# Python / uv
+.venv/
+
+# Byte-compiled / optimized / compiled
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.dist-info/
+*.egg-info/
+dist/
+build/
+
+# Pytest
+.pytest_cache/
+.ruff_cache/
+
+# Environment files (may contain secrets)
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary / scratch files
+*.tmp
+*.log
+
+# Qwen Code files
+.qwen/

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-gh-server"
+version = "0.1.0"
+description = "MCP 2.0 server that wraps the gh CLI for GitHub operations"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Filip" }]
+dependencies = [
+  "mcp[cli]==2.0.0",
+  "pydantic-settings==2.14.2",
+  "python-dotenv==1.2.2",
+]
+
+[project.scripts]
+mcp-gh = "mcp_gh_server.__main__:main"
+
+[dependency-groups]
+dev = [
+  "mypy==2.3.0",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "ruff==0.16.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_gh_server"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["mcp_gh_server"]
+mypy_path = "src"
+no_implicit_optional = false
