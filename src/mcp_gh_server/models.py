@@ -198,9 +198,16 @@ class RepositoryFile(BaseModel):
 class CommitFile(BaseModel):
     """One file to create or replace in an atomic commit."""
 
-    path: str
-    content: str
-    mode: Literal["100644", "100755", "120000"] = "100644"
+    path: str = Field(
+        description="Repository-relative path to create or replace.",
+        min_length=1,
+        max_length=4096,
+    )
+    content: str = Field(description="Complete UTF-8 contents for the file.")
+    mode: Literal["100644", "100755", "120000"] = Field(
+        default="100644",
+        description="Git file mode: regular, executable, or symbolic link.",
+    )
 
 
 class CommitFilesResult(WriteResult):

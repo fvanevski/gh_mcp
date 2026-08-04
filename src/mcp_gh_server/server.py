@@ -6,6 +6,7 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import os
 import re
 import shlex
@@ -13,13 +14,15 @@ import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote, urlparse
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp_types import ToolAnnotations
+from pydantic import Field
 
+from . import __version__
 from .gh_client import GhClient
 from .models import (
     BranchCreate,
@@ -70,6 +73,8 @@ _OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 _OBJECT_SHA_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(slots=True)
 class AppContext:
@@ -99,7 +104,7 @@ mcp = MCPServer(
         "also enforces deployment repository and operation policy."
     ),
     lifespan=app_lifespan,
-    version="0.1.0",
+    version=__version__,
 )
 
 
@@ -908,17 +913,41 @@ async def gh_list_repos(
     )
 
 
-@mcp.tool(annotations=_READ_EXTERNAL)
+@mcp.tool(
+    title="Read repository file",
+    description=(
+        "Read-only: fetch the complete contents and blob metadata for one repository "
+        "file at a branch, tag, or commit ref. This tool never modifies GitHub."
+    ),
+    annotations=_READ_EXTERNAL,
+)
 async def gh_get_file_contents(
-    owner: str,
-    repo: str,
-    path: str,
-    ref: str,
+    owner: Annotated[
+        str,
+        Field(description="GitHub repository owner or organization login.", min_length=1),
+    ],
+    repo: Annotated[
+        str,
+        Field(description="GitHub repository name without the owner prefix.", min_length=1),
+    ],
+    path: Annotated[
+        str,
+        Field(description="Repository-relative path of the file to read.", min_length=1),
+    ],
+    ref: Annotated[
+        str,
+        Field(
+            description="Branch, tag, or full commit SHA to read without modifying it.",
+            min_length=1,
+            max_length=1024,
+        ),
+    ],
     *,
     ctx: Context[AppContext],
 ) -> RepositoryFile:
     """Read the complete contents of one repository file at an exact ref."""
 
+    logger.info("MCP tool invocation reached server: tool=gh_get_file_contents")
     app = _app(ctx)
     _validate_repository(owner, repo)
     _validate_repo_path(path)
@@ -965,14 +994,47 @@ async def gh_get_file_contents(
     )
 
 
-@mcp.tool(annotations=_MUTATE_EXTERNAL)
+@mcp.tool(
+    title="Commit repository files atomically",
+    description=(
+        "Write action: create or replace complete UTF-8 files in one Git commit and "
+        "conditionally advance one branch only when its head matches expected_head_sha. "
+        "This tool requires host approval and server-side content-commit authorization."
+    ),
+    annotations=_MUTATE_EXTERNAL,
+)
 async def gh_commit_files(
-    owner: str,
-    repo: str,
-    branch: str,
-    expected_head_sha: str,
-    files: list[CommitFile],
-    commit_message: str,
+    owner: Annotated[
+        str,
+        Field(description="GitHub repository owner or organization login.", min_length=1),
+    ],
+    repo: Annotated[
+        str,
+        Field(description="GitHub repository name without the owner prefix.", min_length=1),
+    ],
+    branch: Annotated[
+        str,
+        Field(description="Existing branch to advance conditionally.", min_length=1),
+    ],
+    expected_head_sha: Annotated[
+        str,
+        Field(
+            description="Exact 40-character branch head SHA required before the write.",
+            pattern=r"^[0-9A-Fa-f]{40}$",
+        ),
+    ],
+    files: Annotated[
+        list[CommitFile],
+        Field(
+            description="Complete UTF-8 file replacements to include in the atomic commit.",
+            min_length=1,
+            max_length=1000,
+        ),
+    ],
+    commit_message: Annotated[
+        str,
+        Field(description="Git commit message.", min_length=1, max_length=65_536),
+    ],
     *,
     ctx: Context[AppContext],
 ) -> CommitFilesResult:
@@ -983,6 +1045,7 @@ async def gh_commit_files(
     repository paths; deletion is intentionally unsupported.
     """
 
+    logger.info("MCP tool invocation reached server: tool=gh_commit_files")
     app = _app(ctx)
     _require_write_enabled(app, owner, repo, action="content_commit")
     _validate_branch(branch)

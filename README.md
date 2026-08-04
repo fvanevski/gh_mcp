@@ -120,6 +120,61 @@ environment. Run `uv sync --dev` first so the project has a generated
 For Qwen Code or another host using the common `mcpServers` shape, keep
 the same command/args and place the entry under `mcpServers`.
 
+### ChatGPT plan and gateway limitations
+
+The repository-content action surface is version `0.2.0`, but availability in
+ChatGPT depends on the account plan and integration surface:
+
+- OpenAI currently limits full custom MCP apps, including write/modify actions,
+  to Business and Enterprise/Edu workspaces.
+- A ChatGPT Plus user may be able to install or discover a custom plugin, but the
+  plugin's MCP gateway is a separate, more limited integration. This project does
+  not assume that gateway supports arbitrary custom MCP tools or write actions.
+- Seeing `gh_get_file_contents` or `gh_commit_files` in a discovery response proves
+  only that the server advertised the tools. It does not prove that the Plus plugin
+  gateway will route either invocation to the server.
+
+The Business/Enterprise **Action control**, action-refresh, and workspace-publish
+instructions do not apply to a Plus account. If the Plus gateway reports that the
+plugin or `gh_CLI` namespace has been disabled, there may be no user-accessible
+action setting that can re-enable the tool in that conversation.
+
+#### Tentative Plus schema-refresh procedure
+
+Limited testing indicates that the Plus custom-plugin gateway may retain a cached
+tool schema after the backend changes. Deleting and reinstalling the custom plugin
+appears to force rediscovery of the revised tools and may be necessary when tool
+names, parameters, annotations, or result schemas change:
+
+1. Deploy the revised backend and restart the MCP server.
+2. Delete the existing custom plugin from ChatGPT Plus.
+3. Reinstall the plugin so the gateway scans the backend's current tool definitions.
+4. Test the tools in a new conversation.
+
+This procedure is based on observed behavior rather than a documented compatibility
+guarantee. A backend restart alone may leave the Plus gateway using stale tool
+definitions, while deletion and reinstallation may still fail if the gateway does
+not support a particular tool or capability.
+
+See OpenAI's current
+[MCP app availability](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)
+and
+[plugin availability](https://help.openai.com/en/articles/20001256).
+
+At `INFO`, both repository-content tools log a content-free reachability marker:
+
+```text
+MCP tool invocation reached server: tool=gh_get_file_contents
+```
+
+If ChatGPT reports that the app or namespace is disabled and this marker is absent,
+the call was rejected by ChatGPT's plugin gateway before reaching the MCP server.
+Restarting `gh`, changing the GitHub token, or changing this server's command
+implementation cannot repair that host-side state. On Plus, full validation should
+therefore use a standard MCP client such as the local stdio or Streamable HTTP
+configurations above; passing those checks does not establish compatibility with
+ChatGPT's limited custom-plugin gateway.
+
 ## Write-command policy
 
 Write execution is off by default:
@@ -134,10 +189,11 @@ To enable writes:
 MCP_GH_ALLOW_WRITE_COMMANDS=true
 ```
 
-Write tools do not initiate nested MCP elicitation. The MCP host (including
-ChatGPT) is responsible for presenting its native action approval. The server
-independently enforces the write-enable flag, optional repository policy, and
-high-risk operation switches before starting `gh`.
+Write tools do not initiate nested MCP elicitation. A compatible MCP host is
+responsible for presenting any user-facing action approval. The ChatGPT Plus
+custom-plugin gateway may reject write tools instead of offering approval. The
+server independently enforces the write-enable flag, optional repository policy,
+and high-risk operation switches before starting `gh`.
 
 Limit enabled writes to explicit repositories or owners:
 
