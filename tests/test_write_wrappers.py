@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,10 @@ from mcp_gh_server.server import (
     gh_edit_label,
     gh_edit_pr,
     gh_get_file_contents,
+    gh_get_pr_diff,
     gh_list_milestones,
+    gh_list_pr_commits,
+    gh_list_pr_files,
     gh_run_workflow,
     gh_server_info,
     gh_upsert_label,
@@ -78,10 +82,10 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     result = await gh_server_info(ctx=_context(client))
 
     assert result.server_name == "mcp-gh-server"
-    assert result.server_version == "0.3.0"
-    assert result.tool_schema_version == "0.3.0"
+    assert result.server_version == "0.4.0"
+    assert result.tool_schema_version == "0.4.0"
     assert result.transport == "stdio"
-    assert result.tool_count == 35
+    assert result.tool_count == 38
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert client.calls == []
@@ -602,6 +606,125 @@ async def test_get_file_contents_returns_binary_as_base64() -> None:
     assert result.content == "/wA="
     assert result.encoding == "base64"
     assert result.size == 2
+
+
+@pytest.mark.asyncio
+async def test_get_pr_diff_uses_exact_shas_and_returns_bounded_fingerprint() -> None:
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    content = "diff --git a/a.txt b/a.txt\n+replacement\n"
+    client = FakeGhClient(
+        [
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+            {"stdout": content},
+        ]
+    )
+
+    result = await gh_get_pr_diff("octo", "repo", 224, ctx=_context(client), max_bytes=20)
+
+    assert result.base_sha == base_sha
+    assert result.head_sha == head_sha
+    assert result.truncated is True
+    assert result.bytes_returned <= 20
+    assert result.total_bytes == len(content.encode())
+    assert result.sha256 == hashlib.sha256(content.encode()).hexdigest()
+    assert client.calls[0][0] == (
+        "api",
+        "repos/octo/repo/pulls/224",
+        "-X",
+        "GET",
+    )
+    assert client.calls[1] == (
+        (
+            "api",
+            f"repos/octo/repo/compare/{base_sha}...{head_sha}",
+            "-X",
+            "GET",
+            "-H",
+            "Accept: application/vnd.github.v3.diff",
+        ),
+        {"json_output": False},
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_pr_files_is_explicit_get_and_bounded_page() -> None:
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+            [
+                {
+                    "filename": "src/app.py",
+                    "status": "modified",
+                    "additions": 2,
+                    "deletions": 1,
+                    "changes": 3,
+                    "sha": "c" * 40,
+                    "patch": "@@ -1 +1 @@",
+                }
+            ],
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+        ]
+    )
+
+    result = await gh_list_pr_files("octo", "repo", 224, ctx=_context(client), page=2, per_page=10)
+
+    assert result.base_sha == base_sha
+    assert result.files[0].filename == "src/app.py"
+    assert result.files[0].patch_bytes_returned == len(b"@@ -1 +1 @@")
+    assert result.has_more is False
+    assert client.calls[1][0][-6:] == ("-X", "GET", "-f", "page=2", "-f", "per_page=10")
+
+
+@pytest.mark.asyncio
+async def test_list_pr_commits_normalizes_nested_api_result() -> None:
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    commit_sha = "c" * 40
+    client = FakeGhClient(
+        [
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+            [
+                {
+                    "sha": commit_sha,
+                    "html_url": f"https://github.com/octo/repo/commit/{commit_sha}",
+                    "author": {"login": "octocat"},
+                    "committer": {"login": "hubot"},
+                    "commit": {
+                        "message": "Reviewable change",
+                        "author": {"name": "Octo Cat", "date": "2026-08-04T01:00:00Z"},
+                        "committer": {"date": "2026-08-04T01:01:00Z"},
+                    },
+                }
+            ],
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+        ]
+    )
+
+    result = await gh_list_pr_commits("octo", "repo", 224, ctx=_context(client), per_page=5)
+
+    assert result.commits[0].sha == commit_sha
+    assert result.commits[0].author_login == "octocat"
+    assert result.commits[0].message == "Reviewable change"
+    assert result.has_more is False
+
+
+@pytest.mark.asyncio
+async def test_list_pr_files_rejects_snapshot_drift() -> None:
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+            [],
+            {"base": {"sha": base_sha}, "head": {"sha": "c" * 40}},
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="changed during the read"):
+        await gh_list_pr_files("octo", "repo", 224, ctx=_context(client))
 
 
 @pytest.mark.asyncio

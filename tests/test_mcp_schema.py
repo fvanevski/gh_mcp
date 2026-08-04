@@ -6,6 +6,7 @@ from mcp_gh_server.models import (
     IssueCreate,
     IssueInfo,
     PullRequestCreate,
+    PullRequestDiff,
     PullRequestInfo,
     ReleaseInfo,
     RepoCreate,
@@ -35,15 +36,15 @@ class TestModels:
 
     def test_server_info(self) -> None:
         info = ServerInfo(
-            server_version="0.3.0",
-            tool_schema_version="0.3.0",
+            server_version="0.4.0",
+            tool_schema_version="0.4.0",
             transport="streamable-http",
-            tool_count=35,
+            tool_count=38,
             write_commands_enabled=False,
             content_commits_enabled=False,
         )
         assert info.server_name == "mcp-gh-server"
-        assert info.server_version == "0.3.0"
+        assert info.server_version == "0.4.0"
 
     def test_issue_info(self) -> None:
         issue = IssueInfo(
@@ -69,6 +70,21 @@ class TestModels:
         )
         assert pr.head_ref == "feature-branch"
         assert pr.additions == 0
+
+    def test_pull_request_diff(self) -> None:
+        result = PullRequestDiff(
+            number=224,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            format="diff",
+            content="diff --git a/a b/a",
+            truncated=False,
+            bytes_returned=20,
+            total_bytes=20,
+            sha256="c" * 64,
+        )
+        assert result.number == 224
+        assert result.truncated is False
 
     def test_repo_info(self) -> None:
         repo = RepoInfo(

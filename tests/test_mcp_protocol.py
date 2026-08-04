@@ -87,11 +87,31 @@ import json, sys
 
 args = sys.argv[1:]
 blob_sha = "b" * 40
+base_sha = "c" * 40
+head_sha = "d" * 40
 if args[:2] == ["api", "repos/octo/repo/contents/scripts/drain_index_jobs.py"]:
     assert args[-4:] == ["-X", "GET", "-f", "ref=" + "a" * 40]
     print(json.dumps({"type": "file", "sha": blob_sha}))
 elif args[:2] == ["api", f"repos/octo/repo/git/blobs/{blob_sha}"]:
     print(json.dumps({"encoding": "base64", "content": "cHJpbnQoJ29rJykK"}))
+elif args[:2] == ["api", "repos/octo/repo/pulls/224"]:
+    assert args[-2:] == ["-X", "GET"]
+    print(json.dumps({"base": {"sha": base_sha}, "head": {"sha": head_sha}}))
+elif args[:2] == ["api", f"repos/octo/repo/compare/{base_sha}...{head_sha}"]:
+    assert "Accept: application/vnd.github.v3.diff" in args
+    print("diff --git a/file.txt b/file.txt\n+reviewed")
+elif args[:2] == ["api", "repos/octo/repo/pulls/224/files"]:
+    assert "-X" in args and args[args.index("-X") + 1] == "GET"
+    print(json.dumps([{
+        "filename": "file.txt", "status": "modified", "additions": 1,
+        "deletions": 0, "changes": 1, "sha": "e" * 40
+    }]))
+elif args[:2] == ["api", "repos/octo/repo/pulls/224/commits"]:
+    assert "-X" in args and args[args.index("-X") + 1] == "GET"
+    print(json.dumps([{
+        "sha": head_sha, "html_url": "https://github.com/octo/repo/commit/" + head_sha,
+        "commit": {"message": "Reviewed commit", "author": {}, "committer": {}}
+    }]))
 elif args[:2] == ["workflow", "list"]:
     print(json.dumps([{
         "id": 7,
@@ -110,10 +130,13 @@ else:
 async def test_registered_tool_schemas_and_annotations() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 35
+    assert len(tools) == 38
     assert "gh_server_info" in tools
     assert "gh_get_file_contents" in tools
     assert "gh_commit_files" in tools
+    assert "gh_get_pr_diff" in tools
+    assert "gh_list_pr_files" in tools
+    assert "gh_list_pr_commits" in tools
     assert "approval" not in tools["gh_create_issue"].input_schema["properties"]
     assert "force" not in tools["gh_create_label"].input_schema["properties"]
     assert tools["gh_upsert_label"].annotations.destructive_hint is True
@@ -128,6 +151,16 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert tools["gh_get_file_contents"].title == "Read repository file"
     assert tools["gh_get_file_contents"].description.startswith("Read-only:")
     assert tools["gh_get_file_contents"].input_schema["properties"]["ref"]["maxLength"] == 1024
+    assert tools["gh_get_pr_diff"].annotations.read_only_hint is True
+    assert tools["gh_get_pr_diff"].annotations.destructive_hint is False
+    assert (
+        tools["gh_get_pr_diff"].input_schema["properties"]["max_bytes"]["anyOf"][0]["maximum"]
+        == 1_000_000
+    )
+    assert (
+        tools["gh_list_pr_files"].input_schema["properties"]["per_page"]["anyOf"][0]["maximum"]
+        == 100
+    )
     assert tools["gh_commit_files"].title == "Commit repository files atomically"
     commit_schema = tools["gh_commit_files"].input_schema
     assert commit_schema["properties"]["expected_head_sha"]["pattern"]
@@ -171,7 +204,7 @@ async def test_stdio_write_denial_does_not_elicit_or_lock_session() -> None:
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is True
         tools_after_failure = await session.list_tools()
-        assert len(tools_after_failure.tools) == 35
+        assert len(tools_after_failure.tools) == 38
 
 
 @pytest.mark.asyncio
@@ -207,7 +240,7 @@ async def test_stdio_write_executes_once_without_elicitation_using_fake_gh(tmp_p
         )
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is False
-        assert len((await session.list_tools()).tools) == 35
+        assert len((await session.list_tools()).tools) == 38
 
 
 @pytest.mark.asyncio
@@ -281,7 +314,7 @@ async def test_streamable_http_write_denial_keeps_session_usable(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is True
-            assert len((await session.list_tools()).tools) == 35
+            assert len((await session.list_tools()).tools) == 38
     finally:
         get_settings.cache_clear()
 
@@ -314,7 +347,7 @@ async def test_streamable_http_write_executes_without_nested_input_round(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is False
-            assert len((await session.list_tools()).tools) == 35
+            assert len((await session.list_tools()).tools) == 38
     finally:
         get_settings.cache_clear()
 
@@ -352,16 +385,16 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             ClientSession(*streams) as session,
         ):
             initialized = await session.initialize()
-            assert initialized.server_info.version == "0.3.0"
+            assert initialized.server_info.version == "0.4.0"
 
             server_info = await session.call_tool("gh_server_info", {})
             assert server_info.is_error is False
             assert server_info.structured_content == {
                 "server_name": "mcp-gh-server",
-                "server_version": "0.3.0",
-                "tool_schema_version": "0.3.0",
+                "server_version": "0.4.0",
+                "tool_schema_version": "0.4.0",
                 "transport": "streamable-http",
-                "tool_count": 35,
+                "tool_count": 38,
                 "write_commands_enabled": False,
                 "content_commits_enabled": False,
             }
@@ -369,6 +402,29 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert file_result.is_error is False
             assert file_result.structured_content["content"] == "print('ok')\n"
+
+            diff_result = await session.call_tool(
+                "gh_get_pr_diff",
+                {"owner": "octo", "repo": "repo", "number": 224},
+            )
+            assert diff_result.is_error is False
+            assert diff_result.structured_content["base_sha"] == "c" * 40
+            assert diff_result.structured_content["head_sha"] == "d" * 40
+            assert diff_result.structured_content["truncated"] is False
+
+            files_result = await session.call_tool(
+                "gh_list_pr_files",
+                {"owner": "octo", "repo": "repo", "number": 224},
+            )
+            assert files_result.is_error is False
+            assert files_result.structured_content["files"][0]["filename"] == "file.txt"
+
+            commits_result = await session.call_tool(
+                "gh_list_pr_commits",
+                {"owner": "octo", "repo": "repo", "number": 224},
+            )
+            assert commits_result.is_error is False
+            assert commits_result.structured_content["commits"][0]["message"] == "Reviewed commit"
 
             tools_after_file = await session.list_tools()
             assert {tool.name for tool in tools_after_file.tools} >= {
@@ -403,15 +459,18 @@ async def test_streamable_http_content_route_keeps_namespace_live(
 
             server_info_after_denial = await session.call_tool("gh_server_info", {})
             assert server_info_after_denial.is_error is False
-            assert server_info_after_denial.structured_content["server_version"] == "0.3.0"
+            assert server_info_after_denial.structured_content["server_version"] == "0.4.0"
 
             second_file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert second_file_result.is_error is False
-            assert len((await session.list_tools()).tools) == 35
+            assert len((await session.list_tools()).tools) == 38
     finally:
         get_settings.cache_clear()
 
     messages = [record.getMessage() for record in caplog.records]
     assert sum("tool=gh_get_file_contents" in message for message in messages) == 2
+    assert sum("tool=gh_get_pr_diff" in message for message in messages) == 1
+    assert sum("tool=gh_list_pr_files" in message for message in messages) == 1
+    assert sum("tool=gh_list_pr_commits" in message for message in messages) == 1
     assert sum("tool=gh_commit_files" in message for message in messages) == 1
     assert sum("tool=gh_server_info" in message for message in messages) == 2

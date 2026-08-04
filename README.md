@@ -6,7 +6,7 @@ direct JSON output or a post-write readback.
 
 ## Tools
 
-### Read-only (21)
+### Read-only (24)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -17,7 +17,11 @@ direct JSON output or a post-write readback.
 - `gh_list_issues`: list issues in a repository with filters.
 - `gh_get_issue`: get details of a specific issue or pull request.
 - `gh_list_prs`: list pull requests in a repository.
-- `gh_get_pr`: get details of a specific pull request.
+- `gh_get_pr`: get details and exact base/head commit SHAs for a pull request.
+- `gh_get_pr_diff`: read a bounded diff or patch pinned to the PR's exact base and
+  head SHAs, with truncation metadata and a SHA-256 fingerprint.
+- `gh_list_pr_files`: list one bounded page of changed files and patch fragments.
+- `gh_list_pr_commits`: list one bounded page of commits in a pull request.
 - `gh_get_repo`: get details of a specific repository.
 - `gh_list_repos`: list repositories for a user or organization.
 - `gh_list_releases`: list releases in a repository.
@@ -124,7 +128,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.3.0`, but availability in
+The action surface is version `0.4.0`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -179,6 +183,8 @@ At `INFO`, both repository-content tools log a content-free reachability marker:
 MCP tool invocation reached server: tool=gh_get_file_contents
 ```
 
+The three focused PR-review tools emit the same marker using their own tool name.
+
 The version probe emits the equivalent marker with `tool=gh_server_info`.
 
 If ChatGPT reports that the app or namespace is disabled and this marker is absent,
@@ -188,6 +194,49 @@ implementation cannot repair that host-side state. On Plus, full validation shou
 therefore use a standard MCP client such as the local stdio or Streamable HTTP
 configurations above; passing those checks does not establish compatibility with
 ChatGPT's limited custom-plugin gateway.
+
+## Read-only pull-request review without checkout
+
+The server deliberately does not expose a generic command executor or a standalone
+checkout operation. A checkout performed by this backend would exist on the MCP
+server's filesystem, not in ChatGPT's local environment, and a path alone would not
+provide a safe review workspace. The focused review tools instead operate through
+noninteractive GitHub reads and return bounded structured results:
+
+1. Call `gh_get_pr` and record its exact `base_sha` and `head_sha`.
+2. Call `gh_get_pr_diff` for a unified `diff` or email-style `patch`. The server
+   resolves the PR's object IDs and reads the comparison by those immutable SHAs.
+3. Check `truncated`, `bytes_returned`, `total_bytes`, and `sha256`. A truncated
+   result is not a complete diff and must not be described as one.
+4. Page through `gh_list_pr_files` and `gh_list_pr_commits` as needed. The server
+   rechecks the SHA pair after each numbered-PR page and rejects the result if the
+   snapshot changed during the read. GitHub may omit or truncate an individual
+   file's `patch`, and the server also bounds patch fragments and commit messages;
+   inspect their truncation fields and use the unified diff plus
+   `gh_get_file_contents` at the returned SHAs for complete file inspection.
+5. If the PR changes during review, restart from the new exact SHA pair rather than
+   combining observations from different snapshots.
+
+`gh_get_pr_diff` returns at most `MCP_GH_MAX_PR_DIFF_BYTES` UTF-8 bytes. A caller may
+request a smaller limit, but cannot raise the deployment cap above 1,000,000 bytes:
+
+```dotenv
+MCP_GH_MAX_PR_DIFF_BYTES=500000
+MCP_GH_MAX_PR_FILE_PATCH_BYTES=8000
+MCP_GH_MAX_PR_COMMIT_MESSAGE_BYTES=4000
+```
+
+This workflow is valid for source-level, read-only review. It does not check out a
+worktree, inspect generated or untracked files, install dependencies, build code, or
+run tests. A validation record should state that boundary explicitly, for example:
+
+> Reviewed the pull request using GitHub metadata, diff data, and repository file
+> contents pinned to the recorded base and head SHAs. No local checkout, build, or
+> test execution was performed.
+
+If acceptance requires execution, use a separate isolated repository runner with a
+managed workspace, bounded commands, cancellation, cleanup, and exact-head-SHA
+validation. The read-only MCP tools are not a substitute for that environment.
 
 ## Write-command policy
 

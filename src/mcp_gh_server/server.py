@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 import logging
 import os
@@ -35,8 +36,13 @@ from .models import (
     LabelCreate,
     LabelEdit,
     MilestoneCreate,
+    PullRequestCommit,
+    PullRequestCommitsPage,
     PullRequestCreate,
+    PullRequestDiff,
     PullRequestEdit,
+    PullRequestFile,
+    PullRequestFilesPage,
     PullRequestInfo,
     ReleaseCreate,
     ReleaseInfo,
@@ -705,7 +711,7 @@ async def gh_list_prs(
     fields = (
         "title,url,number,state,author,body,createdAt,updatedAt,closedAt,"
         "labels,comments,headRefName,baseRefName,isDraft,"
-        "additions,deletions,changedFiles"
+        "headRefOid,baseRefOid,additions,deletions,changedFiles"
     )
     result = await app.client.run(
         "pr",
@@ -736,13 +742,13 @@ async def gh_get_pr(
     *,
     ctx: Context[AppContext],
 ) -> PullRequestInfo:
-    """Get details of a specific pull request."""
+    """Get details and immutable base/head SHAs for a specific pull request."""
 
     app = _app(ctx)
     fields = (
         "title,url,number,state,author,body,createdAt,updatedAt,closedAt,"
         "labels,comments,headRefName,baseRefName,isDraft,"
-        "additions,deletions,changedFiles"
+        "headRefOid,baseRefOid,additions,deletions,changedFiles"
     )
     result = await app.client.run(
         "pr",
@@ -758,6 +764,278 @@ async def gh_get_pr(
     if isinstance(author_obj, dict):
         result["author"] = author_obj.get("login")
     return PullRequestInfo.model_validate(result)
+
+
+async def _get_pr_shas(app: AppContext, owner: str, repo: str, number: int) -> tuple[str, str]:
+    """Resolve and validate the immutable base and head object IDs for a PR."""
+
+    metadata = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/pulls/{number}",
+        "-X",
+        "GET",
+    )
+    if not isinstance(metadata, dict):
+        raise RuntimeError("GitHub did not return pull-request metadata")
+    base = metadata.get("base")
+    head = metadata.get("head")
+    base_sha = base.get("sha") if isinstance(base, dict) else None
+    head_sha = head.get("sha") if isinstance(head, dict) else None
+    if not isinstance(base_sha, str) or not _OBJECT_SHA_RE.fullmatch(base_sha):
+        raise RuntimeError("GitHub did not return a valid pull-request base SHA")
+    if not isinstance(head_sha, str) or not _OBJECT_SHA_RE.fullmatch(head_sha):
+        raise RuntimeError("GitHub did not return a valid pull-request head SHA")
+    return base_sha, head_sha
+
+
+async def _verify_pr_shas(
+    app: AppContext,
+    owner: str,
+    repo: str,
+    number: int,
+    expected: tuple[str, str],
+) -> None:
+    """Reject a numbered-PR read if its snapshot changed during the request."""
+
+    if await _get_pr_shas(app, owner, repo, number) != expected:
+        raise RuntimeError(
+            "Pull request base or head changed during the read; retry from a fresh snapshot"
+        )
+
+
+def _bounded_utf8(content: str, limit: int) -> tuple[str, int, int, bool, str]:
+    """Bound text at a complete UTF-8 code point and fingerprint the full response."""
+
+    encoded = content.encode("utf-8")
+    total_bytes = len(encoded)
+    digest = hashlib.sha256(encoded).hexdigest()
+    if total_bytes <= limit:
+        return content, total_bytes, total_bytes, False, digest
+    bounded = encoded[:limit].decode("utf-8", errors="ignore")
+    returned_bytes = len(bounded.encode("utf-8"))
+    return bounded, returned_bytes, total_bytes, True, digest
+
+
+@mcp.tool(
+    title="Read pull request diff",
+    description=(
+        "Read-only: return a bounded unified diff or patch for the exact immutable base "
+        "and head commit SHAs currently identified by a pull request. The result reports "
+        "truncation, byte counts, and a SHA-256 fingerprint. This tool never checks out code, "
+        "runs tests, requests approval, or modifies GitHub."
+    ),
+    annotations=_READ_EXTERNAL,
+)
+async def gh_get_pr_diff(
+    owner: Annotated[str, Field(min_length=1, description="GitHub repository owner.")],
+    repo: Annotated[str, Field(min_length=1, description="GitHub repository name.")],
+    number: Annotated[int, Field(ge=1, description="Pull request number.")],
+    *,
+    ctx: Context[AppContext],
+    format: Annotated[
+        Literal["diff", "patch"],
+        Field(description="Unified diff or email-style patch output."),
+    ] = "diff",
+    max_bytes: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=1_000_000,
+            description=(
+                "Maximum UTF-8 bytes returned, capped by MCP_GH_MAX_PR_DIFF_BYTES. "
+                "Omit to use the server cap."
+            ),
+        ),
+    ] = None,
+) -> PullRequestDiff:
+    """Return a bounded diff for the immutable object IDs resolved from a PR."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_get_pr_diff")
+    app = _app(ctx)
+    _validate_repository(owner, repo)
+    base_sha, head_sha = await _get_pr_shas(app, owner, repo, number)
+    accept = (
+        "application/vnd.github.v3.diff" if format == "diff" else "application/vnd.github.v3.patch"
+    )
+    response = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/compare/{base_sha}...{head_sha}",
+        "-X",
+        "GET",
+        "-H",
+        f"Accept: {accept}",
+        json_output=False,
+    )
+    content = response.get("stdout") if isinstance(response, dict) else None
+    if not isinstance(content, str):
+        raise RuntimeError("GitHub did not return pull-request diff text")
+    limit = min(max_bytes or app.settings.max_pr_diff_bytes, app.settings.max_pr_diff_bytes)
+    bounded, returned, total, truncated, digest = _bounded_utf8(content, limit)
+    return PullRequestDiff(
+        number=number,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        format=format,
+        content=bounded,
+        truncated=truncated,
+        bytes_returned=returned,
+        total_bytes=total,
+        sha256=digest,
+    )
+
+
+@mcp.tool(
+    title="List pull request files",
+    description=(
+        "Read-only: return one bounded page of files changed by a pull request, together "
+        "with its exact base and head SHAs. A file patch may be absent or truncated by "
+        "GitHub; use gh_get_pr_diff for the bounded unified diff. This tool never modifies GitHub."
+    ),
+    annotations=_READ_EXTERNAL,
+)
+async def gh_list_pr_files(
+    owner: Annotated[str, Field(min_length=1, description="GitHub repository owner.")],
+    repo: Annotated[str, Field(min_length=1, description="GitHub repository name.")],
+    number: Annotated[int, Field(ge=1, description="Pull request number.")],
+    *,
+    ctx: Context[AppContext],
+    page: Annotated[int, Field(ge=1, le=10_000, description="One-based result page.")] = 1,
+    per_page: Annotated[
+        int | None,
+        Field(ge=1, le=100, description="Results per page, capped by server policy."),
+    ] = None,
+) -> PullRequestFilesPage:
+    """Return one explicitly bounded page of changed files."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_list_pr_files")
+    app = _app(ctx)
+    _validate_repository(owner, repo)
+    limit = min(app.client.clamp_max_results(per_page), 100)
+    base_sha, head_sha = await _get_pr_shas(app, owner, repo, number)
+    result = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/pulls/{number}/files",
+        "-X",
+        "GET",
+        "-f",
+        f"page={page}",
+        "-f",
+        f"per_page={limit}",
+    )
+    await _verify_pr_shas(app, owner, repo, number, (base_sha, head_sha))
+    items = result if isinstance(result, list) else []
+    files: list[PullRequestFile] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        patch = item.get("patch")
+        patch_text = patch if isinstance(patch, str) else None
+        patch_returned = 0
+        patch_truncated = False
+        if patch_text is not None:
+            patch_text, patch_returned, _, patch_truncated, _ = _bounded_utf8(
+                patch_text, app.settings.max_pr_file_patch_bytes
+            )
+        files.append(
+            PullRequestFile.model_validate(
+                {
+                    **item,
+                    "patch": patch_text,
+                    "patch_truncated": patch_truncated,
+                    "patch_bytes_returned": patch_returned,
+                }
+            )
+        )
+    return PullRequestFilesPage(
+        number=number,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        page=page,
+        per_page=limit,
+        has_more=len(files) == limit,
+        files=files,
+    )
+
+
+@mcp.tool(
+    title="List pull request commits",
+    description=(
+        "Read-only: return one bounded page of commits in a pull request, together with "
+        "its exact base and head SHAs. This tool never checks out code or modifies GitHub."
+    ),
+    annotations=_READ_EXTERNAL,
+)
+async def gh_list_pr_commits(
+    owner: Annotated[str, Field(min_length=1, description="GitHub repository owner.")],
+    repo: Annotated[str, Field(min_length=1, description="GitHub repository name.")],
+    number: Annotated[int, Field(ge=1, description="Pull request number.")],
+    *,
+    ctx: Context[AppContext],
+    page: Annotated[int, Field(ge=1, le=10_000, description="One-based result page.")] = 1,
+    per_page: Annotated[
+        int | None,
+        Field(ge=1, le=100, description="Results per page, capped by server policy."),
+    ] = None,
+) -> PullRequestCommitsPage:
+    """Return one explicitly bounded page of pull-request commits."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_list_pr_commits")
+    app = _app(ctx)
+    _validate_repository(owner, repo)
+    limit = min(app.client.clamp_max_results(per_page), 100)
+    base_sha, head_sha = await _get_pr_shas(app, owner, repo, number)
+    result = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/pulls/{number}/commits",
+        "-X",
+        "GET",
+        "-f",
+        f"page={page}",
+        "-f",
+        f"per_page={limit}",
+    )
+    await _verify_pr_shas(app, owner, repo, number, (base_sha, head_sha))
+    items = result if isinstance(result, list) else []
+    commits: list[PullRequestCommit] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        git_commit = item.get("commit")
+        git_commit = git_commit if isinstance(git_commit, dict) else {}
+        author = git_commit.get("author")
+        author = author if isinstance(author, dict) else {}
+        committer = git_commit.get("committer")
+        committer = committer if isinstance(committer, dict) else {}
+        author_account = item.get("author")
+        author_account = author_account if isinstance(author_account, dict) else {}
+        committer_account = item.get("committer")
+        committer_account = committer_account if isinstance(committer_account, dict) else {}
+        message, message_returned, _, message_truncated, _ = _bounded_utf8(
+            str(git_commit.get("message", "")), app.settings.max_pr_commit_message_bytes
+        )
+        commits.append(
+            PullRequestCommit(
+                sha=str(item.get("sha", "")),
+                message=message,
+                message_truncated=message_truncated,
+                message_bytes_returned=message_returned,
+                author_login=author_account.get("login"),
+                author_name=author.get("name"),
+                authored_at=author.get("date"),
+                committer_login=committer_account.get("login"),
+                committed_at=committer.get("date"),
+                url=str(item.get("html_url", "")),
+            )
+        )
+    return PullRequestCommitsPage(
+        number=number,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        page=page,
+        per_page=limit,
+        has_more=len(commits) == limit,
+        commits=commits,
+    )
 
 
 @mcp.tool(annotations=_ADD_EXTERNAL)

@@ -138,10 +138,83 @@ class PullRequestInfo(IssueInfo):
 
     head_ref: str | None = Field(None, alias="headRefName")
     base_ref: str | None = Field(None, alias="baseRefName")
+    head_sha: str | None = Field(None, alias="headRefOid")
+    base_sha: str | None = Field(None, alias="baseRefOid")
     is_draft: bool = Field(False, alias="isDraft")
     additions: int = 0
     deletions: int = 0
     changed_files: int = Field(0, alias="changedFiles")
+
+
+class PullRequestDiff(BaseModel):
+    """Bounded diff or patch for an immutable pull-request snapshot."""
+
+    number: int
+    base_sha: str
+    head_sha: str
+    format: Literal["diff", "patch"]
+    content: str
+    truncated: bool
+    bytes_returned: int = Field(ge=0)
+    total_bytes: int = Field(ge=0)
+    sha256: str
+
+
+class PullRequestFile(BaseModel):
+    """One file changed by a pull request."""
+
+    filename: str
+    status: str
+    additions: int = Field(ge=0)
+    deletions: int = Field(ge=0)
+    changes: int = Field(ge=0)
+    sha: str
+    previous_filename: str | None = None
+    patch: str | None = None
+    patch_truncated: bool = False
+    patch_bytes_returned: int = Field(default=0, ge=0)
+    blob_url: str | None = None
+    raw_url: str | None = None
+    contents_url: str | None = None
+
+
+class PullRequestFilesPage(BaseModel):
+    """One bounded page of files for an immutable pull-request snapshot."""
+
+    number: int
+    base_sha: str
+    head_sha: str
+    page: int = Field(ge=1)
+    per_page: int = Field(ge=1)
+    has_more: bool
+    files: list[PullRequestFile]
+
+
+class PullRequestCommit(BaseModel):
+    """One commit in a pull request."""
+
+    sha: str
+    message: str
+    message_truncated: bool = False
+    message_bytes_returned: int = Field(default=0, ge=0)
+    author_login: str | None = None
+    author_name: str | None = None
+    authored_at: str | None = None
+    committer_login: str | None = None
+    committed_at: str | None = None
+    url: str
+
+
+class PullRequestCommitsPage(BaseModel):
+    """One bounded page of commits for an immutable pull-request snapshot."""
+
+    number: int
+    base_sha: str
+    head_sha: str
+    page: int = Field(ge=1)
+    per_page: int = Field(ge=1)
+    has_more: bool
+    commits: list[PullRequestCommit]
 
 
 class PullRequestCreate(WriteResult):
