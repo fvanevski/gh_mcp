@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     allow_repo_creation: bool = False
     allow_release_creation: bool = False
     allow_workflow_dispatch: bool = False
+    allow_content_commits: bool = False
+
+    max_commit_files: int = Field(default=100, ge=1, le=1000)
+    max_file_bytes: int = Field(default=1_000_000, ge=1)
+    max_commit_bytes: int = Field(default=5_000_000, ge=1)
 
     default_max_results: int = Field(default=30, ge=1)
     hard_max_results: int = Field(default=100, ge=1)

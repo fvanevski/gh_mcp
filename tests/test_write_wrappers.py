@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from mcp_gh_server.models import CommitFile
 from mcp_gh_server.server import (
     AppContext,
+    gh_commit_files,
     gh_create_branch,
     gh_create_comment,
     gh_create_issue,
@@ -21,6 +25,7 @@ from mcp_gh_server.server import (
     gh_edit_issue,
     gh_edit_label,
     gh_edit_pr,
+    gh_get_file_contents,
     gh_list_milestones,
     gh_run_workflow,
     gh_upsert_label,
@@ -35,9 +40,13 @@ class FakeGhClient:
 
     results: list[Any]
     calls: list[tuple[tuple[str, ...], dict[str, Any]]] = field(default_factory=list)
+    payloads: list[dict[str, Any]] = field(default_factory=list)
 
     async def run(self, *args: str, **kwargs: Any) -> Any:
         self.calls.append((args, kwargs))
+        if "--input" in args:
+            payload_path = Path(args[args.index("--input") + 1])
+            self.payloads.append(json.loads(payload_path.read_text()))
         result = self.results.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -53,6 +62,7 @@ def _context(client: FakeGhClient) -> Any:
         allow_repo_creation=True,
         allow_release_creation=True,
         allow_workflow_dispatch=True,
+        allow_content_commits=True,
     )
     app = AppContext(client=client, settings=settings)  # type: ignore[arg-type]
     return SimpleNamespace(
@@ -537,3 +547,231 @@ async def test_empty_edit_body_is_sent_explicitly() -> None:
 
     assert "--body-file" in client.calls[0][0]
     assert client.calls[0][1]["stdin_text"] == ""
+
+
+@pytest.mark.asyncio
+async def test_get_file_contents_reads_complete_blob_at_exact_ref() -> None:
+    sha = "a" * 40
+    client = FakeGhClient(
+        [
+            {"type": "file", "sha": sha},
+            {"sha": sha, "size": 6, "encoding": "base64", "content": "aGVsbG8K"},
+        ]
+    )
+
+    result = await gh_get_file_contents(
+        "octo", "repo", ".github/workflows/apply.yml", sha, ctx=_context(client)
+    )
+
+    assert result.content == "hello\n"
+    assert result.encoding == "utf-8"
+    assert result.ref == sha
+    assert client.calls[0][0][-4:] == ("-X", "GET", "-f", f"ref={sha}")
+    assert client.calls[1][0] == ("api", f"repos/octo/repo/git/blobs/{sha}")
+
+
+@pytest.mark.asyncio
+async def test_get_file_contents_returns_binary_as_base64() -> None:
+    sha = "a" * 40
+    client = FakeGhClient(
+        [
+            {"type": "file", "sha": sha},
+            {"sha": sha, "encoding": "base64", "content": "/wA="},
+        ]
+    )
+
+    result = await gh_get_file_contents("octo", "repo", "asset.bin", sha, ctx=_context(client))
+
+    assert result.content == "/wA="
+    assert result.encoding == "base64"
+    assert result.size == 2
+
+
+@pytest.mark.asyncio
+async def test_commit_files_requires_separate_content_commit_opt_in() -> None:
+    client = FakeGhClient([])
+    context = _context(client)
+    context.request_context.lifespan_context.settings.allow_content_commits = False
+
+    with pytest.raises(RuntimeError, match="MCP_GH_ALLOW_CONTENT_COMMITS"):
+        await gh_commit_files(
+            "octo",
+            "repo",
+            "feature",
+            "a" * 40,
+            [CommitFile(path="file.txt", content="content")],
+            "Commit",
+            ctx=context,
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_commit_files_creates_one_tree_commit_and_cas_ref_update() -> None:
+    head = "a" * 40
+    base_tree = "b" * 40
+    blob_one = "c" * 40
+    blob_two = "d" * 40
+    tree = "e" * 40
+    commit = "f" * 40
+    client = FakeGhClient(
+        [
+            {"object": {"sha": head}},
+            {"node_id": "R_repo"},
+            {"tree": {"sha": base_tree}},
+            {"sha": blob_one},
+            {"sha": blob_two},
+            {"sha": tree},
+            {"sha": commit, "html_url": f"https://github.com/octo/repo/commit/{commit}"},
+            {"data": {"updateRefs": {"clientMutationId": None}}},
+            {"object": {"sha": commit}},
+        ]
+    )
+    files = [
+        CommitFile(path="docs/one.md", content="one\n"),
+        CommitFile(path="scripts/run.sh", content="#!/bin/sh\n", mode="100755"),
+    ]
+
+    result = await gh_commit_files(
+        "octo",
+        "repo",
+        "rc/audit-01-regression-baseline",
+        head,
+        files,
+        "Add issue 207 files",
+        ctx=_context(client),
+    )
+
+    assert result.ref_updated is True
+    assert result.commit_sha == commit
+    assert result.files_committed == 2
+    assert client.payloads[0] == {"content": "one\n", "encoding": "utf-8"}
+    assert client.payloads[2] == {
+        "base_tree": base_tree,
+        "tree": [
+            {"path": "docs/one.md", "mode": "100644", "type": "blob", "sha": blob_one},
+            {
+                "path": "scripts/run.sh",
+                "mode": "100755",
+                "type": "blob",
+                "sha": blob_two,
+            },
+        ],
+    }
+    assert client.payloads[3] == {
+        "message": "Add issue 207 files",
+        "tree": tree,
+        "parents": [head],
+    }
+    assert client.payloads[4] == {
+        "query": (
+            "mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }"
+        ),
+        "variables": {
+            "input": {
+                "repositoryId": "R_repo",
+                "refUpdates": [
+                    {
+                        "name": "refs/heads/rc/audit-01-regression-baseline",
+                        "beforeOid": head,
+                        "afterOid": commit,
+                        "force": False,
+                    }
+                ],
+            }
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_commit_files_head_mismatch_creates_no_git_objects() -> None:
+    head = "a" * 40
+    client = FakeGhClient([{"object": {"sha": "b" * 40}}])
+
+    with pytest.raises(RuntimeError, match="head mismatch"):
+        await gh_commit_files(
+            "octo",
+            "repo",
+            "feature",
+            head,
+            [CommitFile(path="file.txt", content="content")],
+            "Commit",
+            ctx=_context(client),
+        )
+
+    assert len(client.calls) == 1
+    assert client.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_commit_files_ref_race_returns_branch_unchanged_result() -> None:
+    head = "a" * 40
+    base_tree = "b" * 40
+    blob = "c" * 40
+    tree = "d" * 40
+    commit = "e" * 40
+    client = FakeGhClient(
+        [
+            {"object": {"sha": head}},
+            {"node_id": "R_repo"},
+            {"tree": {"sha": base_tree}},
+            {"sha": blob},
+            {"sha": tree},
+            {"sha": commit, "html_url": "commit-url"},
+            RuntimeError("non-fast-forward"),
+            {"object": {"sha": head}},
+        ]
+    )
+
+    result = await gh_commit_files(
+        "octo",
+        "repo",
+        "feature",
+        head,
+        [CommitFile(path="file.txt", content="content")],
+        "Commit",
+        ctx=_context(client),
+    )
+
+    assert result.write_completed is False
+    assert result.ref_updated is False
+    assert result.files_committed == 0
+    assert result.commit_sha == commit
+    assert result.warning is not None
+    assert "branch head is unchanged" in result.warning
+
+
+@pytest.mark.asyncio
+async def test_commit_files_unknown_ref_outcome_requires_read_before_retry() -> None:
+    head = "a" * 40
+    commit = "e" * 40
+    client = FakeGhClient(
+        [
+            {"object": {"sha": head}},
+            {"node_id": "R_repo"},
+            {"tree": {"sha": "b" * 40}},
+            {"sha": "c" * 40},
+            {"sha": "d" * 40},
+            {"sha": commit},
+            RuntimeError("timeout"),
+            RuntimeError("readback timeout"),
+        ]
+    )
+
+    result = await gh_commit_files(
+        "octo",
+        "repo",
+        "feature",
+        head,
+        [CommitFile(path="file.txt", content="content")],
+        "Commit",
+        ctx=_context(client),
+    )
+
+    assert result.ref_updated is None
+    assert result.write_completed is False
+    assert result.readback_completed is False
+    assert result.warning is not None
+    assert "outcome is unknown" in result.warning
+    assert "Do not retry automatically" in result.warning

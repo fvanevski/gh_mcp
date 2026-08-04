@@ -40,6 +40,10 @@ class TestSettingsValidation:
         assert settings.allow_repo_creation is False
         assert settings.allow_release_creation is False
         assert settings.allow_workflow_dispatch is False
+        assert settings.allow_content_commits is False
+        assert settings.max_commit_files == 100
+        assert settings.max_file_bytes == 1_000_000
+        assert settings.max_commit_bytes == 5_000_000
         assert settings.transport == "stdio"
         assert settings.log_level == "INFO"
         assert settings.http_port == 8766

@@ -6,7 +6,7 @@ direct JSON output or a post-write readback.
 
 ## Tools
 
-### Read-only (19)
+### Read-only (20)
 
 - `gh_info`: gh CLI version, authentication status, and active account.
 - `gh_search_repos`: search GitHub repositories with qualifiers.
@@ -27,8 +27,9 @@ direct JSON output or a post-write readback.
 - `gh_watch_run`: poll a workflow run until completion or a caller-supplied timeout.
 - `gh_list_labels`: list labels in a repository.
 - `gh_list_milestones`: list milestones in a repository.
+- `gh_get_file_contents`: read a complete file at an exact branch, tag, or commit ref.
 
-### Write (13)
+### Write (14)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
@@ -43,6 +44,8 @@ direct JSON output or a post-write readback.
 - `gh_create_comment`: create a comment on an issue or PR (write, disabled by default).
 - `gh_create_branch`: create a branch from an issue's PR (write, disabled by default).
 - `gh_edit_pr`: edit an existing pull request (write, disabled by default).
+- `gh_commit_files`: atomically create or replace files in one branch commit
+  (destructive write, separately disabled by default).
 
 ## Install
 
@@ -147,17 +150,34 @@ When either allowlist is non-empty, a target is accepted if its exact
 `owner/repo` or its owner is listed. Fine-grained GitHub token permissions
 remain the primary GitHub-side authorization boundary.
 
-Repository creation, release creation, and workflow dispatch require separate
-opt-in because they can have broader effects:
+Repository creation, release creation, workflow dispatch, and repository-content
+commits require separate opt-in because they can have broader effects:
 
 ```dotenv
 MCP_GH_ALLOW_REPO_CREATION=true
 MCP_GH_ALLOW_RELEASE_CREATION=true
 MCP_GH_ALLOW_WORKFLOW_DISPATCH=true
+MCP_GH_ALLOW_CONTENT_COMMITS=true
 ```
 
-Enable only the operations the deployment actually needs; all three default to
+Enable only the operations the deployment actually needs; all four default to
 `false`.
+
+`gh_commit_files` accepts complete UTF-8 file contents, validates repository-relative
+paths, and creates all supplied files in one Git tree and one commit. It conditionally
+advances the named branch only if it still points to `expected_head_sha`; the update
+uses GitHub's atomic `updateRefs` mutation with `beforeOid` and never forces a ref.
+The operation does not support file deletion. Bound its request size with:
+
+```dotenv
+MCP_GH_MAX_COMMIT_FILES=100
+MCP_GH_MAX_FILE_BYTES=1000000
+MCP_GH_MAX_COMMIT_BYTES=5000000
+```
+
+If the final ref-update response is interrupted, the tool reads the branch before
+reporting the outcome. An indeterminate result explicitly requires a fresh read and
+must not be retried automatically.
 
 ## Operational limits
 
@@ -192,8 +212,9 @@ uv run pytest
 
 ## Known boundaries
 
-- The server runs `gh` as a subprocess; it does not use the GitHub REST
-  or GraphQL APIs directly. Rate limits, authentication, and permission
+- The server runs `gh` as a subprocess, including allowlisted REST and GraphQL
+  calls inside focused tools; it does not expose a generic command or API executor.
+  Rate limits, authentication, and permission
   scoping are governed by the `gh` CLI and the token in `GITHUB_TOKEN`.
 - Commands like `gh release create` that require file uploads or complex
   multi-step flows are intentionally out of scope — they would need a

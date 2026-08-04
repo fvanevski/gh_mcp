@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
@@ -181,6 +181,38 @@ class RepoCreate(WriteResult):
 
     name: str
     url: str
+    message: str
+
+
+class RepositoryFile(BaseModel):
+    """Complete contents and metadata for one repository file."""
+
+    path: str
+    ref: str
+    sha: str
+    size: int
+    content: str
+    encoding: Literal["utf-8", "base64"]
+
+
+class CommitFile(BaseModel):
+    """One file to create or replace in an atomic commit."""
+
+    path: str
+    content: str
+    mode: Literal["100644", "100755", "120000"] = "100644"
+
+
+class CommitFilesResult(WriteResult):
+    """Result of creating a commit and compare-and-swap updating a branch."""
+
+    branch: str
+    previous_head_sha: str
+    commit_sha: str | None = None
+    tree_sha: str | None = None
+    ref_updated: bool | None = False
+    files_committed: int = 0
+    url: str = ""
     message: str
 
 

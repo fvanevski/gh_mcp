@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 import re
@@ -11,7 +13,7 @@ import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, urlparse
 
 from mcp.server import MCPServer
@@ -22,6 +24,8 @@ from .gh_client import GhClient
 from .models import (
     BranchCreate,
     CommentCreate,
+    CommitFile,
+    CommitFilesResult,
     IssueCreate,
     IssueEdit,
     IssueInfo,
@@ -35,6 +39,7 @@ from .models import (
     ReleaseInfo,
     RepoCreate,
     RepoInfo,
+    RepositoryFile,
     SearchResults,
     WorkflowInfo,
     WorkflowRun,
@@ -63,6 +68,7 @@ _MUTATE_EXTERNAL = ToolAnnotations(
 
 _OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+_OBJECT_SHA_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 
 
 @dataclass(slots=True)
@@ -86,8 +92,9 @@ mcp = MCPServer(
     "GitHub CLI",
     instructions=(
         "Interact with GitHub via the ``gh`` CLI. Prefer catalog tools before "
-        "writing. Use search tools for discovery. Use write tools (issue, PR, repo, "
-        "release creation) only when a GitHub change is necessary; they are disabled "
+        "writing. Use search tools for discovery. Read complete files before changing "
+        "them. Use write tools (including atomic content commits) only when a GitHub "
+        "change is necessary; they are disabled "
         "unless explicitly enabled. Approval is handled by the MCP host; the server "
         "also enforces deployment repository and operation policy."
     ),
@@ -140,12 +147,14 @@ def _require_action_enabled(app: AppContext, action: str) -> None:
         "repo_create": app.settings.allow_repo_creation,
         "release_create": app.settings.allow_release_creation,
         "workflow_dispatch": app.settings.allow_workflow_dispatch,
+        "content_commit": app.settings.allow_content_commits,
     }
     if action in action_settings and not action_settings[action]:
         env_name = {
             "repo_create": "MCP_GH_ALLOW_REPO_CREATION",
             "release_create": "MCP_GH_ALLOW_RELEASE_CREATION",
             "workflow_dispatch": "MCP_GH_ALLOW_WORKFLOW_DISPATCH",
+            "content_commit": "MCP_GH_ALLOW_CONTENT_COMMITS",
         }[action]
         raise RuntimeError(f"GitHub action {action!r} is disabled by {env_name}")
 
@@ -277,6 +286,67 @@ async def _get_label(client: GhClient, owner: str, repo: str, name: str) -> dict
     )
     if not isinstance(result, dict):
         raise RuntimeError(f"gh returned an unexpected response while reading label {name!r}")
+    return result
+
+
+def _validate_repo_path(path: str) -> None:
+    parts = path.split("/")
+    if (
+        not path
+        or len(path.encode()) > 4096
+        or path.startswith("/")
+        or "\\" in path
+        or any(ord(character) < 32 or ord(character) == 127 for character in path)
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(part.casefold() == ".git" for part in parts)
+    ):
+        raise ValueError(f"invalid repository-relative file path: {path!r}")
+
+
+def _validate_branch(branch: str) -> None:
+    invalid = re.search(r"[\x00-\x20~^:?*\[]", branch)
+    if (
+        not branch
+        or len(branch.encode()) > 1024
+        or branch == "@"
+        or branch.startswith("/")
+        or branch.endswith("/")
+        or branch.endswith(".")
+        or branch.endswith(".lock")
+        or ".." in branch
+        or "@{" in branch
+        or "//" in branch
+        or "\\" in branch
+        or invalid is not None
+    ):
+        raise ValueError("branch is not a valid Git branch name")
+
+
+async def _api_json_write(
+    client: GhClient,
+    method: str,
+    endpoint: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Send a JSON GitHub API write without exposing its body in argv or logs."""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as file:
+        json.dump(payload, file)
+        file.flush()
+        payload_path = file.name
+    try:
+        result = await client.run(
+            "api",
+            endpoint,
+            "-X",
+            method,
+            "--input",
+            payload_path,
+        )
+    finally:
+        os.unlink(payload_path)
+    if not isinstance(result, dict):
+        raise RuntimeError(f"GitHub API {method} {endpoint} returned a non-object response")
     return result
 
 
@@ -835,6 +905,336 @@ async def gh_list_repos(
         items=items,
         truncated=len(items) >= limit,
         query=f"repos for {username or 'current user'} ({type})",
+    )
+
+
+@mcp.tool(annotations=_READ_EXTERNAL)
+async def gh_get_file_contents(
+    owner: str,
+    repo: str,
+    path: str,
+    ref: str,
+    *,
+    ctx: Context[AppContext],
+) -> RepositoryFile:
+    """Read the complete contents of one repository file at an exact ref."""
+
+    app = _app(ctx)
+    _validate_repository(owner, repo)
+    _validate_repo_path(path)
+    if not ref or len(ref) > 1024:
+        raise ValueError("ref must be a non-empty Git ref or commit SHA")
+
+    metadata = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/contents/{quote(path, safe='/')}",
+        "-X",
+        "GET",
+        "-f",
+        f"ref={ref}",
+    )
+    if not isinstance(metadata, dict) or metadata.get("type") == "dir":
+        raise ValueError(f"repository path is not a file: {path!r}")
+    sha = metadata.get("sha")
+    if not isinstance(sha, str) or not _OBJECT_SHA_RE.fullmatch(sha):
+        raise RuntimeError(f"GitHub did not return a blob SHA for {path!r} at {ref!r}")
+
+    blob = await app.client.run("api", f"repos/{owner}/{repo}/git/blobs/{sha}")
+    raw_content = blob.get("content") if isinstance(blob, dict) else None
+    if not isinstance(raw_content, str) or blob.get("encoding") != "base64":
+        raise RuntimeError(f"GitHub did not return base64 blob content for {path!r}")
+    try:
+        decoded = base64.b64decode("".join(raw_content.split()), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise RuntimeError(f"GitHub returned invalid base64 content for {path!r}") from exc
+
+    try:
+        content = decoded.decode("utf-8")
+        encoding: Literal["utf-8", "base64"] = "utf-8"
+    except UnicodeDecodeError:
+        content = base64.b64encode(decoded).decode("ascii")
+        encoding = "base64"
+
+    return RepositoryFile(
+        path=path,
+        ref=ref,
+        sha=sha,
+        size=len(decoded),
+        content=content,
+        encoding=encoding,
+    )
+
+
+@mcp.tool(annotations=_MUTATE_EXTERNAL)
+async def gh_commit_files(
+    owner: str,
+    repo: str,
+    branch: str,
+    expected_head_sha: str,
+    files: list[CommitFile],
+    commit_message: str,
+    *,
+    ctx: Context[AppContext],
+) -> CommitFilesResult:
+    """Create one commit from complete file contents and atomically advance a branch.
+
+    The branch advances only when its current head matches expected_head_sha and
+    GitHub accepts a non-forced fast-forward ref update. Files create or replace
+    repository paths; deletion is intentionally unsupported.
+    """
+
+    app = _app(ctx)
+    _require_write_enabled(app, owner, repo, action="content_commit")
+    _validate_branch(branch)
+    if not _OBJECT_SHA_RE.fullmatch(expected_head_sha):
+        raise ValueError("expected_head_sha must be a full 40-character Git object SHA")
+    if not commit_message.strip():
+        raise ValueError("commit_message must not be empty")
+    if len(commit_message.encode()) > 65_536:
+        raise ValueError("commit_message exceeds 65536 UTF-8 bytes")
+    if not files:
+        raise ValueError("files must contain at least one file")
+    if len(files) > app.settings.max_commit_files:
+        raise ValueError(f"files exceeds MCP_GH_MAX_COMMIT_FILES={app.settings.max_commit_files}")
+
+    total_bytes = 0
+    paths: set[str] = set()
+    for file in files:
+        _validate_repo_path(file.path)
+        if file.path in paths:
+            raise ValueError(f"duplicate file path: {file.path!r}")
+        paths.add(file.path)
+        size = len(file.content.encode())
+        if size > app.settings.max_file_bytes:
+            raise ValueError(
+                f"file {file.path!r} exceeds MCP_GH_MAX_FILE_BYTES={app.settings.max_file_bytes}"
+            )
+        total_bytes += size
+    if total_bytes > app.settings.max_commit_bytes:
+        raise ValueError(
+            f"file contents exceed MCP_GH_MAX_COMMIT_BYTES={app.settings.max_commit_bytes}"
+        )
+
+    branch_path = quote(branch, safe="/")
+    ref_result = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/git/ref/heads/{branch_path}",
+    )
+    ref_object = ref_result.get("object") if isinstance(ref_result, dict) else None
+    actual_head_sha = ref_object.get("sha") if isinstance(ref_object, dict) else None
+    if not isinstance(actual_head_sha, str):
+        raise RuntimeError(f"GitHub did not return the current head of branch {branch!r}")
+    if actual_head_sha.casefold() != expected_head_sha.casefold():
+        raise RuntimeError(
+            f"Branch {branch!r} head mismatch: expected {expected_head_sha}, "
+            f"found {actual_head_sha}; no commit objects were created"
+        )
+
+    repository = await app.client.run("api", f"repos/{owner}/{repo}")
+    repository_node_id = repository.get("node_id") if isinstance(repository, dict) else None
+    if not isinstance(repository_node_id, str) or not repository_node_id:
+        raise RuntimeError(f"GitHub did not return the node ID for repository {owner}/{repo}")
+
+    parent = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/git/commits/{actual_head_sha}",
+    )
+    parent_tree = parent.get("tree") if isinstance(parent, dict) else None
+    base_tree_sha = parent_tree.get("sha") if isinstance(parent_tree, dict) else None
+    if not isinstance(base_tree_sha, str):
+        raise RuntimeError(f"GitHub did not return the tree for commit {actual_head_sha}")
+
+    tree_entries: list[dict[str, str]] = []
+    for file in files:
+        blob = await _api_json_write(
+            app.client,
+            "POST",
+            f"repos/{owner}/{repo}/git/blobs",
+            {"content": file.content, "encoding": "utf-8"},
+        )
+        blob_sha = blob.get("sha")
+        if not isinstance(blob_sha, str):
+            raise RuntimeError(f"GitHub did not return a blob SHA for {file.path!r}")
+        tree_entries.append({"path": file.path, "mode": file.mode, "type": "blob", "sha": blob_sha})
+
+    tree = await _api_json_write(
+        app.client,
+        "POST",
+        f"repos/{owner}/{repo}/git/trees",
+        {"base_tree": base_tree_sha, "tree": tree_entries},
+    )
+    tree_sha = tree.get("sha")
+    if not isinstance(tree_sha, str):
+        raise RuntimeError("GitHub did not return the newly created tree SHA")
+    if tree_sha == base_tree_sha:
+        raise ValueError("the supplied files do not change the branch tree")
+
+    commit = await _api_json_write(
+        app.client,
+        "POST",
+        f"repos/{owner}/{repo}/git/commits",
+        {"message": commit_message, "tree": tree_sha, "parents": [actual_head_sha]},
+    )
+    commit_sha = commit.get("sha")
+    if not isinstance(commit_sha, str):
+        raise RuntimeError("GitHub did not return the newly created commit SHA")
+    commit_url = commit.get("html_url")
+    url = commit_url if isinstance(commit_url, str) else ""
+
+    try:
+        updated_ref = await _api_json_write(
+            app.client,
+            "POST",
+            "graphql",
+            {
+                "query": (
+                    "mutation($input: UpdateRefsInput!) { "
+                    "updateRefs(input: $input) { clientMutationId } }"
+                ),
+                "variables": {
+                    "input": {
+                        "repositoryId": repository_node_id,
+                        "refUpdates": [
+                            {
+                                "name": f"refs/heads/{branch}",
+                                "beforeOid": actual_head_sha,
+                                "afterOid": commit_sha,
+                                "force": False,
+                            }
+                        ],
+                    }
+                },
+            },
+        )
+        update_payload = updated_ref.get("data")
+        update_result = (
+            update_payload.get("updateRefs") if isinstance(update_payload, dict) else None
+        )
+        if not isinstance(update_result, dict):
+            raise RuntimeError("GitHub returned an unexpected atomic ref update response")
+    except RuntimeError as update_error:
+        try:
+            failure_readback = await app.client.run(
+                "api",
+                f"repos/{owner}/{repo}/git/ref/heads/{branch_path}",
+            )
+        except RuntimeError:
+            warning = (
+                f"Commit object {commit_sha} was created, but the atomic branch update failed "
+                f"or returned an unreadable response ({update_error}). The branch update outcome "
+                "is unknown. Do not retry automatically; read the branch head first."
+            )
+            return CommitFilesResult(
+                branch=branch,
+                previous_head_sha=actual_head_sha,
+                commit_sha=commit_sha,
+                tree_sha=tree_sha,
+                ref_updated=None,
+                files_committed=0,
+                url=url,
+                write_completed=False,
+                readback_completed=False,
+                warning=warning,
+                message=warning,
+            )
+
+        failure_object = (
+            failure_readback.get("object") if isinstance(failure_readback, dict) else None
+        )
+        failure_sha = failure_object.get("sha") if isinstance(failure_object, dict) else None
+        if failure_sha == commit_sha:
+            warning = (
+                f"The atomic update command reported an error ({update_error}), but readback "
+                f"confirms commit {commit_sha} is the branch head. Do not retry."
+            )
+            return CommitFilesResult(
+                branch=branch,
+                previous_head_sha=actual_head_sha,
+                commit_sha=commit_sha,
+                tree_sha=tree_sha,
+                ref_updated=True,
+                files_committed=len(files),
+                url=url,
+                write_completed=True,
+                readback_completed=True,
+                warning=warning,
+                message=f"Committed {len(files)} file(s) to {branch}.",
+            )
+
+        if failure_sha == actual_head_sha:
+            branch_status = "The branch head is unchanged."
+        elif isinstance(failure_sha, str):
+            branch_status = f"The branch now points to a different commit, {failure_sha}."
+        else:
+            branch_status = "The branch head could not be interpreted."
+        warning = (
+            f"Commit object {commit_sha} was created, but it was not installed on branch "
+            f"{branch!r}. {branch_status} Do not retry automatically; re-read the branch first."
+        )
+        return CommitFilesResult(
+            branch=branch,
+            previous_head_sha=actual_head_sha,
+            commit_sha=commit_sha,
+            tree_sha=tree_sha,
+            ref_updated=False,
+            files_committed=0,
+            url=url,
+            write_completed=False,
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
+
+    try:
+        readback = await app.client.run(
+            "api",
+            f"repos/{owner}/{repo}/git/ref/heads/{branch_path}",
+        )
+    except RuntimeError:
+        warning = _readback_warning(f"Commit {commit_sha}", url or None)
+        return CommitFilesResult(
+            branch=branch,
+            previous_head_sha=actual_head_sha,
+            commit_sha=commit_sha,
+            tree_sha=tree_sha,
+            ref_updated=True,
+            files_committed=len(files),
+            url=url,
+            write_completed=True,
+            readback_completed=False,
+            warning=warning,
+            message=f"Committed {len(files)} file(s) to {branch}; ref readback failed.",
+        )
+
+    readback_object = readback.get("object") if isinstance(readback, dict) else None
+    readback_sha = readback_object.get("sha") if isinstance(readback_object, dict) else None
+    if readback_sha != commit_sha:
+        warning = (
+            f"Atomic update completed for commit {commit_sha}, but ref readback returned "
+            f"{readback_sha!r}. Do not retry automatically; inspect the branch first."
+        )
+        return CommitFilesResult(
+            branch=branch,
+            previous_head_sha=actual_head_sha,
+            commit_sha=commit_sha,
+            tree_sha=tree_sha,
+            ref_updated=True,
+            files_committed=len(files),
+            url=url,
+            write_completed=True,
+            readback_completed=False,
+            warning=warning,
+            message=f"Committed {len(files)} file(s) to {branch}; ref readback diverged.",
+        )
+    return CommitFilesResult(
+        branch=branch,
+        previous_head_sha=actual_head_sha,
+        commit_sha=commit_sha,
+        tree_sha=tree_sha,
+        ref_updated=True,
+        files_committed=len(files),
+        url=url,
+        message=f"Committed {len(files)} file(s) to {branch}.",
     )
 
 
