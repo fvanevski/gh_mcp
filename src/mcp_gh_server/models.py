@@ -20,6 +20,18 @@ class GhVersionInfo(BaseModel):
     hostname: str | None = None
 
 
+class ServerInfo(BaseModel):
+    """Local MCP server version, action surface, and write-policy status."""
+
+    server_name: Literal["mcp-gh-server"] = "mcp-gh-server"
+    server_version: str
+    tool_schema_version: str
+    transport: Literal["stdio", "streamable-http"]
+    tool_count: int = Field(ge=1)
+    write_commands_enabled: bool
+    content_commits_enabled: bool
+
+
 # ---------------------------------------------------------------------------
 # Search tools
 # ---------------------------------------------------------------------------

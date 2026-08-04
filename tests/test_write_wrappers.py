@@ -28,6 +28,7 @@ from mcp_gh_server.server import (
     gh_get_file_contents,
     gh_list_milestones,
     gh_run_workflow,
+    gh_server_info,
     gh_upsert_label,
     gh_watch_run,
 )
@@ -68,6 +69,22 @@ def _context(client: FakeGhClient) -> Any:
     return SimpleNamespace(
         request_context=SimpleNamespace(lifespan_context=app),
     )
+
+
+@pytest.mark.asyncio
+async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
+    client = FakeGhClient([])
+
+    result = await gh_server_info(ctx=_context(client))
+
+    assert result.server_name == "mcp-gh-server"
+    assert result.server_version == "0.3.0"
+    assert result.tool_schema_version == "0.3.0"
+    assert result.transport == "stdio"
+    assert result.tool_count == 35
+    assert result.write_commands_enabled is True
+    assert result.content_commits_enabled is True
+    assert client.calls == []
 
 
 @pytest.mark.asyncio

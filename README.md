@@ -6,8 +6,10 @@ direct JSON output or a post-write readback.
 
 ## Tools
 
-### Read-only (20)
+### Read-only (21)
 
+- `gh_server_info`: report the deployed MCP server and tool-schema version without
+  contacting GitHub or starting a subprocess.
 - `gh_info`: gh CLI version, authentication status, and active account.
 - `gh_search_repos`: search GitHub repositories with qualifiers.
 - `gh_search_issues`: search issues and pull requests with qualifiers.
@@ -122,7 +124,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The repository-content action surface is version `0.2.0`, but availability in
+The action surface is version `0.3.0`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -146,15 +148,25 @@ tool schema after the backend changes. Deleting and reinstalling the custom plug
 appears to force rediscovery of the revised tools and may be necessary when tool
 names, parameters, annotations, or result schemas change:
 
-1. Deploy the revised backend and restart the MCP server.
-2. Delete the existing custom plugin from ChatGPT Plus.
-3. Reinstall the plugin so the gateway scans the backend's current tool definitions.
-4. Test the tools in a new conversation.
+1. Increment the project, package, and MCP server version whenever a deployed
+   revision changes tool names, schemas, annotations, or routing behavior.
+2. Deploy the revised backend and restart the MCP server.
+3. Delete the existing custom plugin from ChatGPT Plus.
+4. Reinstall the plugin so the gateway scans the backend's current tool definitions.
+5. In a new conversation, call `gh_server_info` and confirm both
+   `server_version` and `tool_schema_version` match the expected deployment.
+6. Only then test the revised GitHub tools.
 
 This procedure is based on observed behavior rather than a documented compatibility
 guarantee. A backend restart alone may leave the Plus gateway using stale tool
 definitions, while deletion and reinstallation may still fail if the gateway does
 not support a particular tool or capability.
+
+`gh_server_info` is intentionally the smallest and safest possible verification
+call. It takes no model-controlled arguments, performs no external I/O, starts no
+subprocess, triggers no elicitation or approval flow, and returns only bounded local
+metadata. `gh_info` is not a substitute: it reports the installed GitHub CLI version,
+not the deployed MCP server version.
 
 See OpenAI's current
 [MCP app availability](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)
@@ -166,6 +178,8 @@ At `INFO`, both repository-content tools log a content-free reachability marker:
 ```text
 MCP tool invocation reached server: tool=gh_get_file_contents
 ```
+
+The version probe emits the equivalent marker with `tool=gh_server_info`.
 
 If ChatGPT reports that the app or namespace is disabled and this marker is absent,
 the call was rejected by ChatGPT's plugin gateway before reaching the MCP server.

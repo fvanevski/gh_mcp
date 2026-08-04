@@ -110,7 +110,8 @@ else:
 async def test_registered_tool_schemas_and_annotations() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 34
+    assert len(tools) == 35
+    assert "gh_server_info" in tools
     assert "gh_get_file_contents" in tools
     assert "gh_commit_files" in tools
     assert "approval" not in tools["gh_create_issue"].input_schema["properties"]
@@ -119,6 +120,11 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert tools["gh_create_issue"].annotations.destructive_hint is False
     assert tools["gh_run_workflow"].annotations.destructive_hint is True
     assert tools["gh_commit_files"].annotations.destructive_hint is True
+    assert tools["gh_server_info"].title == "Get MCP server version"
+    assert tools["gh_server_info"].input_schema["properties"] == {}
+    assert tools["gh_server_info"].annotations.read_only_hint is True
+    assert tools["gh_server_info"].annotations.idempotent_hint is True
+    assert tools["gh_server_info"].annotations.open_world_hint is False
     assert tools["gh_get_file_contents"].title == "Read repository file"
     assert tools["gh_get_file_contents"].description.startswith("Read-only:")
     assert tools["gh_get_file_contents"].input_schema["properties"]["ref"]["maxLength"] == 1024
@@ -127,7 +133,11 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert commit_schema["properties"]["expected_head_sha"]["pattern"]
     assert commit_schema["properties"]["files"]["minItems"] == 1
     assert commit_schema["properties"]["files"]["items"]["$ref"].endswith("/$defs/CommitFile")
-    assert all(tool.annotations.open_world_hint is True for tool in tools.values())
+    assert all(
+        tool.annotations.open_world_hint is True
+        for name, tool in tools.items()
+        if name != "gh_server_info"
+    )
 
 
 @pytest.mark.asyncio
@@ -161,7 +171,7 @@ async def test_stdio_write_denial_does_not_elicit_or_lock_session() -> None:
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is True
         tools_after_failure = await session.list_tools()
-        assert len(tools_after_failure.tools) == 34
+        assert len(tools_after_failure.tools) == 35
 
 
 @pytest.mark.asyncio
@@ -197,7 +207,7 @@ async def test_stdio_write_executes_once_without_elicitation_using_fake_gh(tmp_p
         )
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is False
-        assert len((await session.list_tools()).tools) == 34
+        assert len((await session.list_tools()).tools) == 35
 
 
 @pytest.mark.asyncio
@@ -271,7 +281,7 @@ async def test_streamable_http_write_denial_keeps_session_usable(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is True
-            assert len((await session.list_tools()).tools) == 34
+            assert len((await session.list_tools()).tools) == 35
     finally:
         get_settings.cache_clear()
 
@@ -304,7 +314,7 @@ async def test_streamable_http_write_executes_without_nested_input_round(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is False
-            assert len((await session.list_tools()).tools) == 34
+            assert len((await session.list_tools()).tools) == 35
     finally:
         get_settings.cache_clear()
 
@@ -320,6 +330,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
     _write_fake_routing_gh(tmp_path)
     monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
     monkeypatch.setenv("MCP_GH_ALLOW_WRITE_COMMANDS", "false")
+    monkeypatch.setenv("MCP_GH_ALLOW_CONTENT_COMMITS", "false")
     monkeypatch.setenv("MCP_GH_TRANSPORT", "streamable-http")
     get_settings.cache_clear()
     caplog.set_level("INFO", logger="mcp_gh_server.server")
@@ -341,7 +352,19 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             ClientSession(*streams) as session,
         ):
             initialized = await session.initialize()
-            assert initialized.server_info.version == "0.2.0"
+            assert initialized.server_info.version == "0.3.0"
+
+            server_info = await session.call_tool("gh_server_info", {})
+            assert server_info.is_error is False
+            assert server_info.structured_content == {
+                "server_name": "mcp-gh-server",
+                "server_version": "0.3.0",
+                "tool_schema_version": "0.3.0",
+                "transport": "streamable-http",
+                "tool_count": 35,
+                "write_commands_enabled": False,
+                "content_commits_enabled": False,
+            }
 
             file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert file_result.is_error is False
@@ -352,6 +375,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
                 "gh_get_file_contents",
                 "gh_commit_files",
                 "gh_list_workflows",
+                "gh_server_info",
             }
 
             read_result = await session.call_tool(
@@ -377,12 +401,17 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             assert denied_write.is_error is True
             assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_write.content[0].text
 
+            server_info_after_denial = await session.call_tool("gh_server_info", {})
+            assert server_info_after_denial.is_error is False
+            assert server_info_after_denial.structured_content["server_version"] == "0.3.0"
+
             second_file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert second_file_result.is_error is False
-            assert len((await session.list_tools()).tools) == 34
+            assert len((await session.list_tools()).tools) == 35
     finally:
         get_settings.cache_clear()
 
     messages = [record.getMessage() for record in caplog.records]
     assert sum("tool=gh_get_file_contents" in message for message in messages) == 2
     assert sum("tool=gh_commit_files" in message for message in messages) == 1
+    assert sum("tool=gh_server_info" in message for message in messages) == 2

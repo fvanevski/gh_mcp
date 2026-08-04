@@ -44,6 +44,7 @@ from .models import (
     RepoInfo,
     RepositoryFile,
     SearchResults,
+    ServerInfo,
     WorkflowInfo,
     WorkflowRun,
     WorkflowRunCreate,
@@ -55,6 +56,12 @@ _READ_EXTERNAL = ToolAnnotations(
     read_only_hint=True,
     destructive_hint=False,
     open_world_hint=True,
+)
+_READ_LOCAL = ToolAnnotations(
+    read_only_hint=True,
+    destructive_hint=False,
+    idempotent_hint=True,
+    open_world_hint=False,
 )
 _ADD_EXTERNAL = ToolAnnotations(
     read_only_hint=False,
@@ -162,6 +169,30 @@ def _require_action_enabled(app: AppContext, action: str) -> None:
             "content_commit": "MCP_GH_ALLOW_CONTENT_COMMITS",
         }[action]
         raise RuntimeError(f"GitHub action {action!r} is disabled by {env_name}")
+
+
+@mcp.tool(
+    title="Get MCP server version",
+    description=(
+        "Read-only local diagnostic: return this MCP server's deployed version, tool-schema "
+        "version, transport, tool count, and write-policy status. This tool does not call "
+        "GitHub, spawn a subprocess, request approval, or modify any state."
+    ),
+    annotations=_READ_LOCAL,
+)
+async def gh_server_info(ctx: Context[AppContext]) -> ServerInfo:
+    """Return deterministic local deployment metadata without contacting GitHub."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_server_info")
+    app = _app(ctx)
+    return ServerInfo(
+        server_version=__version__,
+        tool_schema_version=__version__,
+        transport=app.settings.transport,
+        tool_count=len(await mcp.list_tools()),
+        write_commands_enabled=app.settings.allow_write_commands,
+        content_commits_enabled=app.settings.allow_content_commits,
+    )
 
 
 @mcp.tool(annotations=_READ_EXTERNAL)

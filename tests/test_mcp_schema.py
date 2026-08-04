@@ -11,6 +11,7 @@ from mcp_gh_server.models import (
     RepoCreate,
     RepoInfo,
     SearchResults,
+    ServerInfo,
     WorkflowInfo,
     WorkflowRun,
     WorkflowRunCreate,
@@ -31,6 +32,18 @@ class TestModels:
         assert results.total_count == 10
         assert len(results.items) == 1
         assert results.truncated is False
+
+    def test_server_info(self) -> None:
+        info = ServerInfo(
+            server_version="0.3.0",
+            tool_schema_version="0.3.0",
+            transport="streamable-http",
+            tool_count=35,
+            write_commands_enabled=False,
+            content_commits_enabled=False,
+        )
+        assert info.server_name == "mcp-gh-server"
+        assert info.server_version == "0.3.0"
 
     def test_issue_info(self) -> None:
         issue = IssueInfo(
