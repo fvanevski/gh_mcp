@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from mcp_gh_server.models import (
-    CommandApproval,
     IssueCreate,
     IssueInfo,
     PullRequestCreate,
@@ -21,14 +20,6 @@ from mcp_gh_server.models import (
 
 class TestModels:
     """Test that Pydantic models validate correctly."""
-
-    def test_command_approval_approved(self) -> None:
-        approval = CommandApproval(approved=True)
-        assert approval.approved is True
-
-    def test_command_approval_denied(self) -> None:
-        approval = CommandApproval(approved=False)
-        assert approval.approved is False
 
     def test_search_results(self) -> None:
         results = SearchResults(

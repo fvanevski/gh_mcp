@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -30,13 +32,27 @@ class TestSettingsValidation:
         settings = Settings(
             _env_file=None,
             allow_write_commands=False,
-            confirm_write_commands=True,
             transport="stdio",
             log_level="INFO",
             http_port=8766,
         )
         assert settings.allow_write_commands is False
-        assert settings.confirm_write_commands is True
+        assert settings.allow_repo_creation is False
+        assert settings.allow_release_creation is False
+        assert settings.allow_workflow_dispatch is False
         assert settings.transport == "stdio"
         assert settings.log_level == "INFO"
         assert settings.http_port == 8766
+
+    def test_unprefixed_github_token_loads_from_dotenv(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("MCP_GH_GITHUB_TOKEN", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text("GITHUB_TOKEN=from-dotenv\n")
+
+        settings = Settings(_env_file=env_file)
+
+        assert settings.github_token is not None
+        assert settings.github_token.get_secret_value() == "from-dotenv"

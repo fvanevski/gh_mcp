@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import find_dotenv
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,13 +27,21 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
-    github_token: str | None = None
+    github_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GITHUB_TOKEN", "MCP_GH_GITHUB_TOKEN"),
+    )
 
     allow_write_commands: bool = False
-    confirm_write_commands: bool = True
+    allowed_repositories: str = ""
+    allowed_owners: str = ""
+    allow_repo_creation: bool = False
+    allow_release_creation: bool = False
+    allow_workflow_dispatch: bool = False
 
     default_max_results: int = Field(default=30, ge=1)
     hard_max_results: int = Field(default=100, ge=1)
+    command_timeout_seconds: float = Field(default=30, gt=0)
 
     transport: Literal["stdio", "streamable-http"] = "stdio"
     http_host: str = "127.0.0.1"

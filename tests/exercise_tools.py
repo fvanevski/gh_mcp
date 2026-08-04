@@ -225,6 +225,14 @@ tests = [
     ),
 ]
 
+gh_env = {
+    **os.environ,
+    "GH_PROMPT_DISABLED": "1",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GH_PAGER": "cat",
+    "PAGER": "cat",
+}
+
 passed = 0
 failed = 0
 
@@ -235,7 +243,8 @@ for tool_name, cmd in tests:
             capture_output=True,
             text=True,
             timeout=30,
-            env={**os.environ},
+            stdin=subprocess.DEVNULL,
+            env=gh_env,
         )
         if result.returncode == 0:
             try:

@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import re
 import shlex
 import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Any
 from urllib.parse import quote, urlparse
 
 from mcp.server import MCPServer
-from mcp.server.mcpserver import Context, Elicit, Resolve
+from mcp.server.mcpserver import Context
 from mcp_types import ToolAnnotations
 
 from .gh_client import GhClient
 from .models import (
     BranchCreate,
-    CommandApproval,
     CommentCreate,
     IssueCreate,
     IssueEdit,
@@ -42,17 +43,26 @@ from .models import (
 )
 from .settings import Settings, get_settings
 
-_READ_ONLY_TOOL = ToolAnnotations(
+_READ_EXTERNAL = ToolAnnotations(
     read_only_hint=True,
     destructive_hint=False,
-    open_world_hint=False,
+    open_world_hint=True,
 )
-_WRITE_TOOL = ToolAnnotations(
+_ADD_EXTERNAL = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=True,
+)
+_MUTATE_EXTERNAL = ToolAnnotations(
     read_only_hint=False,
     destructive_hint=True,
     idempotent_hint=False,
-    open_world_hint=False,
+    open_world_hint=True,
 )
+
+_OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
 @dataclass(slots=True)
@@ -78,8 +88,8 @@ mcp = MCPServer(
         "Interact with GitHub via the ``gh`` CLI. Prefer catalog tools before "
         "writing. Use search tools for discovery. Use write tools (issue, PR, repo, "
         "release creation) only when a GitHub change is necessary; they are disabled "
-        "unless explicitly enabled and, by default, require human confirmation through "
-        "MCP elicitation."
+        "unless explicitly enabled. Approval is handled by the MCP host; the server "
+        "also enforces deployment repository and operation policy."
     ),
     lifespan=app_lifespan,
     version="0.1.0",
@@ -90,34 +100,63 @@ def _app(ctx: Context[AppContext]) -> AppContext:
     return ctx.request_context.lifespan_context
 
 
-async def _resolve_write_approval(
-    ctx: Context,
-) -> CommandApproval | Elicit[CommandApproval]:
-    """Resolve write approval outside model-controlled tool arguments."""
+def _configured_values(raw: str) -> set[str]:
+    return {value.strip().casefold() for value in raw.split(",") if value.strip()}
 
-    app = ctx.request_context.lifespan_context
-    if not isinstance(app, AppContext):
-        raise RuntimeError("MCP lifespan context is unavailable")
+
+def _validate_repository(owner: str, repo: str) -> None:
+    if not _OWNER_RE.fullmatch(owner) or not _REPO_RE.fullmatch(repo) or repo in {".", ".."}:
+        raise ValueError("owner and repo must be canonical GitHub names without path separators")
+
+
+def _require_write_enabled(
+    app: AppContext,
+    owner: str,
+    repo: str,
+    *,
+    action: str,
+) -> None:
+    """Enforce server-side write, repository, and high-risk action policy."""
+
+    _validate_repository(owner, repo)
+    _require_action_enabled(app, action)
+
+    allowed_repositories = _configured_values(app.settings.allowed_repositories)
+    allowed_owners = _configured_values(app.settings.allowed_owners)
+    target = f"{owner}/{repo}".casefold()
+    if (allowed_repositories or allowed_owners) and (
+        target not in allowed_repositories and owner.casefold() not in allowed_owners
+    ):
+        raise RuntimeError(f"GitHub writes are not allowed for repository {owner}/{repo}")
+
+
+def _require_action_enabled(app: AppContext, action: str) -> None:
+    """Enforce global and high-risk operation switches before target discovery."""
 
     if not app.settings.allow_write_commands:
-        return CommandApproval(approved=False)
-    if not app.settings.confirm_write_commands:
-        return CommandApproval(approved=True)
+        raise RuntimeError("GitHub writes are disabled by MCP_GH_ALLOW_WRITE_COMMANDS")
 
-    return Elicit(
-        "Execute this GitHub write command? It may create or modify "
-        "GitHub resources. Review the tool call carefully before approving.",
-        CommandApproval,
-    )
+    action_settings = {
+        "repo_create": app.settings.allow_repo_creation,
+        "release_create": app.settings.allow_release_creation,
+        "workflow_dispatch": app.settings.allow_workflow_dispatch,
+    }
+    if action in action_settings and not action_settings[action]:
+        env_name = {
+            "repo_create": "MCP_GH_ALLOW_REPO_CREATION",
+            "release_create": "MCP_GH_ALLOW_RELEASE_CREATION",
+            "workflow_dispatch": "MCP_GH_ALLOW_WORKFLOW_DISPATCH",
+        }[action]
+        raise RuntimeError(f"GitHub action {action!r} is disabled by {env_name}")
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_info(ctx: Context[AppContext]) -> dict[str, Any]:
     """Return gh CLI version, authentication status, and active account."""
 
     app = _app(ctx)
     # gh auth status uses --json hosts (not version)
-    auth_result = app.client.run(
+    auth_result = await app.client.run(
         "auth",
         "status",
         "--json",
@@ -125,7 +164,7 @@ async def gh_info(ctx: Context[AppContext]) -> dict[str, Any]:
     )
     hosts = auth_result.get("hosts", {})
     # gh --version prints to stdout (not JSON)
-    version_result = app.client.run("version", json_output=False)
+    version_result = await app.client.run("version", json_output=False)
     version_line = version_result.get("stdout", "") or ""
     version = (
         version_line.strip().split()[2] if len(version_line.strip().split()) > 2 else "unknown"
@@ -190,6 +229,30 @@ def _created_url(result: Any, resource: str) -> str:
     raise RuntimeError(f"{resource} was created, but gh returned no valid resource URL")
 
 
+def _optional_created_url(result: Any) -> str | None:
+    try:
+        return _created_url(result, "Resource")
+    except RuntimeError:
+        return None
+
+
+def _trailing_number(url: str | None) -> int:
+    if not url:
+        return 0
+    try:
+        return int(url.rstrip("/").rsplit("/", 1)[-1])
+    except ValueError:
+        return 0
+
+
+def _readback_warning(resource: str, locator: str | None = None) -> str:
+    location = f" at {locator}" if locator else ""
+    return (
+        f"{resource} write completed{location}, but structured readback failed. "
+        "Do not retry automatically; verify the resource first."
+    )
+
+
 def _created_json(result: Any, resource: str) -> dict[str, Any]:
     """Parse the response body from a successful gh api write command."""
 
@@ -205,10 +268,10 @@ def _created_json(result: Any, resource: str) -> dict[str, Any]:
     return parsed
 
 
-def _get_label(client: GhClient, owner: str, repo: str, name: str) -> dict[str, Any]:
+async def _get_label(client: GhClient, owner: str, repo: str, name: str) -> dict[str, Any]:
     """Read a label after a write using its exact REST resource path."""
 
-    result = client.run(
+    result = await client.run(
         "api",
         f"repos/{owner}/{repo}/labels/{quote(name, safe='')}",
     )
@@ -230,7 +293,7 @@ def _workflow_run_id(url: str) -> int:
         ) from exc
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_search_repos(
     query: str,
     *,
@@ -264,7 +327,7 @@ async def gh_search_repos(
         "--",
     ]
     args.extend(shlex.split(query))
-    result = app.client.run(*args)
+    result = await app.client.run(*args)
     items, total = _parse_search_result(result)
     truncated = len(items) >= limit
     return SearchResults(
@@ -275,7 +338,7 @@ async def gh_search_repos(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_search_issues(
     query: str,
     *,
@@ -309,7 +372,7 @@ async def gh_search_issues(
         "--",
     ]
     args.extend(shlex.split(query))
-    result = app.client.run(*args)
+    result = await app.client.run(*args)
     items, total = _parse_search_result(result)
     truncated = len(items) >= limit
     return SearchResults(
@@ -320,7 +383,7 @@ async def gh_search_issues(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_search_code(
     query: str,
     *,
@@ -345,7 +408,7 @@ async def gh_search_code(
         "--",
     ]
     args.extend(shlex.split(query))
-    result = app.client.run(*args)
+    result = await app.client.run(*args)
     items, total = _parse_search_result(result)
     truncated = len(items) >= limit
     return SearchResults(
@@ -361,7 +424,7 @@ async def gh_search_code(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_list_issues(
     owner: str,
     repo: str,
@@ -395,7 +458,7 @@ async def gh_list_issues(
     if labels:
         args.extend(["--labels", labels])
 
-    result = app.client.run(*args)
+    result = await app.client.run(*args)
     items: list[Any] = result if isinstance(result, list) else []
     return SearchResults(
         total_count=len(items),
@@ -405,7 +468,7 @@ async def gh_list_issues(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_get_issue(
     owner: str,
     repo: str,
@@ -419,7 +482,7 @@ async def gh_get_issue(
     fields = (
         "title,url,number,state,author,body,createdAt,updatedAt,closedAt,labels,comments,milestone"
     )
-    result = app.client.run(
+    result = await app.client.run(
         "issue",
         "view",
         str(number),
@@ -435,7 +498,7 @@ async def gh_get_issue(
     return IssueInfo.model_validate(result)
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_ADD_EXTERNAL)
 async def gh_create_issue(
     owner: str,
     repo: str,
@@ -445,23 +508,15 @@ async def gh_create_issue(
     assignees: list[str] | None = None,
     *,
     ctx: Context[AppContext],
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> IssueCreate:
     """Create a new issue in a repository.
 
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. With the
-    default MCP_GH_CONFIRM_WRITE_COMMANDS=true, MCP asks a human to approve
-    the command before executing.
+    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host
+    is responsible for user-facing approval.
     """
 
     app = _app(ctx)
-    if not approval.approved:
-        return IssueCreate(
-            number=0,
-            title=title,
-            url="",
-            message="Issue creation cancelled; no GitHub issue was created.",
-        )
+    _require_write_enabled(app, owner, repo, action="issue_create")
 
     args = [
         "issue",
@@ -470,9 +525,9 @@ async def gh_create_issue(
         f"{owner}/{repo}",
         "--title",
         title,
+        "--body-file",
+        "-",
     ]
-    if body:
-        args.extend(["--body", body])
     if labels:
         for label in labels:
             args.extend(["--label", label])
@@ -480,10 +535,20 @@ async def gh_create_issue(
         for assignee in assignees:
             args.extend(["--assignee", assignee])
 
-    create_result = app.client.run(*args, json_output=False)
-    created_url = _created_url(create_result, "Issue")
+    create_result = await app.client.run(*args, json_output=False, stdin_text=body or "")
+    created_url = _optional_created_url(create_result)
+    if created_url is None:
+        warning = _readback_warning("Issue")
+        return IssueCreate(
+            number=0,
+            title=title,
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     try:
-        result = app.client.run(
+        result = await app.client.run(
             "issue",
             "view",
             created_url,
@@ -492,10 +557,16 @@ async def gh_create_issue(
             "--json",
             "title,number,url",
         )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Issue was created at {created_url}, but its structured details could not be read"
-        ) from exc
+    except RuntimeError:
+        warning = _readback_warning("Issue", created_url)
+        return IssueCreate(
+            number=_trailing_number(created_url),
+            title=title,
+            url=created_url,
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return IssueCreate(
         number=result.get("number", 0),
         title=result.get("title", title),
@@ -509,7 +580,7 @@ async def gh_create_issue(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_list_prs(
     owner: str,
     repo: str,
@@ -530,7 +601,7 @@ async def gh_list_prs(
         "labels,comments,headRefName,baseRefName,isDraft,"
         "additions,deletions,changedFiles"
     )
-    result = app.client.run(
+    result = await app.client.run(
         "pr",
         "list",
         "--repo",
@@ -551,7 +622,7 @@ async def gh_list_prs(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_get_pr(
     owner: str,
     repo: str,
@@ -567,7 +638,7 @@ async def gh_get_pr(
         "labels,comments,headRefName,baseRefName,isDraft,"
         "additions,deletions,changedFiles"
     )
-    result = app.client.run(
+    result = await app.client.run(
         "pr",
         "view",
         str(number),
@@ -583,7 +654,7 @@ async def gh_get_pr(
     return PullRequestInfo.model_validate(result)
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_ADD_EXTERNAL)
 async def gh_create_pr(
     owner: str,
     repo: str,
@@ -597,23 +668,15 @@ async def gh_create_pr(
     labels: list[str] | None = None,
     assignees: list[str] | None = None,
     review_users: list[str] | None = None,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> PullRequestCreate:
     """Create a new pull request in a repository.
 
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. With the
-    default MCP_GH_CONFIRM_WRITE_COMMANDS=true, MCP asks a human to approve
-    the command before executing.
+    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host
+    is responsible for user-facing approval.
     """
 
     app = _app(ctx)
-    if not approval.approved:
-        return PullRequestCreate(
-            number=0,
-            title=title,
-            url="",
-            message="Pull request creation cancelled; no GitHub PR was created.",
-        )
+    _require_write_enabled(app, owner, repo, action="pr_create")
 
     args = [
         "pr",
@@ -622,8 +685,8 @@ async def gh_create_pr(
         f"{owner}/{repo}",
         "--title",
         title,
-        "--body",
-        body,
+        "--body-file",
+        "-",
         "--head",
         head,
         "--base",
@@ -641,10 +704,20 @@ async def gh_create_pr(
         for user in review_users:
             args.extend(["--reviewer", user])
 
-    create_result = app.client.run(*args, json_output=False)
-    created_url = _created_url(create_result, "Pull request")
+    create_result = await app.client.run(*args, json_output=False, stdin_text=body)
+    created_url = _optional_created_url(create_result)
+    if created_url is None:
+        warning = _readback_warning("Pull request")
+        return PullRequestCreate(
+            number=0,
+            title=title,
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     try:
-        result = app.client.run(
+        result = await app.client.run(
             "pr",
             "view",
             created_url,
@@ -653,10 +726,16 @@ async def gh_create_pr(
             "--json",
             "title,number,url",
         )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Pull request was created at {created_url}, but structured readback failed"
-        ) from exc
+    except RuntimeError:
+        warning = _readback_warning("Pull request", created_url)
+        return PullRequestCreate(
+            number=_trailing_number(created_url),
+            title=title,
+            url=created_url,
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return PullRequestCreate(
         number=result.get("number", 0),
         title=result.get("title", title),
@@ -670,7 +749,7 @@ async def gh_create_pr(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_get_repo(
     owner: str,
     repo: str,
@@ -687,7 +766,7 @@ async def gh_get_repo(
         "nameWithOwner,name,owner,description,url,isPrivate,isFork,primaryLanguage,"
         "stargazerCount,forkCount,createdAt,pushedAt,defaultBranchRef,licenseInfo"
     )
-    result = app.client.run(
+    result = await app.client.run(
         "repo",
         "view",
         f"{owner}/{repo}",
@@ -707,7 +786,7 @@ async def gh_get_repo(
     return RepoInfo.model_validate(result)
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_list_repos(
     *,
     ctx: Context[AppContext],
@@ -749,7 +828,7 @@ async def gh_list_repos(
     elif t in ("public", "private", "internal"):
         args.extend(["--visibility", t])
 
-    result = app.client.run(*args)
+    result = await app.client.run(*args)
     items: list[Any] = result if isinstance(result, list) else []
     return SearchResults(
         total_count=len(items),
@@ -759,7 +838,7 @@ async def gh_list_repos(
     )
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_ADD_EXTERNAL)
 async def gh_create_repo(
     name: str,
     *,
@@ -767,27 +846,35 @@ async def gh_create_repo(
     description: str | None = None,
     private: bool = False,
     auto_init: bool = False,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> RepoCreate:
     """Create a new repository.
 
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. With the
-    default MCP_GH_CONFIRM_WRITE_COMMANDS=true, MCP asks a human to approve
-    the command before executing.
+    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host
+    is responsible for user-facing approval.
     """
 
     app = _app(ctx)
-    if not approval.approved:
-        return RepoCreate(
-            name=name,
-            url="",
-            message="Repository creation cancelled; no GitHub repo was created.",
-        )
+    _require_action_enabled(app, "repo_create")
+    if name.count("/") > 1:
+        raise ValueError("repository name must be REPO or OWNER/REPO")
+    if "/" in name:
+        owner, repo_name = name.split("/", 1)
+    else:
+        account = await app.client.run("api", "user")
+        owner_login = account.get("login") if isinstance(account, dict) else None
+        if not isinstance(owner_login, str) or not owner_login:
+            raise RuntimeError(
+                "Unable to determine the authenticated owner before repository creation"
+            )
+        owner = owner_login
+        repo_name = name
+    _require_write_enabled(app, owner, repo_name, action="repo_create")
+    full_name = f"{owner}/{repo_name}"
 
     args = [
         "repo",
         "create",
-        name,
+        full_name,
         "--private" if private else "--public",
     ]
     if description:
@@ -795,28 +882,24 @@ async def gh_create_repo(
     if auto_init:
         args.append("--add-readme")
 
-    app.client.run(*args, json_output=False)
-    full_name = name
-    if "/" not in full_name:
-        account = app.client.run("api", "user")
-        login = account.get("login") if isinstance(account, dict) else None
-        if not isinstance(login, str) or not login:
-            raise RuntimeError(
-                f"Repository {name!r} was created, but the authenticated owner could not be read"
-            )
-        full_name = f"{login}/{name}"
+    await app.client.run(*args, json_output=False)
     try:
-        result = app.client.run(
+        result = await app.client.run(
             "repo",
             "view",
             full_name,
             "--json",
             "nameWithOwner,url",
         )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Repository {full_name!r} was created, but its structured details could not be read"
-        ) from exc
+    except RuntimeError:
+        warning = _readback_warning("Repository", full_name)
+        return RepoCreate(
+            name=full_name,
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return RepoCreate(
         name=result.get("nameWithOwner", full_name),
         url=result.get("url", ""),
@@ -829,7 +912,7 @@ async def gh_create_repo(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_list_releases(
     owner: str,
     repo: str,
@@ -842,7 +925,7 @@ async def gh_list_releases(
     app = _app(ctx)
     limit = app.client.clamp_max_results(per_page)
     fields = "tagName,name,isDraft,isPrerelease,createdAt,publishedAt"
-    result = app.client.run(
+    result = await app.client.run(
         "release",
         "list",
         "--repo",
@@ -861,7 +944,7 @@ async def gh_list_releases(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_get_release(
     owner: str,
     repo: str,
@@ -873,7 +956,7 @@ async def gh_get_release(
 
     app = _app(ctx)
     fields = "tagName,name,url,isDraft,isPrerelease,createdAt,publishedAt"
-    result = app.client.run(
+    result = await app.client.run(
         "release",
         "view",
         tag,
@@ -885,7 +968,7 @@ async def gh_get_release(
     return ReleaseInfo.model_validate(result)
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_ADD_EXTERNAL)
 async def gh_create_release(
     owner: str,
     repo: str,
@@ -897,22 +980,15 @@ async def gh_create_release(
     draft: bool = False,
     prerelease: bool = False,
     target: str | None = None,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> ReleaseCreate:
     """Create a new release in a repository.
 
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. With the
-    default MCP_GH_CONFIRM_WRITE_COMMANDS=true, MCP asks a human to approve
-    the command before executing.
+    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host
+    is responsible for user-facing approval.
     """
 
     app = _app(ctx)
-    if not approval.approved:
-        return ReleaseCreate(
-            tag_name=tag_name,
-            url="",
-            message="Release creation cancelled; no GitHub release was created.",
-        )
+    _require_write_enabled(app, owner, repo, action="release_create")
 
     args = [
         "release",
@@ -920,11 +996,11 @@ async def gh_create_release(
         tag_name,
         "--repo",
         f"{owner}/{repo}",
+        "--notes-file",
+        "-",
     ]
     if name:
         args.extend(["--title", name])
-    if body:
-        args.extend(["--notes", body])
     if draft:
         args.append("--draft")
     if prerelease:
@@ -932,9 +1008,9 @@ async def gh_create_release(
     if target:
         args.extend(["--target", target])
 
-    app.client.run(*args, json_output=False)
+    await app.client.run(*args, json_output=False, stdin_text=body or "")
     try:
-        result = app.client.run(
+        result = await app.client.run(
             "release",
             "view",
             tag_name,
@@ -943,10 +1019,15 @@ async def gh_create_release(
             "--json",
             "tagName,url",
         )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Release {tag_name!r} was created, but its structured details could not be read"
-        ) from exc
+    except RuntimeError:
+        warning = _readback_warning("Release", tag_name)
+        return ReleaseCreate(
+            tag_name=tag_name,
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return ReleaseCreate(
         tag_name=result.get("tagName", tag_name),
         url=result.get("url", ""),
@@ -959,7 +1040,7 @@ async def gh_create_release(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_list_workflows(
     owner: str,
     repo: str,
@@ -989,7 +1070,7 @@ async def gh_list_workflows(
     if state != "active":
         args.extend(["--all"])
 
-    result = app.client.run(*args)
+    result = await app.client.run(*args)
     items: list[Any] = result if isinstance(result, list) else []
     return SearchResults(
         total_count=len(items),
@@ -999,7 +1080,7 @@ async def gh_list_workflows(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_get_workflow(
     owner: str,
     repo: str,
@@ -1010,14 +1091,14 @@ async def gh_get_workflow(
     """Get details of a specific GitHub Actions workflow."""
 
     app = _app(ctx)
-    result = app.client.run(
+    result = await app.client.run(
         "api",
         f"repos/{owner}/{repo}/actions/workflows/{workflow_id}",
     )
     return WorkflowInfo.model_validate(result)
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_MUTATE_EXTERNAL)
 async def gh_run_workflow(
     owner: str,
     repo: str,
@@ -1026,7 +1107,6 @@ async def gh_run_workflow(
     *,
     ctx: Context[AppContext],
     fields: list[str] | None = None,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> WorkflowRunCreate:
     """Trigger a workflow dispatch event for a GitHub Actions workflow.
 
@@ -1036,12 +1116,7 @@ async def gh_run_workflow(
     """
 
     app = _app(ctx)
-    if not approval.approved:
-        return WorkflowRunCreate(
-            run_id=None,
-            url="",
-            message="Workflow dispatch cancelled; no GitHub Actions run was created.",
-        )
+    _require_write_enabled(app, owner, repo, action="workflow_dispatch")
 
     args = [
         "workflow",
@@ -1054,21 +1129,30 @@ async def gh_run_workflow(
     ]
     if fields:
         for field in fields:
+            if "=" not in field or not field.split("=", 1)[0]:
+                raise ValueError("workflow fields must use non-empty key=value form")
             args.extend(["-f", field])
+        stdin_text = None
+    else:
+        args.append("--json")
+        stdin_text = "{}"
 
-    dispatch_result = app.client.run(*args, json_output=False)
+    dispatch_result = await app.client.run(*args, json_output=False, stdin_text=stdin_text)
     stdout = dispatch_result.get("stdout", "") if isinstance(dispatch_result, dict) else ""
     if not isinstance(stdout, str) or not stdout.strip():
+        warning = _readback_warning("Workflow dispatch")
         return WorkflowRunCreate(
             run_id=None,
             url=None,
-            message="Workflow dispatch triggered successfully; GitHub did not return a run URL.",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
         )
 
     created_url = _created_url(dispatch_result, "Workflow run")
     run_id = _workflow_run_id(created_url)
     try:
-        result = app.client.run(
+        result = await app.client.run(
             "run",
             "view",
             str(run_id),
@@ -1077,10 +1161,15 @@ async def gh_run_workflow(
             "--json",
             "databaseId,url",
         )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Workflow run was dispatched at {created_url}, but structured readback failed"
-        ) from exc
+    except RuntimeError:
+        warning = _readback_warning("Workflow dispatch", created_url)
+        return WorkflowRunCreate(
+            run_id=run_id,
+            url=created_url,
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return WorkflowRunCreate(
         run_id=result.get("databaseId", run_id),
         url=result.get("url", created_url),
@@ -1093,7 +1182,7 @@ async def gh_run_workflow(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_list_runs(
     owner: str,
     repo: str,
@@ -1130,7 +1219,7 @@ async def gh_list_runs(
     if status:
         args.extend(["--status", status])
 
-    result = app.client.run(*args)
+    result = await app.client.run(*args)
     items: list[Any] = result if isinstance(result, list) else []
     return SearchResults(
         total_count=len(items),
@@ -1140,7 +1229,7 @@ async def gh_list_runs(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_get_run(
     owner: str,
     repo: str,
@@ -1155,7 +1244,7 @@ async def gh_get_run(
         "databaseId,name,displayTitle,headBranch,headSha,conclusion,status,"
         "event,url,createdAt,updatedAt,startedAt,workflowName"
     )
-    result = app.client.run(
+    result = await app.client.run(
         "run",
         "view",
         str(run_id),
@@ -1167,7 +1256,7 @@ async def gh_get_run(
     return WorkflowRun.model_validate(result)
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_watch_run(
     owner: str,
     repo: str,
@@ -1175,59 +1264,43 @@ async def gh_watch_run(
     *,
     ctx: Context[AppContext],
     interval: int = 10,
-    compact: bool = False,
     exit_status: bool = False,
+    timeout_seconds: int = 1800,
 ) -> WorkflowRunWatchResult:
-    """Watch a GitHub Actions workflow run until completion.
-
-    This is a blocking call that waits for the run to finish.
-    Uses gh run watch with --interval, --compact, and --exit-status flags.
-    """
+    """Poll a GitHub Actions workflow run until completion or timeout."""
 
     app = _app(ctx)
-    args = [
-        "run",
-        "watch",
-        str(run_id),
-        "--repo",
-        f"{owner}/{repo}",
-        "--interval",
-        str(interval),
-    ]
-    if compact:
-        args.append("--compact")
-    if exit_status:
-        args.append("--exit-status")
+    _validate_repository(owner, repo)
+    if interval < 1 or timeout_seconds < 1:
+        raise ValueError("interval and timeout_seconds must be positive")
 
-    # gh run watch is a blocking command that outputs to stdout/stderr
-    app.client.run(*args, json_output=False)
-
-    # After watch completes, fetch final status
-    view_args = [
-        "run",
-        "view",
-        str(run_id),
-        "--json",
-        "status,conclusion,url",
-    ]
-    if owner and repo:
-        view_args.extend(["--repo", f"{owner}/{repo}"])
-
-    view_result = app.client.run(*view_args)
-    if isinstance(view_result, dict):
-        conclusion = view_result.get("conclusion", "unknown")
-        return WorkflowRunWatchResult(
-            run_id=run_id,
-            conclusion=conclusion,
-            status=view_result.get("status"),
-            url=view_result.get("url"),
-            message=f"Run #{run_id} completed with conclusion: {conclusion}",
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        view_result = await app.client.run(
+            "run",
+            "view",
+            str(run_id),
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            "status,conclusion,url",
         )
-
-    return WorkflowRunWatchResult(
-        run_id=run_id,
-        message="Watch completed (unable to parse final status)",
-    )
+        status = view_result.get("status") if isinstance(view_result, dict) else None
+        conclusion = view_result.get("conclusion") if isinstance(view_result, dict) else None
+        url = view_result.get("url") if isinstance(view_result, dict) else None
+        if status == "completed":
+            if exit_status and conclusion != "success":
+                raise RuntimeError(f"Run #{run_id} completed with conclusion: {conclusion}")
+            return WorkflowRunWatchResult(
+                run_id=run_id,
+                conclusion=conclusion,
+                status=status,
+                url=url,
+                message=f"Run #{run_id} completed with conclusion: {conclusion or 'unknown'}",
+            )
+        if asyncio.get_running_loop().time() >= deadline:
+            raise RuntimeError(f"Run #{run_id} did not complete within {timeout_seconds}s")
+        await asyncio.sleep(interval)
 
 
 # ---------------------------------------------------------------------------
@@ -1235,7 +1308,7 @@ async def gh_watch_run(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_MUTATE_EXTERNAL)
 async def gh_edit_issue(
     owner: str,
     repo: str,
@@ -1250,24 +1323,32 @@ async def gh_edit_issue(
     assignees_remove: list[str] | None = None,
     milestone: int | None = None,
     remove_milestone: bool = False,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> IssueEdit:
     """Edit an existing issue in a repository.
 
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. With the
-    default MCP_GH_CONFIRM_WRITE_COMMANDS=true, MCP asks a human to approve
-    the command before executing.
+    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host
+    is responsible for user-facing approval.
     """
 
     app = _app(ctx)
-    if not approval.approved:
-        return IssueEdit(
-            number=number,
-            title="",
-            state="",
-            url="",
-            message="Issue edit cancelled; no changes were made.",
+    _require_write_enabled(app, owner, repo, action="issue_edit")
+    if milestone is not None and remove_milestone:
+        raise ValueError("milestone and remove_milestone are mutually exclusive")
+    if not any(
+        (
+            title is not None,
+            body is not None,
+            labels_add,
+            labels_remove,
+            assignees_add,
+            assignees_remove,
+            milestone is not None,
+            remove_milestone,
         )
+    ):
+        raise ValueError("at least one issue edit must be provided")
+    if title == "":
+        raise ValueError("issue title cannot be empty")
 
     args = [
         "issue",
@@ -1276,10 +1357,10 @@ async def gh_edit_issue(
         "--repo",
         f"{owner}/{repo}",
     ]
-    if title:
+    if title is not None:
         args.extend(["--title", title])
-    if body:
-        args.extend(["--body", body])
+    if body is not None:
+        args.extend(["--body-file", "-"])
     if labels_add:
         for label in labels_add:
             args.extend(["--add-label", label])
@@ -1293,7 +1374,7 @@ async def gh_edit_issue(
         for assignee in assignees_remove:
             args.extend(["--remove-assignee", assignee])
     if milestone is not None:
-        milestone_result = app.client.run(
+        milestone_result = await app.client.run(
             "api",
             f"repos/{owner}/{repo}/milestones/{milestone}",
         )
@@ -1304,9 +1385,9 @@ async def gh_edit_issue(
     if remove_milestone:
         args.append("--remove-milestone")
 
-    app.client.run(*args, json_output=False)
+    await app.client.run(*args, json_output=False, stdin_text=body if body is not None else None)
     try:
-        result = app.client.run(
+        result = await app.client.run(
             "issue",
             "view",
             str(number),
@@ -1315,10 +1396,17 @@ async def gh_edit_issue(
             "--json",
             "title,number,state,url",
         )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Issue #{number} was edited, but its structured details could not be read"
-        ) from exc
+    except RuntimeError:
+        warning = _readback_warning("Issue edit", f"{owner}/{repo}#{number}")
+        return IssueEdit(
+            number=number,
+            title=title or "",
+            state="",
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return IssueEdit(
         number=result.get("number", number),
         title=result.get("title", ""),
@@ -1333,7 +1421,7 @@ async def gh_edit_issue(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_list_labels(
     owner: str,
     repo: str,
@@ -1346,7 +1434,7 @@ async def gh_list_labels(
     app = _app(ctx)
     limit = app.client.clamp_max_results(per_page)
     fields = "name,color,description,createdAt,updatedAt,url,isDefault"
-    result = app.client.run(
+    result = await app.client.run(
         "label",
         "list",
         "--repo",
@@ -1365,7 +1453,7 @@ async def gh_list_labels(
     )
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_ADD_EXTERNAL)
 async def gh_create_label(
     owner: str,
     repo: str,
@@ -1374,28 +1462,43 @@ async def gh_create_label(
     *,
     ctx: Context[AppContext],
     description: str | None = None,
-    force: bool = False,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> LabelCreate:
-    """Create a new label in a repository.
-
-    color: 6-character hex color code (e.g. 'ff0000' for red).
-    force: overwrite existing label's color and description if it exists.
-
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. With the
-    default MCP_GH_CONFIRM_WRITE_COMMANDS=true, MCP asks a human to approve
-    the command before executing.
-    """
+    """Create a new label without overwriting an existing label."""
 
     app = _app(ctx)
-    if not approval.approved:
-        return LabelCreate(
-            name=name,
-            color=color,
-            description=description,
-            url="",
-            message="Label creation cancelled; no GitHub label was created.",
-        )
+    _require_write_enabled(app, owner, repo, action="label_create")
+    return await _create_label(app, owner, repo, name, color, description, force=False)
+
+
+@mcp.tool(annotations=_MUTATE_EXTERNAL)
+async def gh_upsert_label(
+    owner: str,
+    repo: str,
+    name: str,
+    color: str,
+    *,
+    ctx: Context[AppContext],
+    description: str | None = None,
+) -> LabelCreate:
+    """Create a label or overwrite the existing label's color and description."""
+
+    app = _app(ctx)
+    _require_write_enabled(app, owner, repo, action="label_upsert")
+    return await _create_label(app, owner, repo, name, color, description, force=True)
+
+
+async def _create_label(
+    app: AppContext,
+    owner: str,
+    repo: str,
+    name: str,
+    color: str,
+    description: str | None,
+    *,
+    force: bool,
+) -> LabelCreate:
+    if not re.fullmatch(r"[0-9A-Fa-f]{6}", color):
+        raise ValueError("label color must be exactly six hexadecimal characters")
 
     args = [
         "label",
@@ -1406,18 +1509,25 @@ async def gh_create_label(
         "--color",
         color,
     ]
-    if description:
+    if description is not None:
         args.extend(["--description", description])
     if force:
         args.append("--force")
 
-    app.client.run(*args, json_output=False)
+    await app.client.run(*args, json_output=False)
     try:
-        result = _get_label(app.client, owner, repo, name)
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Label {name!r} was created, but its structured details could not be read"
-        ) from exc
+        result = await _get_label(app.client, owner, repo, name)
+    except RuntimeError:
+        warning = _readback_warning("Label", name)
+        return LabelCreate(
+            name=name,
+            color=color,
+            description=description,
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return LabelCreate(
         name=result.get("name", name),
         color=result.get("color", color),
@@ -1427,7 +1537,7 @@ async def gh_create_label(
     )
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_MUTATE_EXTERNAL)
 async def gh_edit_label(
     owner: str,
     repo: str,
@@ -1437,24 +1547,17 @@ async def gh_edit_label(
     new_name: str | None = None,
     color: str | None = None,
     description: str | None = None,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> LabelEdit:
-    """Edit an existing label in a repository.
-
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. With the
-    default MCP_GH_CONFIRM_WRITE_COMMANDS=true, MCP asks a human to approve
-    the command before executing.
-    """
+    """Edit an existing label in a repository."""
 
     app = _app(ctx)
-    if not approval.approved:
-        return LabelEdit(
-            name=name,
-            color="",
-            description="",
-            url="",
-            message="Label edit cancelled; no GitHub label was edited.",
-        )
+    _require_write_enabled(app, owner, repo, action="label_edit")
+    if new_name is None and color is None and description is None:
+        raise ValueError("at least one label edit must be provided")
+    if new_name == "":
+        raise ValueError("new label name cannot be empty")
+    if color is not None and not re.fullmatch(r"[0-9A-Fa-f]{6}", color):
+        raise ValueError("label color must be exactly six hexadecimal characters")
 
     args = [
         "label",
@@ -1463,21 +1566,28 @@ async def gh_edit_label(
         "--repo",
         f"{owner}/{repo}",
     ]
-    if new_name:
+    if new_name is not None:
         args.extend(["--name", new_name])
-    if color:
+    if color is not None:
         args.extend(["--color", color])
-    if description:
+    if description is not None:
         args.extend(["--description", description])
 
-    app.client.run(*args, json_output=False)
+    await app.client.run(*args, json_output=False)
     result_name = new_name or name
     try:
-        result = _get_label(app.client, owner, repo, result_name)
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Label {name!r} was edited, but its structured details could not be read"
-        ) from exc
+        result = await _get_label(app.client, owner, repo, result_name)
+    except RuntimeError:
+        warning = _readback_warning("Label edit", result_name)
+        return LabelEdit(
+            name=result_name,
+            color=color or "",
+            description=description,
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return LabelEdit(
         name=result.get("name", name),
         color=result.get("color", ""),
@@ -1492,7 +1602,7 @@ async def gh_edit_label(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_READ_ONLY_TOOL)
+@mcp.tool(annotations=_READ_EXTERNAL)
 async def gh_list_milestones(
     owner: str,
     repo: str,
@@ -1508,7 +1618,7 @@ async def gh_list_milestones(
 
     app = _app(ctx)
     limit = app.client.clamp_max_results(per_page)
-    result = app.client.run(
+    result = await app.client.run(
         "api",
         f"repos/{owner}/{repo}/milestones",
         "-X",
@@ -1537,7 +1647,7 @@ async def gh_list_milestones(
     )
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_ADD_EXTERNAL)
 async def gh_create_milestone(
     owner: str,
     repo: str,
@@ -1547,29 +1657,23 @@ async def gh_create_milestone(
     description: str | None = None,
     due_on: str | None = None,
     state: str = "open",
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> MilestoneCreate:
     """Create a new milestone in a repository via the GitHub API.
 
     due_on: due date in ISO format (e.g. '2026-12-31').
     state: open or closed (default: open).
 
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. With the
-    default MCP_GH_CONFIRM_WRITE_COMMANDS=true, MCP asks a human to approve
-    the command before executing.
+    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host
+    is responsible for user-facing approval.
     """
 
     app = _app(ctx)
-    if not approval.approved:
-        return MilestoneCreate(
-            number=0,
-            title=title,
-            url="",
-            message="Milestone creation cancelled; no GitHub milestone was created.",
-        )
+    _require_write_enabled(app, owner, repo, action="milestone_create")
+    if state not in {"open", "closed"}:
+        raise ValueError("milestone state must be open or closed")
 
     payload: dict[str, Any] = {"title": title, "state": state}
-    if description:
+    if description is not None:
         payload["description"] = description
     if due_on:
         payload["due_on"] = due_on
@@ -1580,7 +1684,7 @@ async def gh_create_milestone(
         payload_path = f.name
 
     try:
-        create_result = app.client.run(
+        create_result = await app.client.run(
             "api",
             f"repos/{owner}/{repo}/milestones",
             "-X",
@@ -1592,21 +1696,44 @@ async def gh_create_milestone(
     finally:
         os.unlink(payload_path)
 
-    created = _created_json(create_result, "Milestone")
+    try:
+        created = _created_json(create_result, "Milestone")
+    except RuntimeError:
+        warning = _readback_warning("Milestone")
+        return MilestoneCreate(
+            number=0,
+            title=title,
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     number = created.get("number")
     if not isinstance(number, int):
-        raise RuntimeError(
-            "Milestone was created, but the API response did not include its numeric identifier"
+        warning = _readback_warning("Milestone")
+        return MilestoneCreate(
+            number=0,
+            title=title,
+            url=str(created.get("url", "")),
+            readback_completed=False,
+            warning=warning,
+            message=warning,
         )
     try:
-        result = app.client.run(
+        result = await app.client.run(
             "api",
             f"repos/{owner}/{repo}/milestones/{number}",
         )
-    except RuntimeError as exc:
-        raise RuntimeError(
-            f"Milestone #{number} was created, but its structured details could not be read"
-        ) from exc
+    except RuntimeError:
+        warning = _readback_warning("Milestone", f"#{number}")
+        return MilestoneCreate(
+            number=number,
+            title=str(created.get("title", title)),
+            url=str(created.get("url", "")),
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
 
     return MilestoneCreate(
         number=result.get("number", number),
@@ -1624,7 +1751,7 @@ async def gh_create_milestone(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_ADD_EXTERNAL)
 async def gh_create_comment(
     owner: str,
     repo: str,
@@ -1632,31 +1759,38 @@ async def gh_create_comment(
     body: str,
     *,
     ctx: Context[AppContext],
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> CommentCreate:
     """Post a comment on an issue or pull request."""
     app = _app(ctx)
-    if not approval.approved:
-        return CommentCreate(url="", message="Comment creation cancelled.")
+    _require_write_enabled(app, owner, repo, action="comment_create")
 
-    create_result = app.client.run(
+    create_result = await app.client.run(
         "issue",
         "comment",
         str(issue_number),
         "--repo",
         f"{owner}/{repo}",
-        "--body",
-        body,
+        "--body-file",
+        "-",
         json_output=False,
+        stdin_text=body,
     )
-    created_url = _created_url(create_result, "Comment")
+    created_url = _optional_created_url(create_result)
+    if created_url is None:
+        warning = _readback_warning("Comment")
+        return CommentCreate(
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
     return CommentCreate(
         url=created_url,
         message="Comment posted successfully.",
     )
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_ADD_EXTERNAL)
 async def gh_create_branch(
     owner: str,
     repo: str,
@@ -1665,12 +1799,10 @@ async def gh_create_branch(
     *,
     ctx: Context[AppContext],
     base: str | None = None,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> BranchCreate:
     """Create a new branch for an issue."""
     app = _app(ctx)
-    if not approval.approved:
-        return BranchCreate(name=name, message="Branch creation cancelled.")
+    _require_write_enabled(app, owner, repo, action="branch_create")
 
     args = [
         "issue",
@@ -1684,14 +1816,14 @@ async def gh_create_branch(
     if base:
         args.extend(["--base", base])
 
-    app.client.run(*args, json_output=False)
+    await app.client.run(*args, json_output=False)
     return BranchCreate(
         name=name,
         message=f"Branch '{name}' created successfully for issue #{issue_number}.",
     )
 
 
-@mcp.tool(annotations=_WRITE_TOOL)
+@mcp.tool(annotations=_MUTATE_EXTERNAL)
 async def gh_edit_pr(
     owner: str,
     repo: str,
@@ -1705,17 +1837,26 @@ async def gh_edit_pr(
     assignees_add: list[str] | None = None,
     assignees_remove: list[str] | None = None,
     base: str | None = None,
-    approval: Annotated[CommandApproval, Resolve(_resolve_write_approval)],
 ) -> PullRequestEdit:
     """Edit an existing pull request."""
     app = _app(ctx)
-    if not approval.approved:
-        return PullRequestEdit(
-            number=number,
-            title="",
-            url="",
-            message="PR edit cancelled; no changes were made.",
+    _require_write_enabled(app, owner, repo, action="pr_edit")
+    if not any(
+        (
+            title is not None,
+            body is not None,
+            labels_add,
+            labels_remove,
+            assignees_add,
+            assignees_remove,
+            base is not None,
         )
+    ):
+        raise ValueError("at least one pull request edit must be provided")
+    if title == "":
+        raise ValueError("pull request title cannot be empty")
+    if base == "":
+        raise ValueError("pull request base cannot be empty")
 
     args = [
         "pr",
@@ -1724,10 +1865,10 @@ async def gh_edit_pr(
         "--repo",
         f"{owner}/{repo}",
     ]
-    if title:
+    if title is not None:
         args.extend(["--title", title])
-    if body:
-        args.extend(["--body", body])
+    if body is not None:
+        args.extend(["--body-file", "-"])
     if labels_add:
         for label in labels_add:
             args.extend(["--add-label", label])
@@ -1740,22 +1881,33 @@ async def gh_edit_pr(
     if assignees_remove:
         for assignee in assignees_remove:
             args.extend(["--remove-assignee", assignee])
-    if base:
+    if base is not None:
         args.extend(["--base", base])
 
-    app.client.run(*args, json_output=False)
+    await app.client.run(*args, json_output=False, stdin_text=body if body is not None else None)
 
     # Fetch updated details
     fields = "title,url"
-    info_result = app.client.run(
-        "pr",
-        "view",
-        str(number),
-        "--repo",
-        f"{owner}/{repo}",
-        "--json",
-        fields,
-    )
+    try:
+        info_result = await app.client.run(
+            "pr",
+            "view",
+            str(number),
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            fields,
+        )
+    except RuntimeError:
+        warning = _readback_warning("Pull request edit", f"{owner}/{repo}#{number}")
+        return PullRequestEdit(
+            number=number,
+            title=title or "",
+            url="",
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
 
     return PullRequestEdit(
         number=number,

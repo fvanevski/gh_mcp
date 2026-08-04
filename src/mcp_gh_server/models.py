@@ -97,7 +97,15 @@ class IssueInfo(BaseModel):
     url: str
 
 
-class IssueCreate(BaseModel):
+class WriteResult(BaseModel):
+    """Shared status for an external write and its optional readback."""
+
+    write_completed: bool = True
+    readback_completed: bool = True
+    warning: str | None = None
+
+
+class IssueCreate(WriteResult):
     """Result of creating an issue."""
 
     number: int
@@ -124,7 +132,7 @@ class PullRequestInfo(IssueInfo):
     changed_files: int = Field(0, alias="changedFiles")
 
 
-class PullRequestCreate(BaseModel):
+class PullRequestCreate(WriteResult):
     """Result of creating a pull request."""
 
     number: int
@@ -133,7 +141,7 @@ class PullRequestCreate(BaseModel):
     message: str
 
 
-class PullRequestEdit(BaseModel):
+class PullRequestEdit(WriteResult):
     """Result of editing a pull request."""
 
     number: int
@@ -168,7 +176,7 @@ class RepoInfo(BaseModel):
     license: Any | None = Field(None, alias="licenseInfo")
 
 
-class RepoCreate(BaseModel):
+class RepoCreate(WriteResult):
     """Result of creating a repository."""
 
     name: str
@@ -176,7 +184,7 @@ class RepoCreate(BaseModel):
     message: str
 
 
-class BranchCreate(BaseModel):
+class BranchCreate(WriteResult):
     """Result of creating a branch."""
 
     name: str
@@ -202,7 +210,7 @@ class ReleaseInfo(BaseModel):
     published_at: str | None = Field(None, alias="publishedAt")
 
 
-class ReleaseCreate(BaseModel):
+class ReleaseCreate(WriteResult):
     """Result of creating a release."""
 
     tag_name: str
@@ -245,7 +253,7 @@ class WorkflowRun(BaseModel):
     workflow_name: str | None = Field(None, alias="workflowName")
 
 
-class WorkflowRunCreate(BaseModel):
+class WorkflowRunCreate(WriteResult):
     """Result of triggering a workflow dispatch."""
 
     run_id: int | None = None
@@ -268,7 +276,7 @@ class WorkflowRunWatchResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class IssueEdit(BaseModel):
+class IssueEdit(WriteResult):
     """Result of editing an issue."""
 
     number: int
@@ -278,7 +286,7 @@ class IssueEdit(BaseModel):
     message: str
 
 
-class CommentCreate(BaseModel):
+class CommentCreate(WriteResult):
     """Result of creating a comment."""
 
     url: str
@@ -302,7 +310,7 @@ class LabelInfo(BaseModel):
     url: str
 
 
-class LabelCreate(BaseModel):
+class LabelCreate(WriteResult):
     """Result of creating a label."""
 
     name: str
@@ -312,7 +320,7 @@ class LabelCreate(BaseModel):
     message: str
 
 
-class LabelEdit(BaseModel):
+class LabelEdit(WriteResult):
     """Result of editing a label."""
 
     name: str
@@ -344,19 +352,10 @@ class MilestoneInfo(BaseModel):
     url: str
 
 
-class MilestoneCreate(BaseModel):
+class MilestoneCreate(WriteResult):
     """Result of creating a milestone."""
 
     number: int
     title: str
     url: str
     message: str
-
-
-# ---------------------------------------------------------------------------
-# Write approval model (MCP elicitation)
-# ---------------------------------------------------------------------------
-
-
-class CommandApproval(BaseModel):
-    approved: bool = Field(description="Approve execution of this GitHub CLI write command")

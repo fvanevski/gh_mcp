@@ -1,12 +1,12 @@
 # MCP 2.0 GitHub CLI Server
 
-A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x
-and runs ``gh`` commands via subprocess with ``--json`` output for structured
-results.
+A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
+runs `gh` asynchronously without a terminal, and returns structured results from
+direct JSON output or a post-write readback.
 
 ## Tools
 
-### Read-only (20)
+### Read-only (19)
 
 - `gh_info`: gh CLI version, authentication status, and active account.
 - `gh_search_repos`: search GitHub repositories with qualifiers.
@@ -24,12 +24,11 @@ results.
 - `gh_get_workflow`: get details of a specific workflow.
 - `gh_list_runs`: list recent GitHub Actions workflow runs.
 - `gh_get_run`: get details of a specific workflow run.
-- `gh_watch_run`: watch a workflow run until completion (blocking).
+- `gh_watch_run`: poll a workflow run until completion or a caller-supplied timeout.
 - `gh_list_labels`: list labels in a repository.
 - `gh_list_milestones`: list milestones in a repository.
-- `gh_create_comment`: create a comment on an issue or PR.
 
-### Write (11)
+### Write (13)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
@@ -38,8 +37,10 @@ results.
 - `gh_run_workflow`: trigger a workflow dispatch event (write, disabled by default).
 - `gh_edit_issue`: edit an existing issue (write, disabled by default).
 - `gh_create_label`: create a new label (write, disabled by default).
+- `gh_upsert_label`: create or overwrite a label (destructive write, disabled by default).
 - `gh_edit_label`: edit an existing label (write, disabled by default).
 - `gh_create_milestone`: create a new milestone (write, disabled by default).
+- `gh_create_comment`: create a comment on an issue or PR (write, disabled by default).
 - `gh_create_branch`: create a branch from an issue's PR (write, disabled by default).
 - `gh_edit_pr`: edit an existing pull request (write, disabled by default).
 
@@ -124,20 +125,39 @@ Write execution is off by default:
 MCP_GH_ALLOW_WRITE_COMMANDS=false
 ```
 
-To enable it while retaining a mandatory human approval prompt:
+To enable writes:
 
 ```dotenv
 MCP_GH_ALLOW_WRITE_COMMANDS=true
-MCP_GH_CONFIRM_WRITE_COMMANDS=true
 ```
 
-The approval is an MCP 2.0 resolver dependency, not a model-visible Boolean
-parameter. The prompt asks a human to confirm before the tool executes.
-Each accepted write command runs via `gh` CLI and commits only after
-successful completion.
+Write tools do not initiate nested MCP elicitation. The MCP host (including
+ChatGPT) is responsible for presenting its native action approval. The server
+independently enforces the write-enable flag, optional repository policy, and
+high-risk operation switches before starting `gh`.
 
-Setting `MCP_GH_CONFIRM_WRITE_COMMANDS=false` removes the human approval
-gate and is not recommended for a general-purpose agent.
+Limit enabled writes to explicit repositories or owners:
+
+```dotenv
+MCP_GH_ALLOWED_REPOSITORIES=fvanevski/project-a,fvanevski/project-b
+MCP_GH_ALLOWED_OWNERS=fvanevski
+```
+
+When either allowlist is non-empty, a target is accepted if its exact
+`owner/repo` or its owner is listed. Fine-grained GitHub token permissions
+remain the primary GitHub-side authorization boundary.
+
+Repository creation, release creation, and workflow dispatch require separate
+opt-in because they can have broader effects:
+
+```dotenv
+MCP_GH_ALLOW_REPO_CREATION=true
+MCP_GH_ALLOW_RELEASE_CREATION=true
+MCP_GH_ALLOW_WORKFLOW_DISPATCH=true
+```
+
+Enable only the operations the deployment actually needs; all three default to
+`false`.
 
 ## Operational limits
 
@@ -147,6 +167,15 @@ gate and is not recommended for a general-purpose agent.
 - All output is JSON-safe: `Decimal` → string, `bytes` → `base64:`
   prefix, datetimes → ISO 8601, infinities → string.
 - Logs are sent to stderr so stdio protocol output is not corrupted.
+- Every `gh` process is noninteractive, receives either closed or explicitly
+  supplied stdin, and runs with prompting, pagers, Git credential prompts,
+  spinners, color, and update notices disabled.
+- User-authored bodies and notes are supplied through stdin rather than command
+  arguments. Debug command logs redact titles and other free-form values.
+- Commands run asynchronously, are terminated with their process group on
+  timeout or cancellation, and default to `MCP_GH_COMMAND_TIMEOUT_SECONDS=30`.
+- Write results distinguish write completion from structured readback. A
+  partial-success warning explicitly instructs callers to verify before retrying.
 - Streamable HTTP binds to `127.0.0.1` by default and uses MCP's
   localhost DNS-rebinding protection.
 - `MCP_GH_LOG_LEVEL` (default: `INFO`) controls logging verbosity;

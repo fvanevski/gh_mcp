@@ -32,16 +32,16 @@ def client(settings: Settings) -> GhClient:
 class TestGhInfo:
     """Basic connectivity test: verify gh is authenticated."""
 
-    def test_info(self, client: GhClient) -> None:
-        result = client.run("auth", "status", "--json", "hosts")
+    async def test_info(self, client: GhClient) -> None:
+        result = await client.run("auth", "status", "--json", "hosts")
         assert "hosts" in result
 
 
 class TestSearchRepos:
     """Search test: find a well-known repository."""
 
-    def test_search_repos(self, client: GhClient) -> None:
-        result = client.run(
+    async def test_search_repos(self, client: GhClient) -> None:
+        result = await client.run(
             "search",
             "repos",
             "--json",
@@ -61,8 +61,8 @@ class TestSearchRepos:
 class TestListIssues:
     """List issues test on a public repository."""
 
-    def test_list_issues(self, client: GhClient) -> None:
-        result = client.run(
+    async def test_list_issues(self, client: GhClient) -> None:
+        result = await client.run(
             "issue",
             "list",
             "--repo",
@@ -82,8 +82,8 @@ class TestListIssues:
 class TestGetRepo:
     """Get repository details test."""
 
-    def test_get_repo(self, client: GhClient) -> None:
-        result = client.run(
+    async def test_get_repo(self, client: GhClient) -> None:
+        result = await client.run(
             "repo",
             "view",
             "cli/cli",
@@ -96,8 +96,8 @@ class TestGetRepo:
 class TestListReleases:
     """List releases test."""
 
-    def test_list_releases(self, client: GhClient) -> None:
-        result = client.run(
+    async def test_list_releases(self, client: GhClient) -> None:
+        result = await client.run(
             "release",
             "list",
             "--repo",
