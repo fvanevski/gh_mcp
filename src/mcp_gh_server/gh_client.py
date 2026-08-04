@@ -17,6 +17,8 @@ from .serialization import to_json_value
 
 logger = logging.getLogger(__name__)
 
+_MAX_GITHUB_ERROR_DETAIL_CHARS = 4_000
+
 _ENV_OVERRIDES = {
     "GH_PROMPT_DISABLED": "1",
     "GH_PAGER": "cat",
@@ -40,7 +42,7 @@ class GhClient:
     async def run(
         self,
         *args: str,
-        expected_returncode: int = 0,
+        expected_returncode: int | set[int] = 0,
         json_output: bool = True,
         stdin_text: str | None = None,
         timeout: float | None = None,
@@ -86,9 +88,20 @@ class GhClient:
         stdout = stdout_bytes.decode(errors="replace").strip()
         stderr = stderr_bytes.decode(errors="replace").strip()
 
-        if process.returncode != expected_returncode:
+        expected_returncodes = (
+            expected_returncode if isinstance(expected_returncode, set) else {expected_returncode}
+        )
+        if process.returncode not in expected_returncodes:
+            github_detail = _github_error_detail(stdout)
+            detail_suffix = f"; GitHub response: {github_detail}" if github_detail else ""
             raise RuntimeError(
-                f"gh command failed (exit {process.returncode}): {stderr or 'no stderr output'}"
+                f"gh command failed (exit {process.returncode}): "
+                f"{stderr or 'no stderr output'}{detail_suffix}"
+            )
+        if process.returncode != 0 and not stdout:
+            raise RuntimeError(
+                f"gh command returned status {process.returncode} without structured output: "
+                f"{stderr or 'no stderr output'}"
             )
 
         if not json_output:
@@ -118,6 +131,51 @@ class GhClient:
         if self.settings.github_token is not None:
             env["GH_TOKEN"] = self.settings.github_token.get_secret_value()
         return env
+
+
+def _github_error_detail(stdout: str) -> str | None:
+    """Extract a bounded, non-secret validation summary from a GitHub JSON error body."""
+
+    if not stdout:
+        return None
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    detail: dict[str, Any] = {}
+    for key in ("message", "documentation_url", "status"):
+        value = payload.get(key)
+        if isinstance(value, (str, int)):
+            detail[key] = value
+
+    errors = payload.get("errors")
+    if isinstance(errors, list):
+        safe_errors: list[str | dict[str, str | int]] = []
+        for error in errors[:20]:
+            if isinstance(error, str):
+                safe_errors.append(error[:1_000])
+            elif isinstance(error, dict):
+                safe_error = {
+                    key: value
+                    for key in ("resource", "field", "code", "message")
+                    if isinstance((value := error.get(key)), (str, int))
+                }
+                if safe_error:
+                    safe_errors.append(safe_error)
+        if safe_errors:
+            detail["errors"] = safe_errors
+    elif isinstance(errors, str):
+        detail["errors"] = errors[:1_000]
+
+    if not detail:
+        return None
+    rendered = json.dumps(detail, ensure_ascii=False, separators=(",", ":"))
+    if len(rendered) <= _MAX_GITHUB_ERROR_DETAIL_CHARS:
+        return rendered
+    return rendered[: _MAX_GITHUB_ERROR_DETAIL_CHARS - 1] + "…"
 
 
 async def _terminate_process(process: asyncio.subprocess.Process) -> None:

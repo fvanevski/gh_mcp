@@ -6,7 +6,7 @@ direct JSON output or a post-write readback.
 
 ## Tools
 
-### Read-only (24)
+### Read-only (27)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -17,7 +17,8 @@ direct JSON output or a post-write readback.
 - `gh_list_issues`: list issues in a repository with filters.
 - `gh_get_issue`: get details of a specific issue or pull request.
 - `gh_list_prs`: list pull requests in a repository.
-- `gh_get_pr`: get details and exact base/head commit SHAs for a pull request.
+- `gh_get_pr`: get a bounded, fully typed pull-request snapshot and exact base/head
+  commit SHAs through one explicit noninteractive GET.
 - `gh_get_pr_diff`: read a bounded diff or patch pinned to the PR's exact base and
   head SHAs, with truncation metadata and a SHA-256 fingerprint.
 - `gh_list_pr_files`: list one bounded page of changed files and patch fragments.
@@ -31,6 +32,9 @@ direct JSON output or a post-write readback.
 - `gh_list_runs`: list recent GitHub Actions workflow runs.
 - `gh_get_run`: get details of a specific workflow run.
 - `gh_watch_run`: poll a workflow run until completion or a caller-supplied timeout.
+- `gh_get_pr_checks`: return bounded CI check summaries pinned to an exact PR revision.
+- `gh_list_run_jobs`: list one bounded page of jobs and steps for an exact run attempt.
+- `gh_get_failed_run_logs`: return bounded failed-step logs for an exact run attempt.
 - `gh_list_labels`: list labels in a repository.
 - `gh_list_milestones`: list milestones in a repository.
 - `gh_get_file_contents`: read a complete file at an exact branch, tag, or commit ref.
@@ -132,7 +136,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.5.0`, but availability in
+The action surface is version `0.6.0`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -187,9 +191,41 @@ At `INFO`, both repository-content tools log a content-free reachability marker:
 MCP tool invocation reached server: tool=gh_get_file_contents
 ```
 
-The three focused PR-review tools emit the same marker using their own tool name.
+The four focused PR snapshot/review reads emit the same marker using their own tool
+name.
 
 The version probe emits the equivalent marker with `tool=gh_server_info`.
+
+### `gh_get_pr` Plus gateway contract
+
+Version 0.5.1 replaces the former `gh_get_pr` contract that could be discovered
+but was not safe for a strict execution gateway. The old definition had no explicit
+tool title, did not declare idempotence, accepted unconstrained repository identifiers,
+and advertised ambiguous structured-output fragments: label items had an empty JSON
+schema and `comments` had no JSON type. A host can catalog such a tool while rejecting
+it later when it constructs or validates the executable route.
+
+The revised operation preserves the mixed read/write server and changes only the
+offending read contract and common read annotation accuracy:
+
+- the title and description explicitly identify a read-only, noninteractive snapshot;
+- `readOnlyHint=true`, `destructiveHint=false`, and `idempotentHint=true` are explicit;
+- owner, repository, and positive PR-number constraints are present in the input schema;
+- every output field is typed, including `labels: string[]`, nonnegative integer
+  `comments`, and required 40-character base/head SHAs;
+- the implementation performs exactly one `gh api ... -X GET` request and exposes no
+  approval, elicitation, comment, review, merge, or generic-command path;
+- the reachability marker is logged before repository validation or client execution:
+
+```text
+MCP tool invocation reached server: tool=gh_get_pr
+```
+
+After deploying the current release, delete and reinstall the Plus custom plugin and
+verify `gh_server_info` reports both versions as 0.6.0. An immediate namespace-disabled
+response with no `gh_get_pr` marker still proves rejection occurred in the host before
+the revised server operation. It does not indicate GitHub authentication, repository,
+PR, or readback failure and must not be retried as though a GitHub write partially ran.
 
 If ChatGPT reports that the app or namespace is disabled and this marker is absent,
 the call was rejected by ChatGPT's plugin gateway before reaching the MCP server.
@@ -270,11 +306,63 @@ are transferred through a temporary JSON input file; merge bodies are supplied o
 controlled stdin. If a write succeeds but readback fails, the response is marked as
 partial success and instructs the caller not to retry automatically.
 
+Before an `approve` write, the server reads the authenticated GitHub login and PR
+author. GitHub documents that PR authors cannot approve their own pull requests, so
+an exact login match is rejected before the POST with an explicit `no review was
+attempted` error. `comment` remains available to the author. GitHub's public review
+documentation does not explicitly state the equivalent author rule for
+`request_changes`, so the server does not invent one: GitHub remains authoritative.
+
+When GitHub rejects any review write, including HTTP 422 validation failures, the
+client now preserves a bounded, sanitized JSON error summary containing GitHub's
+`message`, `errors`, `documentation_url`, and `status`. Request values and arbitrary
+response fields are excluded. A failed POST remains a direct tool error—there is no
+readback and no partial-success result because GitHub did not create a review. Do not
+retry it automatically; correct the reported validation or use `comment` when the
+authenticated account is the PR author.
+
 `gh_merge_pr` deliberately exposes no administrator bypass, branch deletion, or
 automatic-merge switch. It passes GitHub CLI's `--match-head-commit` guard so a
 force-push or new commit cannot silently change the authorized merge target. GitHub
 permissions and branch protection still apply, and an author generally cannot
 approve their own pull request.
+
+## Read-only CI diagnosis
+
+Use the focused CI tools instead of inferring a failure from run metadata:
+
+1. Call `gh_get_pr` and record the exact PR `head_sha`.
+2. Call `gh_get_pr_checks`. Its result includes the same base/head SHA pair and
+   categorized `pass`, `fail`, `pending`, `skipping`, or `cancel` checks. Failed and
+   pending checks are returned as data even though `gh pr checks` uses nonzero status
+   codes for those states.
+3. Use the check link or `gh_list_runs` to identify the positive integer run ID.
+4. Call `gh_list_run_jobs`, optionally with an exact attempt number, to retrieve one
+   page of jobs and their step status/conclusion metadata.
+5. Call `gh_get_failed_run_logs` for the same run attempt. Inspect `truncated`,
+   `bytes_returned`, `total_bytes`, and `sha256` before claiming the returned text is
+   complete.
+
+All three tools are explicitly read-only, idempotent, and open-world. They expose no
+watch, rerun, cancel, delete, dispatch, browser, generic-command, approval, or
+elicitation option. Repository identifiers, PR/run IDs, attempts, pages, and output
+sizes are schema constrained. Every `gh` subprocess remains asynchronous and
+noninteractive with detached stdin.
+
+`gh_get_pr_checks` reads and verifies the PR SHA pair around the checks request so a
+force-push cannot silently mix revisions. Jobs and logs first resolve a concrete run
+attempt and head SHA, operate on that exact attempt, and verify it again before
+returning. Job pages contain at most 100 jobs. Failed logs are bounded by both the
+request and deployment setting:
+
+```dotenv
+MCP_GH_MAX_FAILED_RUN_LOG_BYTES=500000
+```
+
+The deployment setting is capped at 1,000,000 UTF-8 bytes. Empty failed-log output is
+valid when GitHub reports no failed steps. Authentication, retention expiry, missing
+logs, or malformed output are returned as ordinary tool errors; the namespace remains
+available for subsequent reads.
 
 ## Write-command policy
 

@@ -26,11 +26,15 @@ from mcp_gh_server.server import (
     gh_edit_issue,
     gh_edit_label,
     gh_edit_pr,
+    gh_get_failed_run_logs,
     gh_get_file_contents,
+    gh_get_pr,
+    gh_get_pr_checks,
     gh_get_pr_diff,
     gh_list_milestones,
     gh_list_pr_commits,
     gh_list_pr_files,
+    gh_list_run_jobs,
     gh_merge_pr,
     gh_run_workflow,
     gh_server_info,
@@ -85,13 +89,60 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     result = await gh_server_info(ctx=_context(client))
 
     assert result.server_name == "mcp-gh-server"
-    assert result.server_version == "0.5.0"
-    assert result.tool_schema_version == "0.5.0"
+    assert result.server_version == "0.6.0"
+    assert result.tool_schema_version == "0.6.0"
     assert result.transport == "stdio"
-    assert result.tool_count == 40
+    assert result.tool_count == 43
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert result.pr_merge_enabled is True
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_pr_uses_one_explicit_get_and_returns_typed_bounded_snapshot() -> None:
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            {
+                "number": 224,
+                "title": "Strict connector contract",
+                "state": "open",
+                "html_url": "https://github.com/octo/repo/pull/224",
+                "user": {"login": "author"},
+                "created_at": "2026-08-04T17:00:00Z",
+                "updated_at": "2026-08-04T17:30:00Z",
+                "closed_at": None,
+                "labels": [{"name": "review"}, {"name": "mcp"}, {"color": "fff"}],
+                "comments": 2,
+                "review_comments": 3,
+                "head": {"ref": "feature", "sha": head_sha},
+                "base": {"ref": "main", "sha": base_sha},
+                "draft": False,
+                "additions": 10,
+                "deletions": 4,
+                "changed_files": 2,
+            }
+        ]
+    )
+
+    result = await gh_get_pr("octo", "repo", 224, ctx=_context(client))
+
+    assert client.calls == [(("api", "repos/octo/repo/pulls/224", "-X", "GET"), {})]
+    assert result.head_sha == head_sha
+    assert result.base_sha == base_sha
+    assert result.labels == ["review", "mcp"]
+    assert result.comments == 5
+
+
+@pytest.mark.asyncio
+async def test_get_pr_rejects_invalid_repository_before_client_execution() -> None:
+    client = FakeGhClient([])
+
+    with pytest.raises(ValueError, match="canonical GitHub names"):
+        await gh_get_pr("octo", "../repo", 224, ctx=_context(client))
+
     assert client.calls == []
 
 
@@ -446,6 +497,122 @@ async def test_watch_run_polls_instead_of_starting_blocking_gh_watch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_pr_checks_returns_failed_checks_without_treating_status_as_command_error() -> (
+    None
+):
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+            [
+                {
+                    "name": "test",
+                    "state": "FAILURE",
+                    "bucket": "fail",
+                    "workflow": "CI",
+                    "description": "Tests failed",
+                    "link": "https://github.com/octo/repo/actions/runs/123",
+                }
+            ],
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+        ]
+    )
+
+    result = await gh_get_pr_checks("octo", "repo", 224, ctx=_context(client))
+
+    assert result.head_sha == head_sha
+    assert result.checks[0].bucket == "fail"
+    assert result.checks[0].name == "test"
+    assert client.calls[1][1] == {"expected_returncode": {0, 1, 8}}
+    assert "--watch" not in client.calls[1][0]
+
+
+@pytest.mark.asyncio
+async def test_list_run_jobs_returns_bounded_exact_attempt_page() -> None:
+    head_sha = "c" * 40
+    snapshot = {
+        "attempt": 2,
+        "headSha": head_sha,
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/octo/repo/actions/runs/123",
+    }
+    client = FakeGhClient(
+        [
+            snapshot,
+            {
+                "total_count": 1,
+                "jobs": [
+                    {
+                        "id": 456,
+                        "name": "tests",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "html_url": "https://github.com/octo/repo/actions/runs/123/job/456",
+                        "runner_name": "runner-1",
+                        "steps": [
+                            {
+                                "number": 1,
+                                "name": "pytest",
+                                "status": "completed",
+                                "conclusion": "failure",
+                            }
+                        ],
+                    }
+                ],
+            },
+            snapshot,
+        ]
+    )
+
+    result = await gh_list_run_jobs(
+        "octo", "repo", 123, ctx=_context(client), attempt=2, page=1, per_page=25
+    )
+
+    assert result.attempt == 2
+    assert result.head_sha == head_sha
+    assert result.jobs[0].id == 456
+    assert result.jobs[0].steps[0].name == "pytest"
+    assert client.calls[1][0] == (
+        "api",
+        "repos/octo/repo/actions/runs/123/attempts/2/jobs",
+        "-X",
+        "GET",
+        "-f",
+        "page=1",
+        "-f",
+        "per_page=25",
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_failed_run_logs_is_noninteractive_bounded_and_attempt_pinned() -> None:
+    head_sha = "d" * 40
+    snapshot = {
+        "attempt": 1,
+        "headSha": head_sha,
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/octo/repo/actions/runs/123",
+    }
+    logs = "job\tstep\tfirst failure\njob\tstep\tsecond failure"
+    client = FakeGhClient([snapshot, {"stdout": logs}, snapshot])
+
+    result = await gh_get_failed_run_logs(
+        "octo", "repo", 123, ctx=_context(client), attempt=1, max_bytes=20
+    )
+
+    assert result.attempt == 1
+    assert result.truncated is True
+    assert result.bytes_returned <= 20
+    assert result.total_bytes == len(logs.encode())
+    log_args, log_kwargs = client.calls[1]
+    assert "--log-failed" in log_args
+    assert log_kwargs == {"json_output": False}
+
+
+@pytest.mark.asyncio
 async def test_comment_branch_and_pr_edit_use_raw_writes() -> None:
     comment_url = "https://github.com/octo/repo/issues/4#issuecomment-5"
     comment_client = FakeGhClient([{"stdout": comment_url}])
@@ -738,7 +905,12 @@ async def test_submit_pr_review_is_exact_head_formal_review_with_readback() -> N
     review_url = "https://github.com/octo/repo/pull/224#pullrequestreview-91"
     client = FakeGhClient(
         [
-            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+            {
+                "base": {"sha": base_sha},
+                "head": {"sha": head_sha},
+                "user": {"login": "author"},
+            },
+            {"login": "reviewer"},
             {"id": 91, "state": "APPROVED", "html_url": review_url},
             {
                 "id": 91,
@@ -773,13 +945,14 @@ async def test_submit_pr_review_is_exact_head_formal_review_with_readback() -> N
             "commit_id": head_sha,
         }
     ]
-    assert client.calls[1][0][:4] == (
+    assert client.calls[1][0] == ("api", "user", "-X", "GET")
+    assert client.calls[2][0][:4] == (
         "api",
         "repos/octo/repo/pulls/224/reviews",
         "-X",
         "POST",
     )
-    assert client.calls[2][0] == (
+    assert client.calls[3][0] == (
         "api",
         "repos/octo/repo/pulls/224/reviews/91",
         "-X",
@@ -799,6 +972,27 @@ async def test_submit_pr_review_rejects_stale_head_before_write() -> None:
 
 
 @pytest.mark.asyncio
+async def test_submit_pr_review_rejects_verified_self_approval_before_write() -> None:
+    head_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            {
+                "base": {"sha": "a" * 40},
+                "head": {"sha": head_sha},
+                "user": {"login": "author"},
+            },
+            {"login": "AUTHOR"},
+        ]
+    )
+
+    with pytest.raises(ValueError, match="cannot approve its own pull request"):
+        await gh_submit_pr_review("octo", "repo", 224, head_sha, "approve", ctx=_context(client))
+
+    assert len(client.calls) == 2
+    assert client.payloads == []
+
+
+@pytest.mark.asyncio
 async def test_submit_pr_review_requires_body_for_non_approval() -> None:
     client = FakeGhClient([])
 
@@ -811,12 +1005,52 @@ async def test_submit_pr_review_requires_body_for_non_approval() -> None:
 
 
 @pytest.mark.asyncio
+async def test_submit_pr_review_preserves_failed_write_validation_detail_without_readback() -> None:
+    head_sha = "b" * 40
+    detail = (
+        "gh command failed (exit 1): gh: Unprocessable Entity (HTTP 422); "
+        'GitHub response: {"message":"Validation Failed","errors":['
+        '{"resource":"PullRequestReview","code":"custom",'
+        '"message":"Review cannot be requested from pull request author."}]}'
+    )
+    client = FakeGhClient(
+        [
+            {
+                "base": {"sha": "a" * 40},
+                "head": {"sha": head_sha},
+                "user": {"login": "author"},
+            },
+            RuntimeError(detail),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="cannot be requested from pull request author"):
+        await gh_submit_pr_review(
+            "octo",
+            "repo",
+            224,
+            head_sha,
+            "request_changes",
+            ctx=_context(client),
+            body="Please revise.",
+        )
+
+    assert len(client.calls) == 2
+    assert len(client.payloads) == 1
+
+
+@pytest.mark.asyncio
 async def test_submit_pr_review_returns_partial_success_when_readback_fails() -> None:
     head_sha = "b" * 40
     review_url = "https://github.com/octo/repo/pull/224#pullrequestreview-91"
     client = FakeGhClient(
         [
-            {"base": {"sha": "a" * 40}, "head": {"sha": head_sha}},
+            {
+                "base": {"sha": "a" * 40},
+                "head": {"sha": head_sha},
+                "user": {"login": "author"},
+            },
+            {"login": "reviewer"},
             {"id": 91, "state": "APPROVED", "html_url": review_url},
             RuntimeError("readback unavailable"),
         ]

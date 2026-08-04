@@ -137,10 +137,12 @@ class PullRequestInfo(IssueInfo):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    labels: list[str] = Field(default_factory=list)
+    comments: int = Field(default=0, ge=0)
     head_ref: str | None = Field(None, alias="headRefName")
     base_ref: str | None = Field(None, alias="baseRefName")
-    head_sha: str | None = Field(None, alias="headRefOid")
-    base_sha: str | None = Field(None, alias="baseRefOid")
+    head_sha: str = Field(alias="headRefOid", pattern=r"^[0-9A-Fa-f]{40}$")
+    base_sha: str = Field(alias="baseRefOid", pattern=r"^[0-9A-Fa-f]{40}$")
     is_draft: bool = Field(False, alias="isDraft")
     additions: int = 0
     deletions: int = 0
@@ -408,6 +410,85 @@ class WorkflowRun(BaseModel):
     updated_at: str | None = Field(None, alias="updatedAt")
     started_at: str | None = Field(None, alias="startedAt")
     workflow_name: str | None = Field(None, alias="workflowName")
+
+
+class PullRequestCheck(BaseModel):
+    """One CI check reported for an immutable pull-request snapshot."""
+
+    name: str
+    state: str
+    bucket: Literal["pass", "fail", "pending", "skipping", "cancel"]
+    workflow: str | None = None
+    event: str | None = None
+    description: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    link: str | None = None
+
+
+class PullRequestChecks(BaseModel):
+    """Bounded CI check summary for an immutable pull-request snapshot."""
+
+    number: int = Field(ge=1)
+    base_sha: str = Field(pattern=r"^[0-9A-Fa-f]{40}$")
+    head_sha: str = Field(pattern=r"^[0-9A-Fa-f]{40}$")
+    total_count: int = Field(ge=0)
+    truncated: bool
+    checks: list[PullRequestCheck]
+
+
+class WorkflowJobStep(BaseModel):
+    """One step in a GitHub Actions workflow job."""
+
+    number: int = Field(ge=1)
+    name: str
+    status: str
+    conclusion: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+
+
+class WorkflowJob(BaseModel):
+    """One GitHub Actions job with its bounded step metadata."""
+
+    id: int = Field(ge=1)
+    name: str
+    status: str
+    conclusion: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    url: str | None = None
+    runner_name: str | None = None
+    steps: list[WorkflowJobStep] = Field(default_factory=list)
+
+
+class WorkflowJobsPage(BaseModel):
+    """One bounded page of jobs for an exact workflow-run attempt."""
+
+    run_id: int = Field(ge=1)
+    attempt: int = Field(ge=1)
+    head_sha: str = Field(pattern=r"^[0-9A-Fa-f]{40}$")
+    page: int = Field(ge=1)
+    per_page: int = Field(ge=1, le=100)
+    total_count: int = Field(ge=0)
+    has_more: bool
+    jobs: list[WorkflowJob]
+
+
+class WorkflowRunFailedLogs(BaseModel):
+    """Bounded failed-step logs for one exact workflow-run attempt."""
+
+    run_id: int = Field(ge=1)
+    attempt: int = Field(ge=1)
+    head_sha: str = Field(pattern=r"^[0-9A-Fa-f]{40}$")
+    status: str
+    conclusion: str | None = None
+    url: str | None = None
+    content: str
+    truncated: bool
+    bytes_returned: int = Field(ge=0)
+    total_bytes: int = Field(ge=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class WorkflowRunCreate(WriteResult):

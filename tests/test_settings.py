@@ -48,6 +48,7 @@ class TestSettingsValidation:
         assert settings.max_pr_diff_bytes == 500_000
         assert settings.max_pr_file_patch_bytes == 8_000
         assert settings.max_pr_commit_message_bytes == 4_000
+        assert settings.max_failed_run_log_bytes == 500_000
         assert settings.transport == "stdio"
         assert settings.log_level == "INFO"
         assert settings.http_port == 8766

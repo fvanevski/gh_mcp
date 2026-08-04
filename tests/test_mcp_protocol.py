@@ -96,7 +96,15 @@ elif args[:2] == ["api", f"repos/octo/repo/git/blobs/{blob_sha}"]:
     print(json.dumps({"encoding": "base64", "content": "cHJpbnQoJ29rJykK"}))
 elif args[:2] == ["api", "repos/octo/repo/pulls/224"]:
     assert args[-2:] == ["-X", "GET"]
-    print(json.dumps({"base": {"sha": base_sha}, "head": {"sha": head_sha}}))
+    print(json.dumps({
+        "number": 224, "title": "Review PR", "state": "open",
+        "html_url": "https://github.com/octo/repo/pull/224",
+        "user": {"login": "author"}, "labels": [{"name": "review"}],
+        "comments": 1, "review_comments": 2,
+        "base": {"ref": "main", "sha": base_sha},
+        "head": {"ref": "feature", "sha": head_sha},
+        "draft": False, "additions": 1, "deletions": 0, "changed_files": 1
+    }))
 elif args[:2] == ["api", f"repos/octo/repo/compare/{base_sha}...{head_sha}"]:
     assert "Accept: application/vnd.github.v3.diff" in args
     print("diff --git a/file.txt b/file.txt\n+reviewed")
@@ -112,6 +120,35 @@ elif args[:2] == ["api", "repos/octo/repo/pulls/224/commits"]:
         "sha": head_sha, "html_url": "https://github.com/octo/repo/commit/" + head_sha,
         "commit": {"message": "Reviewed commit", "author": {}, "committer": {}}
     }]))
+elif args[:2] == ["api", "repos/octo/repo/actions/runs/123/attempts/1/jobs"]:
+    assert "-X" in args and args[args.index("-X") + 1] == "GET"
+    print(json.dumps({
+        "total_count": 1,
+        "jobs": [{
+            "id": 456, "name": "tests", "status": "completed",
+            "conclusion": "failure", "steps": [{
+                "number": 1, "name": "pytest", "status": "completed",
+                "conclusion": "failure"
+            }]
+        }]
+    }))
+elif args[:2] == ["pr", "checks"]:
+    assert "--watch" not in args and "--web" not in args
+    print(json.dumps([{
+        "name": "tests", "state": "FAILURE", "bucket": "fail",
+        "workflow": "CI", "description": "Tests failed",
+        "link": "https://github.com/octo/repo/actions/runs/123"
+    }]))
+    raise SystemExit(1)
+elif args[:2] == ["run", "view"]:
+    if "--log-failed" in args:
+        print("tests\tpytest\tassertion failed")
+    else:
+        print(json.dumps({
+            "attempt": 1, "headSha": head_sha, "status": "completed",
+            "conclusion": "failure",
+            "url": "https://github.com/octo/repo/actions/runs/123"
+        }))
 elif args[:2] == ["workflow", "list"]:
     print(json.dumps([{
         "id": 7,
@@ -139,7 +176,12 @@ merge_sha = "c" * 40
 review_url = "https://github.com/octo/repo/pull/224#pullrequestreview-91"
 
 if args[:2] == ["api", "repos/octo/repo/pulls/224"]:
-    print(json.dumps({"base": {"sha": base_sha}, "head": {"sha": head_sha}}))
+    print(json.dumps({
+        "base": {"sha": base_sha}, "head": {"sha": head_sha},
+        "user": {"login": "author"}
+    }))
+elif args[:2] == ["api", "user"]:
+    print(json.dumps({"login": "reviewer"}))
 elif args[:2] == ["api", "repos/octo/repo/pulls/224/reviews"]:
     payload = json.loads(pathlib.Path(args[args.index("--input") + 1]).read_text())
     assert payload == {
@@ -178,7 +220,7 @@ else:
 async def test_registered_tool_schemas_and_annotations() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 40
+    assert len(tools) == 43
     assert "gh_server_info" in tools
     assert "gh_get_file_contents" in tools
     assert "gh_commit_files" in tools
@@ -187,6 +229,9 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert "gh_list_pr_commits" in tools
     assert "gh_submit_pr_review" in tools
     assert "gh_merge_pr" in tools
+    assert "gh_get_pr_checks" in tools
+    assert "gh_list_run_jobs" in tools
+    assert "gh_get_failed_run_logs" in tools
     assert "approval" not in tools["gh_create_issue"].input_schema["properties"]
     assert "force" not in tools["gh_create_label"].input_schema["properties"]
     assert tools["gh_upsert_label"].annotations.destructive_hint is True
@@ -196,6 +241,25 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert tools["gh_submit_pr_review"].annotations.read_only_hint is False
     assert tools["gh_submit_pr_review"].annotations.destructive_hint is False
     assert tools["gh_merge_pr"].annotations.destructive_hint is True
+    for name in ("gh_get_pr_checks", "gh_list_run_jobs", "gh_get_failed_run_logs"):
+        assert tools[name].title
+        assert tools[name].description.startswith("Read-only:")
+        assert tools[name].annotations.read_only_hint is True
+        assert tools[name].annotations.destructive_hint is False
+        assert tools[name].annotations.idempotent_hint is True
+        assert tools[name].annotations.open_world_hint is True
+    checks_schema = tools["gh_get_pr_checks"].input_schema["properties"]
+    assert checks_schema["number"]["minimum"] == 1
+    assert checks_schema["max_checks"]["anyOf"][0]["maximum"] == 1_000
+    jobs_schema = tools["gh_list_run_jobs"].input_schema["properties"]
+    assert jobs_schema["run_id"]["minimum"] == 1
+    assert jobs_schema["per_page"]["anyOf"][0]["maximum"] == 100
+    logs_schema = tools["gh_get_failed_run_logs"].input_schema["properties"]
+    assert logs_schema["max_bytes"]["anyOf"][0]["maximum"] == 1_000_000
+    logs_output = tools["gh_get_failed_run_logs"].output_schema["properties"]
+    assert logs_output["content"]["type"] == "string"
+    assert logs_output["truncated"]["type"] == "boolean"
+    assert logs_output["sha256"]["pattern"]
     review_schema = tools["gh_submit_pr_review"].input_schema["properties"]
     assert review_schema["expected_head_sha"]["pattern"]
     assert review_schema["action"]["enum"] == ["approve", "request_changes", "comment"]
@@ -215,6 +279,23 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert tools["gh_get_file_contents"].input_schema["properties"]["ref"]["maxLength"] == 1024
     assert tools["gh_get_pr_diff"].annotations.read_only_hint is True
     assert tools["gh_get_pr_diff"].annotations.destructive_hint is False
+    assert tools["gh_get_pr"].title == "Get pull request snapshot"
+    assert tools["gh_get_pr"].description.startswith("Read-only:")
+    assert tools["gh_get_pr"].annotations.read_only_hint is True
+    assert tools["gh_get_pr"].annotations.destructive_hint is False
+    assert tools["gh_get_pr"].annotations.idempotent_hint is True
+    pr_input = tools["gh_get_pr"].input_schema["properties"]
+    assert pr_input["owner"]["pattern"]
+    assert pr_input["repo"]["pattern"]
+    assert pr_input["number"]["minimum"] == 1
+    pr_output = tools["gh_get_pr"].output_schema["properties"]
+    assert pr_output["labels"]["items"] == {"type": "string"}
+    assert pr_output["comments"]["type"] == "integer"
+    assert pr_output["comments"]["minimum"] == 0
+    assert pr_output["headRefOid"]["type"] == "string"
+    assert pr_output["headRefOid"]["pattern"]
+    assert pr_output["baseRefOid"]["type"] == "string"
+    assert pr_output["baseRefOid"]["pattern"]
     assert (
         tools["gh_get_pr_diff"].input_schema["properties"]["max_bytes"]["anyOf"][0]["maximum"]
         == 1_000_000
@@ -266,7 +347,7 @@ async def test_stdio_write_denial_does_not_elicit_or_lock_session() -> None:
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is True
         tools_after_failure = await session.list_tools()
-        assert len(tools_after_failure.tools) == 40
+        assert len(tools_after_failure.tools) == 43
 
 
 @pytest.mark.asyncio
@@ -302,7 +383,7 @@ async def test_stdio_write_executes_once_without_elicitation_using_fake_gh(tmp_p
         )
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is False
-        assert len((await session.list_tools()).tools) == 40
+        assert len((await session.list_tools()).tools) == 43
 
 
 @pytest.mark.asyncio
@@ -376,7 +457,7 @@ async def test_streamable_http_write_denial_keeps_session_usable(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is True
-            assert len((await session.list_tools()).tools) == 40
+            assert len((await session.list_tools()).tools) == 43
     finally:
         get_settings.cache_clear()
 
@@ -409,7 +490,7 @@ async def test_streamable_http_write_executes_without_nested_input_round(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is False
-            assert len((await session.list_tools()).tools) == 40
+            assert len((await session.list_tools()).tools) == 43
     finally:
         get_settings.cache_clear()
 
@@ -448,16 +529,16 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             ClientSession(*streams) as session,
         ):
             initialized = await session.initialize()
-            assert initialized.server_info.version == "0.5.0"
+            assert initialized.server_info.version == "0.6.0"
 
             server_info = await session.call_tool("gh_server_info", {})
             assert server_info.is_error is False
             assert server_info.structured_content == {
                 "server_name": "mcp-gh-server",
-                "server_version": "0.5.0",
-                "tool_schema_version": "0.5.0",
+                "server_version": "0.6.0",
+                "tool_schema_version": "0.6.0",
                 "transport": "streamable-http",
-                "tool_count": 40,
+                "tool_count": 43,
                 "write_commands_enabled": False,
                 "content_commits_enabled": False,
                 "pr_merge_enabled": False,
@@ -466,6 +547,16 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert file_result.is_error is False
             assert file_result.structured_content["content"] == "print('ok')\n"
+
+            pr_result = await session.call_tool(
+                "gh_get_pr",
+                {"owner": "octo", "repo": "repo", "number": 224},
+            )
+            assert pr_result.is_error is False
+            assert pr_result.structured_content["headRefOid"] == "d" * 40
+            assert pr_result.structured_content["baseRefOid"] == "c" * 40
+            assert pr_result.structured_content["labels"] == ["review"]
+            assert pr_result.structured_content["comments"] == 3
 
             diff_result = await session.call_tool(
                 "gh_get_pr_diff",
@@ -490,6 +581,35 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             assert commits_result.is_error is False
             assert commits_result.structured_content["commits"][0]["message"] == "Reviewed commit"
 
+            checks_result = await session.call_tool(
+                "gh_get_pr_checks",
+                {"owner": "octo", "repo": "repo", "number": 224},
+            )
+            assert checks_result.is_error is False
+            assert checks_result.structured_content["checks"][0]["bucket"] == "fail"
+            assert checks_result.structured_content["head_sha"] == "d" * 40
+
+            jobs_result = await session.call_tool(
+                "gh_list_run_jobs",
+                {"owner": "octo", "repo": "repo", "run_id": 123, "attempt": 1},
+            )
+            assert jobs_result.is_error is False
+            assert jobs_result.structured_content["jobs"][0]["steps"][0]["name"] == "pytest"
+
+            logs_result = await session.call_tool(
+                "gh_get_failed_run_logs",
+                {
+                    "owner": "octo",
+                    "repo": "repo",
+                    "run_id": 123,
+                    "attempt": 1,
+                    "max_bytes": 1_000,
+                },
+            )
+            assert logs_result.is_error is False
+            assert "assertion failed" in logs_result.structured_content["content"]
+            assert logs_result.structured_content["truncated"] is False
+
             tools_after_file = await session.list_tools()
             assert {tool.name for tool in tools_after_file.tools} >= {
                 "gh_get_file_contents",
@@ -498,6 +618,9 @@ async def test_streamable_http_content_route_keeps_namespace_live(
                 "gh_submit_pr_review",
                 "gh_merge_pr",
                 "gh_server_info",
+                "gh_get_pr_checks",
+                "gh_list_run_jobs",
+                "gh_get_failed_run_logs",
             }
 
             read_result = await session.call_tool(
@@ -555,17 +678,21 @@ async def test_streamable_http_content_route_keeps_namespace_live(
 
             server_info_after_denial = await session.call_tool("gh_server_info", {})
             assert server_info_after_denial.is_error is False
-            assert server_info_after_denial.structured_content["server_version"] == "0.5.0"
+            assert server_info_after_denial.structured_content["server_version"] == "0.6.0"
 
             second_file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert second_file_result.is_error is False
-            assert len((await session.list_tools()).tools) == 40
+            assert len((await session.list_tools()).tools) == 43
     finally:
         get_settings.cache_clear()
 
     messages = [record.getMessage() for record in caplog.records]
     assert sum("tool=gh_get_file_contents" in message for message in messages) == 2
     assert sum("tool=gh_get_pr_diff" in message for message in messages) == 1
+    assert sum(message.endswith("tool=gh_get_pr") for message in messages) == 1
+    assert sum(message.endswith("tool=gh_get_pr_checks") for message in messages) == 1
+    assert sum(message.endswith("tool=gh_list_run_jobs") for message in messages) == 1
+    assert sum(message.endswith("tool=gh_get_failed_run_logs") for message in messages) == 1
     assert sum("tool=gh_list_pr_files" in message for message in messages) == 1
     assert sum("tool=gh_list_pr_commits" in message for message in messages) == 1
     assert sum("tool=gh_commit_files" in message for message in messages) == 1
@@ -633,6 +760,6 @@ async def test_streamable_http_formal_review_then_merge_without_nested_input(
             assert not isinstance(merge, InputRequiredResult)
             assert merge.is_error is False
             assert merge.structured_content["merged"] is True
-            assert len((await session.list_tools()).tools) == 40
+            assert len((await session.list_tools()).tools) == 43
     finally:
         get_settings.cache_clear()

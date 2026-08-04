@@ -5,6 +5,8 @@ from __future__ import annotations
 from mcp_gh_server.models import (
     IssueCreate,
     IssueInfo,
+    PullRequestCheck,
+    PullRequestChecks,
     PullRequestCreate,
     PullRequestDiff,
     PullRequestInfo,
@@ -16,8 +18,12 @@ from mcp_gh_server.models import (
     SearchResults,
     ServerInfo,
     WorkflowInfo,
+    WorkflowJob,
+    WorkflowJobsPage,
+    WorkflowJobStep,
     WorkflowRun,
     WorkflowRunCreate,
+    WorkflowRunFailedLogs,
     WorkflowRunWatchResult,
 )
 
@@ -38,16 +44,16 @@ class TestModels:
 
     def test_server_info(self) -> None:
         info = ServerInfo(
-            server_version="0.5.0",
-            tool_schema_version="0.5.0",
+            server_version="0.6.0",
+            tool_schema_version="0.6.0",
             transport="streamable-http",
-            tool_count=40,
+            tool_count=43,
             write_commands_enabled=False,
             content_commits_enabled=False,
             pr_merge_enabled=False,
         )
         assert info.server_name == "mcp-gh-server"
-        assert info.server_version == "0.5.0"
+        assert info.server_version == "0.6.0"
 
     def test_issue_info(self) -> None:
         issue = IssueInfo(
@@ -68,6 +74,8 @@ class TestModels:
             url="https://github.com/test/repo/pull/100",
             head_ref="feature-branch",
             base_ref="main",
+            head_sha="a" * 40,
+            base_sha="b" * 40,
             is_merged=False,
             is_draft=False,
         )
@@ -216,3 +224,55 @@ class TestModels:
         )
         assert result.run_id == 67890
         assert result.conclusion == "success"
+
+    def test_ci_diagnostic_models(self) -> None:
+        head_sha = "a" * 40
+        checks = PullRequestChecks(
+            number=224,
+            base_sha="b" * 40,
+            head_sha=head_sha,
+            total_count=1,
+            truncated=False,
+            checks=[PullRequestCheck(name="tests", state="FAILURE", bucket="fail")],
+        )
+        jobs = WorkflowJobsPage(
+            run_id=123,
+            attempt=1,
+            head_sha=head_sha,
+            page=1,
+            per_page=30,
+            total_count=1,
+            has_more=False,
+            jobs=[
+                WorkflowJob(
+                    id=456,
+                    name="tests",
+                    status="completed",
+                    conclusion="failure",
+                    steps=[
+                        WorkflowJobStep(
+                            number=1,
+                            name="pytest",
+                            status="completed",
+                            conclusion="failure",
+                        )
+                    ],
+                )
+            ],
+        )
+        logs = WorkflowRunFailedLogs(
+            run_id=123,
+            attempt=1,
+            head_sha=head_sha,
+            status="completed",
+            conclusion="failure",
+            content="assertion failed",
+            truncated=False,
+            bytes_returned=16,
+            total_bytes=16,
+            sha256="c" * 64,
+        )
+
+        assert checks.checks[0].bucket == "fail"
+        assert jobs.jobs[0].steps[0].name == "pytest"
+        assert logs.sha256 == "c" * 64

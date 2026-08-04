@@ -98,3 +98,70 @@ async def test_debug_log_redacts_user_content(
 
     assert "private title" not in caplog.text
     assert "<redacted>" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_preserves_bounded_github_validation_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gh(
+        tmp_path,
+        """import json, sys
+print(json.dumps({
+    "message": "Validation Failed",
+    "errors": [{
+        "resource": "PullRequestReview",
+        "code": "custom",
+        "message": "Review cannot be requested from pull request author.",
+        "value": "must-not-be-exposed",
+    }],
+    "documentation_url": "https://docs.github.com/rest/pulls/reviews",
+    "status": "422",
+}))
+print("gh: Unprocessable Entity (HTTP 422)", file=sys.stderr)
+raise SystemExit(1)
+""",
+    )
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+
+    with pytest.raises(RuntimeError) as raised:
+        await client.run("api", "repos/octo/repo/pulls/224/reviews")
+
+    message = str(raised.value)
+    assert "Unprocessable Entity (HTTP 422)" in message
+    assert "Validation Failed" in message
+    assert "Review cannot be requested from pull request author" in message
+    assert "documentation_url" in message
+    assert "must-not-be-exposed" not in message
+
+
+@pytest.mark.asyncio
+async def test_run_accepts_documented_status_exit_when_json_is_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gh(
+        tmp_path,
+        "import json\nprint(json.dumps([{'name': 'CI', 'bucket': 'fail'}]))\nraise SystemExit(1)\n",
+    )
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+
+    result = await client.run("pr", "checks", expected_returncode={0, 1, 8})
+
+    assert result[0]["bucket"] == "fail"
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_documented_status_exit_without_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gh(
+        tmp_path,
+        "import sys\nprint('authentication failed', file=sys.stderr)\nraise SystemExit(1)\n",
+    )
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+
+    with pytest.raises(RuntimeError, match="without structured output"):
+        await client.run("pr", "checks", expected_returncode={0, 1, 8})

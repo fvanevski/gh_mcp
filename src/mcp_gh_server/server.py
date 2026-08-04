@@ -36,6 +36,8 @@ from .models import (
     LabelCreate,
     LabelEdit,
     MilestoneCreate,
+    PullRequestCheck,
+    PullRequestChecks,
     PullRequestCommit,
     PullRequestCommitsPage,
     PullRequestCreate,
@@ -54,8 +56,12 @@ from .models import (
     SearchResults,
     ServerInfo,
     WorkflowInfo,
+    WorkflowJob,
+    WorkflowJobsPage,
+    WorkflowJobStep,
     WorkflowRun,
     WorkflowRunCreate,
+    WorkflowRunFailedLogs,
     WorkflowRunWatchResult,
 )
 from .settings import Settings, get_settings
@@ -63,6 +69,7 @@ from .settings import Settings, get_settings
 _READ_EXTERNAL = ToolAnnotations(
     read_only_hint=True,
     destructive_hint=False,
+    idempotent_hint=True,
     open_world_hint=True,
 )
 _READ_LOCAL = ToolAnnotations(
@@ -739,40 +746,103 @@ async def gh_list_prs(
     )
 
 
-@mcp.tool(annotations=_READ_EXTERNAL)
+@mcp.tool(
+    title="Get pull request snapshot",
+    description=(
+        "Read-only: return bounded metadata and exact base/head commit SHAs for one "
+        "GitHub pull request. Performs one noninteractive GET request and cannot create "
+        "comments, submit reviews, merge the pull request, request approval, or modify "
+        "GitHub state."
+    ),
+    annotations=_READ_EXTERNAL,
+)
 async def gh_get_pr(
-    owner: str,
-    repo: str,
-    number: int,
+    owner: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=39,
+            pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+            description="Canonical GitHub repository owner.",
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=100,
+            pattern=r"^[A-Za-z0-9_.-]+$",
+            description="Canonical GitHub repository name without path separators.",
+        ),
+    ],
+    number: Annotated[int, Field(ge=1, description="Positive pull request number.")],
     *,
     ctx: Context[AppContext],
 ) -> PullRequestInfo:
-    """Get details and immutable base/head SHAs for a specific pull request."""
+    """Return a bounded, fully typed snapshot for one pull request."""
 
+    logger.info("MCP tool invocation reached server: tool=gh_get_pr")
     app = _app(ctx)
-    fields = (
-        "title,url,number,state,author,body,createdAt,updatedAt,closedAt,"
-        "labels,comments,headRefName,baseRefName,isDraft,"
-        "headRefOid,baseRefOid,additions,deletions,changedFiles"
-    )
+    _validate_repository(owner, repo)
     result = await app.client.run(
-        "pr",
-        "view",
-        str(number),
-        "--repo",
-        f"{owner}/{repo}",
-        "--json",
-        fields,
+        "api",
+        f"repos/{owner}/{repo}/pulls/{number}",
+        "-X",
+        "GET",
     )
-    # gh returns author as an object with login; normalize to string
-    author_obj = result.get("author")
-    if isinstance(author_obj, dict):
-        result["author"] = author_obj.get("login")
-    return PullRequestInfo.model_validate(result)
+    if not isinstance(result, dict):
+        raise RuntimeError("GitHub did not return pull-request metadata")
+
+    base = result.get("base")
+    head = result.get("head")
+    base_sha = base.get("sha") if isinstance(base, dict) else None
+    head_sha = head.get("sha") if isinstance(head, dict) else None
+    if not isinstance(base_sha, str) or not _OBJECT_SHA_RE.fullmatch(base_sha):
+        raise RuntimeError("GitHub did not return a valid pull-request base SHA")
+    if not isinstance(head_sha, str) or not _OBJECT_SHA_RE.fullmatch(head_sha):
+        raise RuntimeError("GitHub did not return a valid pull-request head SHA")
+
+    labels = result.get("labels")
+    label_names = (
+        [
+            label["name"]
+            for label in labels
+            if isinstance(label, dict) and isinstance(label.get("name"), str)
+        ]
+        if isinstance(labels, list)
+        else []
+    )
+    issue_comments = result.get("comments")
+    review_comments = result.get("review_comments")
+    comment_count = (
+        issue_comments if isinstance(issue_comments, int) and issue_comments >= 0 else 0
+    ) + (review_comments if isinstance(review_comments, int) and review_comments >= 0 else 0)
+    user = result.get("user")
+
+    return PullRequestInfo(
+        number=number,
+        title=str(result.get("title") or ""),
+        state=str(result.get("state") or "unknown"),
+        author=user.get("login") if isinstance(user, dict) else None,
+        createdAt=result.get("created_at"),
+        updatedAt=result.get("updated_at"),
+        closedAt=result.get("closed_at"),
+        labels=label_names,
+        comments=comment_count,
+        url=str(result.get("html_url") or ""),
+        headRefName=head.get("ref") if isinstance(head, dict) else None,
+        baseRefName=base.get("ref") if isinstance(base, dict) else None,
+        headRefOid=head_sha,
+        baseRefOid=base_sha,
+        isDraft=bool(result.get("draft", False)),
+        additions=int(result.get("additions") or 0),
+        deletions=int(result.get("deletions") or 0),
+        changedFiles=int(result.get("changed_files") or 0),
+    )
 
 
-async def _get_pr_shas(app: AppContext, owner: str, repo: str, number: int) -> tuple[str, str]:
-    """Resolve and validate the immutable base and head object IDs for a PR."""
+async def _get_pr_metadata(app: AppContext, owner: str, repo: str, number: int) -> dict[str, Any]:
+    """Read one pull-request metadata object through an explicit GET."""
 
     metadata = await app.client.run(
         "api",
@@ -782,6 +852,12 @@ async def _get_pr_shas(app: AppContext, owner: str, repo: str, number: int) -> t
     )
     if not isinstance(metadata, dict):
         raise RuntimeError("GitHub did not return pull-request metadata")
+    return metadata
+
+
+def _extract_pr_shas(metadata: dict[str, Any]) -> tuple[str, str]:
+    """Validate immutable base and head object IDs from pull-request metadata."""
+
     base = metadata.get("base")
     head = metadata.get("head")
     base_sha = base.get("sha") if isinstance(base, dict) else None
@@ -791,6 +867,12 @@ async def _get_pr_shas(app: AppContext, owner: str, repo: str, number: int) -> t
     if not isinstance(head_sha, str) or not _OBJECT_SHA_RE.fullmatch(head_sha):
         raise RuntimeError("GitHub did not return a valid pull-request head SHA")
     return base_sha, head_sha
+
+
+async def _get_pr_shas(app: AppContext, owner: str, repo: str, number: int) -> tuple[str, str]:
+    """Resolve and validate the immutable base and head object IDs for a PR."""
+
+    return _extract_pr_shas(await _get_pr_metadata(app, owner, repo, number))
 
 
 async def _verify_pr_shas(
@@ -1044,6 +1126,98 @@ async def gh_list_pr_commits(
 
 
 @mcp.tool(
+    title="Get pull request checks",
+    description=(
+        "Read-only: return a bounded structured summary of CI checks for one exact "
+        "pull-request head revision. This performs no watching, log download, workflow "
+        "dispatch, approval, or GitHub write."
+    ),
+    annotations=_READ_EXTERNAL,
+)
+async def gh_get_pr_checks(
+    owner: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=39,
+            pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+            description="Canonical GitHub repository owner.",
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=100,
+            pattern=r"^[A-Za-z0-9_.-]+$",
+            description="Canonical GitHub repository name without path separators.",
+        ),
+    ],
+    number: Annotated[int, Field(ge=1, description="Positive pull request number.")],
+    *,
+    ctx: Context[AppContext],
+    required_only: Annotated[
+        bool,
+        Field(description="Return only checks required by branch protection."),
+    ] = False,
+    max_checks: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=1_000,
+            description="Maximum checks returned, capped by server result policy.",
+        ),
+    ] = None,
+) -> PullRequestChecks:
+    """Return a bounded check summary pinned to an unchanged PR revision."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_get_pr_checks")
+    app = _app(ctx)
+    _validate_repository(owner, repo)
+    base_sha, head_sha = await _get_pr_shas(app, owner, repo, number)
+    args = [
+        "pr",
+        "checks",
+        str(number),
+        "--repo",
+        f"{owner}/{repo}",
+        "--json",
+        "bucket,completedAt,description,event,link,name,startedAt,state,workflow",
+    ]
+    if required_only:
+        args.append("--required")
+    result = await app.client.run(*args, expected_returncode={0, 1, 8})
+    if not isinstance(result, list):
+        raise RuntimeError("GitHub CLI did not return structured pull-request checks")
+    await _verify_pr_shas(app, owner, repo, number, (base_sha, head_sha))
+
+    limit = min(max_checks or app.settings.hard_max_results, app.settings.hard_max_results, 1_000)
+    checks = [
+        PullRequestCheck(
+            name=str(item.get("name", "")),
+            state=str(item.get("state", "UNKNOWN")),
+            bucket=item.get("bucket", "pending"),
+            workflow=item.get("workflow"),
+            event=item.get("event"),
+            description=item.get("description"),
+            started_at=item.get("startedAt"),
+            completed_at=item.get("completedAt"),
+            link=item.get("link"),
+        )
+        for item in result[:limit]
+        if isinstance(item, dict)
+    ]
+    return PullRequestChecks(
+        number=number,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        total_count=len(result),
+        truncated=len(result) > limit,
+        checks=checks,
+    )
+
+
+@mcp.tool(
     title="Submit pull request review",
     description=(
         "Write action: submit a formal APPROVED, CHANGES_REQUESTED, or COMMENTED "
@@ -1087,12 +1261,28 @@ async def gh_submit_pr_review(
     if action in {"request_changes", "comment"} and not body.strip():
         raise ValueError(f"a non-empty review body is required for {action}")
 
-    _, current_head_sha = await _get_pr_shas(app, owner, repo, number)
+    metadata = await _get_pr_metadata(app, owner, repo, number)
+    _, current_head_sha = _extract_pr_shas(metadata)
     expected = expected_head_sha.lower()
     if current_head_sha.lower() != expected:
         raise RuntimeError(
             f"Pull request head changed: expected {expected}, current {current_head_sha}"
         )
+
+    if action == "approve":
+        viewer = await app.client.run("api", "user", "-X", "GET")
+        viewer_login = viewer.get("login") if isinstance(viewer, dict) else None
+        author = metadata.get("user")
+        author_login = author.get("login") if isinstance(author, dict) else None
+        if (
+            isinstance(viewer_login, str)
+            and isinstance(author_login, str)
+            and viewer_login.casefold() == author_login.casefold()
+        ):
+            raise ValueError(
+                f"authenticated GitHub account {viewer_login!r} is the pull request author "
+                "and cannot approve its own pull request; no review was attempted"
+            )
 
     event = {
         "approve": "APPROVE",
@@ -2269,6 +2459,266 @@ async def gh_get_run(
         fields,
     )
     return WorkflowRun.model_validate(result)
+
+
+async def _get_run_snapshot(
+    app: AppContext,
+    owner: str,
+    repo: str,
+    run_id: int,
+    attempt: int | None,
+) -> tuple[int, str, str, str | None, str | None]:
+    """Resolve one workflow-run attempt and its immutable head revision."""
+
+    args = [
+        "run",
+        "view",
+        str(run_id),
+        "--repo",
+        f"{owner}/{repo}",
+        "--json",
+        "attempt,headSha,status,conclusion,url",
+    ]
+    if attempt is not None:
+        args.extend(["--attempt", str(attempt)])
+    result = await app.client.run(*args)
+    if not isinstance(result, dict):
+        raise RuntimeError("GitHub CLI did not return workflow-run metadata")
+    actual_attempt = result.get("attempt")
+    head_sha = result.get("headSha")
+    status = result.get("status")
+    if not isinstance(actual_attempt, int) or actual_attempt < 1:
+        raise RuntimeError("GitHub CLI did not return a valid workflow-run attempt")
+    if attempt is not None and actual_attempt != attempt:
+        raise RuntimeError(
+            f"GitHub returned workflow-run attempt {actual_attempt}, expected {attempt}"
+        )
+    if not isinstance(head_sha, str) or not _OBJECT_SHA_RE.fullmatch(head_sha):
+        raise RuntimeError("GitHub CLI did not return a valid workflow-run head SHA")
+    if not isinstance(status, str) or not status:
+        raise RuntimeError("GitHub CLI did not return a workflow-run status")
+    conclusion = result.get("conclusion")
+    url = result.get("url")
+    return (
+        actual_attempt,
+        head_sha,
+        status,
+        conclusion if isinstance(conclusion, str) else None,
+        url if isinstance(url, str) else None,
+    )
+
+
+@mcp.tool(
+    title="List workflow run jobs",
+    description=(
+        "Read-only: return one bounded page of jobs and step metadata for an exact "
+        "GitHub Actions run attempt. This downloads no logs, performs no watching or "
+        "workflow dispatch, and never modifies GitHub."
+    ),
+    annotations=_READ_EXTERNAL,
+)
+async def gh_list_run_jobs(
+    owner: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=39,
+            pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+            description="Canonical GitHub repository owner.",
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=100,
+            pattern=r"^[A-Za-z0-9_.-]+$",
+            description="Canonical GitHub repository name without path separators.",
+        ),
+    ],
+    run_id: Annotated[int, Field(ge=1, description="Positive workflow run identifier.")],
+    *,
+    ctx: Context[AppContext],
+    attempt: Annotated[
+        int | None,
+        Field(ge=1, description="Exact run attempt; omit for the latest attempt."),
+    ] = None,
+    page: Annotated[int, Field(ge=1, le=10_000, description="One-based result page.")] = 1,
+    per_page: Annotated[
+        int | None,
+        Field(ge=1, le=100, description="Jobs per page, capped by server policy."),
+    ] = None,
+) -> WorkflowJobsPage:
+    """Return one bounded page of jobs pinned to an exact run attempt."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_list_run_jobs")
+    app = _app(ctx)
+    _validate_repository(owner, repo)
+    resolved_attempt, head_sha, _, _, _ = await _get_run_snapshot(app, owner, repo, run_id, attempt)
+    limit = min(app.client.clamp_max_results(per_page), 100)
+    result = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{resolved_attempt}/jobs",
+        "-X",
+        "GET",
+        "-f",
+        f"page={page}",
+        "-f",
+        f"per_page={limit}",
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError("GitHub did not return structured workflow jobs")
+    raw_jobs = result.get("jobs")
+    if not isinstance(raw_jobs, list):
+        raise RuntimeError("GitHub did not return a workflow jobs list")
+    total_count = result.get("total_count")
+    if not isinstance(total_count, int) or total_count < 0:
+        raise RuntimeError("GitHub did not return a valid workflow job count")
+
+    jobs: list[WorkflowJob] = []
+    for item in raw_jobs:
+        if not isinstance(item, dict):
+            continue
+        raw_steps = item.get("steps")
+        steps = (
+            [
+                WorkflowJobStep(
+                    number=step.get("number", 0),
+                    name=str(step.get("name", "")),
+                    status=str(step.get("status", "unknown")),
+                    conclusion=step.get("conclusion"),
+                    started_at=step.get("started_at"),
+                    completed_at=step.get("completed_at"),
+                )
+                for step in raw_steps
+                if isinstance(step, dict)
+            ]
+            if isinstance(raw_steps, list)
+            else []
+        )
+        jobs.append(
+            WorkflowJob(
+                id=item.get("id", 0),
+                name=str(item.get("name", "")),
+                status=str(item.get("status", "unknown")),
+                conclusion=item.get("conclusion"),
+                started_at=item.get("started_at"),
+                completed_at=item.get("completed_at"),
+                url=item.get("html_url"),
+                runner_name=item.get("runner_name"),
+                steps=steps,
+            )
+        )
+
+    verified_attempt, verified_sha, _, _, _ = await _get_run_snapshot(
+        app, owner, repo, run_id, resolved_attempt
+    )
+    if (verified_attempt, verified_sha) != (resolved_attempt, head_sha):
+        raise RuntimeError("Workflow run attempt changed during the jobs read; retry")
+    return WorkflowJobsPage(
+        run_id=run_id,
+        attempt=resolved_attempt,
+        head_sha=head_sha,
+        page=page,
+        per_page=limit,
+        total_count=total_count,
+        has_more=page * limit < total_count,
+        jobs=jobs,
+    )
+
+
+@mcp.tool(
+    title="Read failed workflow logs",
+    description=(
+        "Read-only: return bounded failed-step log text for one exact GitHub Actions "
+        "run attempt, with truncation metadata and a SHA-256 fingerprint. This never "
+        "reruns, cancels, deletes, or dispatches a workflow and never requests input."
+    ),
+    annotations=_READ_EXTERNAL,
+)
+async def gh_get_failed_run_logs(
+    owner: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=39,
+            pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+            description="Canonical GitHub repository owner.",
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=100,
+            pattern=r"^[A-Za-z0-9_.-]+$",
+            description="Canonical GitHub repository name without path separators.",
+        ),
+    ],
+    run_id: Annotated[int, Field(ge=1, description="Positive workflow run identifier.")],
+    *,
+    ctx: Context[AppContext],
+    attempt: Annotated[
+        int | None,
+        Field(ge=1, description="Exact run attempt; omit for the latest attempt."),
+    ] = None,
+    max_bytes: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=1_000_000,
+            description=(
+                "Maximum UTF-8 bytes returned, capped by MCP_GH_MAX_FAILED_RUN_LOG_BYTES."
+            ),
+        ),
+    ] = None,
+) -> WorkflowRunFailedLogs:
+    """Return bounded failed-step logs pinned to an exact run attempt."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_get_failed_run_logs")
+    app = _app(ctx)
+    _validate_repository(owner, repo)
+    resolved_attempt, head_sha, status, conclusion, url = await _get_run_snapshot(
+        app, owner, repo, run_id, attempt
+    )
+    result = await app.client.run(
+        "run",
+        "view",
+        str(run_id),
+        "--repo",
+        f"{owner}/{repo}",
+        "--attempt",
+        str(resolved_attempt),
+        "--log-failed",
+        json_output=False,
+    )
+    content = result.get("stdout") if isinstance(result, dict) else None
+    if not isinstance(content, str):
+        raise RuntimeError("GitHub CLI did not return failed-step log text")
+    verified_attempt, verified_sha, _, _, _ = await _get_run_snapshot(
+        app, owner, repo, run_id, resolved_attempt
+    )
+    if (verified_attempt, verified_sha) != (resolved_attempt, head_sha):
+        raise RuntimeError("Workflow run attempt changed during the log read; retry")
+
+    limit = min(
+        max_bytes or app.settings.max_failed_run_log_bytes,
+        app.settings.max_failed_run_log_bytes,
+    )
+    bounded, returned, total, truncated, digest = _bounded_utf8(content, limit)
+    return WorkflowRunFailedLogs(
+        run_id=run_id,
+        attempt=resolved_attempt,
+        head_sha=head_sha,
+        status=status,
+        conclusion=conclusion,
+        url=url,
+        content=bounded,
+        truncated=truncated,
+        bytes_returned=returned,
+        total_bytes=total,
+        sha256=digest,
+    )
 
 
 @mcp.tool(annotations=_READ_EXTERNAL)
