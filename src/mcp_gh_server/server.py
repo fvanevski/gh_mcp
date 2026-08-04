@@ -44,6 +44,8 @@ from .models import (
     PullRequestFile,
     PullRequestFilesPage,
     PullRequestInfo,
+    PullRequestMerge,
+    PullRequestReviewSubmission,
     ReleaseCreate,
     ReleaseInfo,
     RepoCreate,
@@ -166,6 +168,7 @@ def _require_action_enabled(app: AppContext, action: str) -> None:
         "release_create": app.settings.allow_release_creation,
         "workflow_dispatch": app.settings.allow_workflow_dispatch,
         "content_commit": app.settings.allow_content_commits,
+        "pr_merge": app.settings.allow_pr_merge,
     }
     if action in action_settings and not action_settings[action]:
         env_name = {
@@ -173,6 +176,7 @@ def _require_action_enabled(app: AppContext, action: str) -> None:
             "release_create": "MCP_GH_ALLOW_RELEASE_CREATION",
             "workflow_dispatch": "MCP_GH_ALLOW_WORKFLOW_DISPATCH",
             "content_commit": "MCP_GH_ALLOW_CONTENT_COMMITS",
+            "pr_merge": "MCP_GH_ALLOW_PR_MERGE",
         }[action]
         raise RuntimeError(f"GitHub action {action!r} is disabled by {env_name}")
 
@@ -198,6 +202,7 @@ async def gh_server_info(ctx: Context[AppContext]) -> ServerInfo:
         tool_count=len(await mcp.list_tools()),
         write_commands_enabled=app.settings.allow_write_commands,
         content_commits_enabled=app.settings.allow_content_commits,
+        pr_merge_enabled=app.settings.allow_pr_merge,
     )
 
 
@@ -1035,6 +1040,244 @@ async def gh_list_pr_commits(
         per_page=limit,
         has_more=len(commits) == limit,
         commits=commits,
+    )
+
+
+@mcp.tool(
+    title="Submit pull request review",
+    description=(
+        "Write action: submit a formal APPROVED, CHANGES_REQUESTED, or COMMENTED "
+        "GitHub review for one pull request at an exact expected head commit. This is "
+        "not an issue comment, never prompts, and never merges the pull request."
+    ),
+    annotations=_ADD_EXTERNAL,
+)
+async def gh_submit_pr_review(
+    owner: Annotated[str, Field(min_length=1, description="GitHub repository owner.")],
+    repo: Annotated[str, Field(min_length=1, description="GitHub repository name.")],
+    number: Annotated[int, Field(ge=1, description="Pull request number.")],
+    expected_head_sha: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9A-Fa-f]{40}$",
+            description="Exact pull-request head SHA that was reviewed.",
+        ),
+    ],
+    action: Annotated[
+        Literal["approve", "request_changes", "comment"],
+        Field(description="Formal GitHub review disposition."),
+    ],
+    *,
+    ctx: Context[AppContext],
+    body: Annotated[
+        str,
+        Field(
+            max_length=65_536,
+            description=(
+                "Review body. Required for request_changes and comment; optional for approve."
+            ),
+        ),
+    ] = "",
+) -> PullRequestReviewSubmission:
+    """Submit and read back a formal review pinned to an exact PR commit."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_submit_pr_review")
+    app = _app(ctx)
+    _require_write_enabled(app, owner, repo, action="pr_review")
+    if action in {"request_changes", "comment"} and not body.strip():
+        raise ValueError(f"a non-empty review body is required for {action}")
+
+    _, current_head_sha = await _get_pr_shas(app, owner, repo, number)
+    expected = expected_head_sha.lower()
+    if current_head_sha.lower() != expected:
+        raise RuntimeError(
+            f"Pull request head changed: expected {expected}, current {current_head_sha}"
+        )
+
+    event = {
+        "approve": "APPROVE",
+        "request_changes": "REQUEST_CHANGES",
+        "comment": "COMMENT",
+    }[action]
+    created = await _api_json_write(
+        app.client,
+        "POST",
+        f"repos/{owner}/{repo}/pulls/{number}/reviews",
+        {"body": body, "event": event, "commit_id": expected},
+    )
+    review_id = created.get("id")
+    review_url = str(created.get("html_url", f"https://github.com/{owner}/{repo}/pull/{number}"))
+    if not isinstance(review_id, int):
+        warning = _readback_warning("Pull request review", review_url)
+        return PullRequestReviewSubmission(
+            number=number,
+            review_id=0,
+            action=action,
+            state=str(created.get("state", event)),
+            body=body,
+            commit_sha=expected,
+            url=review_url,
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
+
+    try:
+        review = await app.client.run(
+            "api",
+            f"repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}",
+            "-X",
+            "GET",
+        )
+        if not isinstance(review, dict):
+            raise RuntimeError("GitHub returned a non-object review readback")
+    except RuntimeError:
+        warning = _readback_warning("Pull request review", review_url)
+        return PullRequestReviewSubmission(
+            number=number,
+            review_id=review_id,
+            action=action,
+            state=str(created.get("state", event)),
+            body=str(created.get("body", body)),
+            commit_sha=str(created.get("commit_id", expected)),
+            url=review_url,
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
+
+    user = review.get("user")
+    author = user.get("login") if isinstance(user, dict) else None
+    return PullRequestReviewSubmission(
+        number=number,
+        review_id=review_id,
+        action=action,
+        state=str(review.get("state", event)),
+        body=str(review.get("body", body)),
+        author=author,
+        submitted_at=review.get("submitted_at"),
+        commit_sha=str(review.get("commit_id", expected)),
+        url=str(review.get("html_url", review_url)),
+        message=f"Formal pull request review submitted with state {review.get('state', event)}.",
+    )
+
+
+@mcp.tool(
+    title="Merge pull request at exact head",
+    description=(
+        "Destructive write: merge one pull request using an explicit strategy only when "
+        "its head still matches expected_head_sha. This tool cannot use administrator "
+        "bypass, delete the branch, or silently merge a changed revision. It requires "
+        "MCP_GH_ALLOW_PR_MERGE=true in addition to ordinary write authorization."
+    ),
+    annotations=_MUTATE_EXTERNAL,
+)
+async def gh_merge_pr(
+    owner: Annotated[str, Field(min_length=1, description="GitHub repository owner.")],
+    repo: Annotated[str, Field(min_length=1, description="GitHub repository name.")],
+    number: Annotated[int, Field(ge=1, description="Pull request number.")],
+    expected_head_sha: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9A-Fa-f]{40}$",
+            description="Exact pull-request head SHA authorized for merge.",
+        ),
+    ],
+    method: Annotated[
+        Literal["merge", "squash", "rebase"],
+        Field(description="Repository-supported merge strategy."),
+    ],
+    *,
+    ctx: Context[AppContext],
+    subject: Annotated[
+        str | None,
+        Field(max_length=256, description="Optional merge commit subject."),
+    ] = None,
+    body: Annotated[
+        str,
+        Field(max_length=65_536, description="Optional merge commit body."),
+    ] = "",
+) -> PullRequestMerge:
+    """Merge a PR with GitHub's atomic expected-head guard, then read it back."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_merge_pr")
+    app = _app(ctx)
+    _require_write_enabled(app, owner, repo, action="pr_merge")
+    _, current_head_sha = await _get_pr_shas(app, owner, repo, number)
+    expected = expected_head_sha.lower()
+    if current_head_sha.lower() != expected:
+        raise RuntimeError(
+            f"Pull request head changed: expected {expected}, current {current_head_sha}"
+        )
+
+    args = [
+        "pr",
+        "merge",
+        str(number),
+        "--repo",
+        f"{owner}/{repo}",
+        f"--{method}",
+        "--match-head-commit",
+        expected,
+        "--body-file",
+        "-",
+    ]
+    if subject is not None:
+        args.extend(["--subject", subject])
+    await app.client.run(*args, json_output=False, stdin_text=body)
+
+    pull_url = f"https://github.com/{owner}/{repo}/pull/{number}"
+    try:
+        result = await app.client.run(
+            "pr",
+            "view",
+            str(number),
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            ("number,url,state,mergedAt,mergeCommit,headRefOid,mergeStateStatus,autoMergeRequest"),
+        )
+    except RuntimeError:
+        warning = _readback_warning("Pull request merge", pull_url)
+        return PullRequestMerge(
+            number=number,
+            method=method,
+            head_sha=expected,
+            state="UNKNOWN",
+            merged=False,
+            url=pull_url,
+            readback_completed=False,
+            warning=warning,
+            message=warning,
+        )
+
+    merge_commit = result.get("mergeCommit")
+    merge_commit_sha = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
+    merged_at = result.get("mergedAt")
+    state = str(result.get("state", "UNKNOWN"))
+    merge_state_status = result.get("mergeStateStatus")
+    merged = state.upper() == "MERGED" or isinstance(merged_at, str)
+    queued = isinstance(merge_state_status, str) and merge_state_status.upper() == "QUEUED"
+    auto_merge_enabled = isinstance(result.get("autoMergeRequest"), dict)
+    if merged:
+        message = "Pull request merged successfully."
+    elif queued or auto_merge_enabled:
+        message = "Merge command completed; the pull request is queued or awaiting requirements."
+    else:
+        message = f"Merge command completed; pull request state is {state}."
+    return PullRequestMerge(
+        number=number,
+        method=method,
+        head_sha=str(result.get("headRefOid", expected)),
+        state=state,
+        merged=merged,
+        merge_queued=queued,
+        auto_merge_enabled=auto_merge_enabled,
+        merged_at=merged_at,
+        merge_commit_sha=merge_commit_sha,
+        merge_state_status=merge_state_status,
+        url=str(result.get("url", pull_url)),
+        message=message,
     )
 
 

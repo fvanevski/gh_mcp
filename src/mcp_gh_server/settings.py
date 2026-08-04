@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     allow_release_creation: bool = False
     allow_workflow_dispatch: bool = False
     allow_content_commits: bool = False
+    allow_pr_merge: bool = False
 
     max_commit_files: int = Field(default=100, ge=1, le=1000)
     max_file_bytes: int = Field(default=1_000_000, ge=1)

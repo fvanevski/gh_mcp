@@ -8,6 +8,8 @@ from mcp_gh_server.models import (
     PullRequestCreate,
     PullRequestDiff,
     PullRequestInfo,
+    PullRequestMerge,
+    PullRequestReviewSubmission,
     ReleaseInfo,
     RepoCreate,
     RepoInfo,
@@ -36,15 +38,16 @@ class TestModels:
 
     def test_server_info(self) -> None:
         info = ServerInfo(
-            server_version="0.4.0",
-            tool_schema_version="0.4.0",
+            server_version="0.5.0",
+            tool_schema_version="0.5.0",
             transport="streamable-http",
-            tool_count=38,
+            tool_count=40,
             write_commands_enabled=False,
             content_commits_enabled=False,
+            pr_merge_enabled=False,
         )
         assert info.server_name == "mcp-gh-server"
-        assert info.server_version == "0.4.0"
+        assert info.server_version == "0.5.0"
 
     def test_issue_info(self) -> None:
         issue = IssueInfo(
@@ -85,6 +88,32 @@ class TestModels:
         )
         assert result.number == 224
         assert result.truncated is False
+
+    def test_pull_request_review_submission(self) -> None:
+        review = PullRequestReviewSubmission(
+            number=224,
+            review_id=91,
+            action="approve",
+            state="APPROVED",
+            body="Reviewed.",
+            commit_sha="a" * 40,
+            url="https://github.com/test/repo/pull/224#pullrequestreview-91",
+            message="Formal review submitted.",
+        )
+        assert review.state == "APPROVED"
+
+    def test_pull_request_merge(self) -> None:
+        merge = PullRequestMerge(
+            number=224,
+            method="squash",
+            head_sha="a" * 40,
+            state="MERGED",
+            merged=True,
+            merge_commit_sha="b" * 40,
+            url="https://github.com/test/repo/pull/224",
+            message="Merged.",
+        )
+        assert merge.merged is True
 
     def test_repo_info(self) -> None:
         repo = RepoInfo(

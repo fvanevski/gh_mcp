@@ -35,7 +35,7 @@ direct JSON output or a post-write readback.
 - `gh_list_milestones`: list milestones in a repository.
 - `gh_get_file_contents`: read a complete file at an exact branch, tag, or commit ref.
 
-### Write (14)
+### Write (16)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
@@ -50,6 +50,10 @@ direct JSON output or a post-write readback.
 - `gh_create_comment`: create a comment on an issue or PR (write, disabled by default).
 - `gh_create_branch`: create a branch from an issue's PR (write, disabled by default).
 - `gh_edit_pr`: edit an existing pull request (write, disabled by default).
+- `gh_submit_pr_review`: submit a formal review pinned to an exact PR head SHA
+  (additive write, disabled by default).
+- `gh_merge_pr`: merge an exact reviewed PR head with an explicit strategy
+  (destructive write, separately disabled by default).
 - `gh_commit_files`: atomically create or replace files in one branch commit
   (destructive write, separately disabled by default).
 
@@ -128,7 +132,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.4.0`, but availability in
+The action surface is version `0.5.0`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -238,6 +242,40 @@ If acceptance requires execution, use a separate isolated repository runner with
 managed workspace, bounded commands, cancellation, cleanup, and exact-head-SHA
 validation. The read-only MCP tools are not a substitute for that environment.
 
+## Formal pull-request review and merge
+
+`gh_create_comment` creates an issue-style conversation comment; it does not submit
+a GitHub pull-request review and cannot produce the formal `APPROVED`,
+`CHANGES_REQUESTED`, or `COMMENTED` review states. Use `gh_submit_pr_review` when a
+formal disposition is required.
+
+The safe completion sequence is:
+
+1. Read and review the PR using `gh_get_pr`, `gh_get_pr_diff`, file pages, commit
+   pages, and exact-ref file reads. Record the returned `head_sha`.
+2. Call `gh_submit_pr_review` with that SHA and one of `approve`,
+   `request_changes`, or `comment`. A body is mandatory for the latter two actions.
+3. Confirm the structured result's `state`, `commit_sha`, and `review_id`. The tool
+   submits the review with GitHub's `commit_id` field and rejects a stale head before
+   writing.
+4. If merge is separately authorized, call `gh_merge_pr` with the same exact head
+   SHA and an explicit `merge`, `squash`, or `rebase` strategy.
+5. Treat the PR as merged only when the result reports `merged: true`. A successful
+   command may instead report a merge queue or unmet requirements; formal review
+   submission by itself never merges or closes the PR.
+
+Both operations are focused tools with bounded text fields. They start no nested MCP
+elicitation, inherit no stdin, and return structured readback. Review request bodies
+are transferred through a temporary JSON input file; merge bodies are supplied on
+controlled stdin. If a write succeeds but readback fails, the response is marked as
+partial success and instructs the caller not to retry automatically.
+
+`gh_merge_pr` deliberately exposes no administrator bypass, branch deletion, or
+automatic-merge switch. It passes GitHub CLI's `--match-head-commit` guard so a
+force-push or new commit cannot silently change the authorized merge target. GitHub
+permissions and branch protection still apply, and an author generally cannot
+approve their own pull request.
+
 ## Write-command policy
 
 Write execution is off by default:
@@ -269,17 +307,18 @@ When either allowlist is non-empty, a target is accepted if its exact
 `owner/repo` or its owner is listed. Fine-grained GitHub token permissions
 remain the primary GitHub-side authorization boundary.
 
-Repository creation, release creation, workflow dispatch, and repository-content
-commits require separate opt-in because they can have broader effects:
+Repository creation, release creation, workflow dispatch, repository-content
+commits, and PR merging require separate opt-in because they can have broader effects:
 
 ```dotenv
 MCP_GH_ALLOW_REPO_CREATION=true
 MCP_GH_ALLOW_RELEASE_CREATION=true
 MCP_GH_ALLOW_WORKFLOW_DISPATCH=true
 MCP_GH_ALLOW_CONTENT_COMMITS=true
+MCP_GH_ALLOW_PR_MERGE=true
 ```
 
-Enable only the operations the deployment actually needs; all four default to
+Enable only the operations the deployment actually needs; all five default to
 `false`.
 
 `gh_commit_files` accepts complete UTF-8 file contents, validates repository-relative

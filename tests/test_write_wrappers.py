@@ -31,8 +31,10 @@ from mcp_gh_server.server import (
     gh_list_milestones,
     gh_list_pr_commits,
     gh_list_pr_files,
+    gh_merge_pr,
     gh_run_workflow,
     gh_server_info,
+    gh_submit_pr_review,
     gh_upsert_label,
     gh_watch_run,
 )
@@ -68,6 +70,7 @@ def _context(client: FakeGhClient) -> Any:
         allow_release_creation=True,
         allow_workflow_dispatch=True,
         allow_content_commits=True,
+        allow_pr_merge=True,
     )
     app = AppContext(client=client, settings=settings)  # type: ignore[arg-type]
     return SimpleNamespace(
@@ -82,12 +85,13 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     result = await gh_server_info(ctx=_context(client))
 
     assert result.server_name == "mcp-gh-server"
-    assert result.server_version == "0.4.0"
-    assert result.tool_schema_version == "0.4.0"
+    assert result.server_version == "0.5.0"
+    assert result.tool_schema_version == "0.5.0"
     assert result.transport == "stdio"
-    assert result.tool_count == 38
+    assert result.tool_count == 40
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
+    assert result.pr_merge_enabled is True
     assert client.calls == []
 
 
@@ -725,6 +729,198 @@ async def test_list_pr_files_rejects_snapshot_drift() -> None:
 
     with pytest.raises(RuntimeError, match="changed during the read"):
         await gh_list_pr_files("octo", "repo", 224, ctx=_context(client))
+
+
+@pytest.mark.asyncio
+async def test_submit_pr_review_is_exact_head_formal_review_with_readback() -> None:
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    review_url = "https://github.com/octo/repo/pull/224#pullrequestreview-91"
+    client = FakeGhClient(
+        [
+            {"base": {"sha": base_sha}, "head": {"sha": head_sha}},
+            {"id": 91, "state": "APPROVED", "html_url": review_url},
+            {
+                "id": 91,
+                "state": "APPROVED",
+                "body": "Reviewed exact revision.",
+                "html_url": review_url,
+                "submitted_at": "2026-08-04T18:00:00Z",
+                "commit_id": head_sha,
+                "user": {"login": "reviewer"},
+            },
+        ]
+    )
+
+    result = await gh_submit_pr_review(
+        "octo",
+        "repo",
+        224,
+        head_sha,
+        "approve",
+        ctx=_context(client),
+        body="Reviewed exact revision.",
+    )
+
+    assert result.review_id == 91
+    assert result.state == "APPROVED"
+    assert result.author == "reviewer"
+    assert result.commit_sha == head_sha
+    assert client.payloads == [
+        {
+            "body": "Reviewed exact revision.",
+            "event": "APPROVE",
+            "commit_id": head_sha,
+        }
+    ]
+    assert client.calls[1][0][:4] == (
+        "api",
+        "repos/octo/repo/pulls/224/reviews",
+        "-X",
+        "POST",
+    )
+    assert client.calls[2][0] == (
+        "api",
+        "repos/octo/repo/pulls/224/reviews/91",
+        "-X",
+        "GET",
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_pr_review_rejects_stale_head_before_write() -> None:
+    client = FakeGhClient([{"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}}])
+
+    with pytest.raises(RuntimeError, match="Pull request head changed"):
+        await gh_submit_pr_review("octo", "repo", 224, "c" * 40, "approve", ctx=_context(client))
+
+    assert len(client.calls) == 1
+    assert client.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_submit_pr_review_requires_body_for_non_approval() -> None:
+    client = FakeGhClient([])
+
+    with pytest.raises(ValueError, match="non-empty review body"):
+        await gh_submit_pr_review(
+            "octo", "repo", 224, "b" * 40, "request_changes", ctx=_context(client)
+        )
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_submit_pr_review_returns_partial_success_when_readback_fails() -> None:
+    head_sha = "b" * 40
+    review_url = "https://github.com/octo/repo/pull/224#pullrequestreview-91"
+    client = FakeGhClient(
+        [
+            {"base": {"sha": "a" * 40}, "head": {"sha": head_sha}},
+            {"id": 91, "state": "APPROVED", "html_url": review_url},
+            RuntimeError("readback unavailable"),
+        ]
+    )
+
+    result = await gh_submit_pr_review(
+        "octo", "repo", 224, head_sha, "approve", ctx=_context(client)
+    )
+
+    assert result.write_completed is True
+    assert result.readback_completed is False
+    assert result.review_id == 91
+    assert result.warning is not None
+    assert "Do not retry automatically" in result.warning
+
+
+@pytest.mark.asyncio
+async def test_merge_pr_uses_atomic_head_guard_and_noninteractive_body() -> None:
+    head_sha = "b" * 40
+    merge_sha = "c" * 40
+    client = FakeGhClient(
+        [
+            {"base": {"sha": "a" * 40}, "head": {"sha": head_sha}},
+            {"stdout": ""},
+            {
+                "number": 224,
+                "url": "https://github.com/octo/repo/pull/224",
+                "state": "MERGED",
+                "mergedAt": "2026-08-04T18:01:00Z",
+                "mergeCommit": {"oid": merge_sha},
+                "headRefOid": head_sha,
+                "mergeStateStatus": "CLEAN",
+                "autoMergeRequest": None,
+            },
+        ]
+    )
+
+    result = await gh_merge_pr(
+        "octo",
+        "repo",
+        224,
+        head_sha,
+        "squash",
+        ctx=_context(client),
+        subject="Reviewed change",
+        body="Merge exact reviewed revision.",
+    )
+
+    assert result.merged is True
+    assert result.merge_commit_sha == merge_sha
+    merge_args, merge_kwargs = client.calls[1]
+    assert merge_args == (
+        "pr",
+        "merge",
+        "224",
+        "--repo",
+        "octo/repo",
+        "--squash",
+        "--match-head-commit",
+        head_sha,
+        "--body-file",
+        "-",
+        "--subject",
+        "Reviewed change",
+    )
+    assert merge_kwargs == {
+        "json_output": False,
+        "stdin_text": "Merge exact reviewed revision.",
+    }
+    assert "--admin" not in merge_args
+    assert "--delete-branch" not in merge_args
+    assert "--auto" not in merge_args
+
+
+@pytest.mark.asyncio
+async def test_merge_pr_requires_separate_opt_in() -> None:
+    client = FakeGhClient([])
+    context = _context(client)
+    context.request_context.lifespan_context.settings.allow_pr_merge = False
+
+    with pytest.raises(RuntimeError, match="MCP_GH_ALLOW_PR_MERGE"):
+        await gh_merge_pr("octo", "repo", 224, "b" * 40, "merge", ctx=context)
+
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_merge_pr_returns_partial_success_when_readback_fails() -> None:
+    head_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            {"base": {"sha": "a" * 40}, "head": {"sha": head_sha}},
+            {"stdout": ""},
+            RuntimeError("readback unavailable"),
+        ]
+    )
+
+    result = await gh_merge_pr("octo", "repo", 224, head_sha, "rebase", ctx=_context(client))
+
+    assert result.write_completed is True
+    assert result.readback_completed is False
+    assert result.merged is False
+    assert result.warning is not None
+    assert "Do not retry automatically" in result.warning
 
 
 @pytest.mark.asyncio
