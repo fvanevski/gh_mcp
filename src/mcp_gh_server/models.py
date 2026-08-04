@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 # ---------------------------------------------------------------------------
 # Info tools
@@ -112,6 +113,7 @@ class IssueCreate(BaseModel):
 
 class PullRequestInfo(IssueInfo):
     """A pull request with additional fields."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     head_ref: str | None = Field(None, alias="headRefName")
@@ -133,6 +135,7 @@ class PullRequestCreate(BaseModel):
 
 class PullRequestEdit(BaseModel):
     """Result of editing a pull request."""
+
     number: int
     title: str
     url: str
@@ -175,6 +178,7 @@ class RepoCreate(BaseModel):
 
 class BranchCreate(BaseModel):
     """Result of creating a branch."""
+
     name: str
     message: str
 
@@ -186,6 +190,7 @@ class BranchCreate(BaseModel):
 
 class ReleaseInfo(BaseModel):
     """A release."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     tag_name: str = Field(alias="tagName")
@@ -221,6 +226,7 @@ class WorkflowInfo(BaseModel):
 
 class WorkflowRun(BaseModel):
     """A GitHub Actions workflow run."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     id: int = Field(alias="databaseId")
@@ -274,6 +280,7 @@ class IssueEdit(BaseModel):
 
 class CommentCreate(BaseModel):
     """Result of creating a comment."""
+
     url: str
     message: str
 

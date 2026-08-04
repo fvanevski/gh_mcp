@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
+from urllib.parse import quote, urlparse
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context, Elicit, Resolve
@@ -18,9 +19,8 @@ from mcp_types import ToolAnnotations
 from .gh_client import GhClient
 from .models import (
     BranchCreate,
-    CommentCreate,
-    PullRequestEdit,
     CommandApproval,
+    CommentCreate,
     IssueCreate,
     IssueEdit,
     IssueInfo,
@@ -28,6 +28,7 @@ from .models import (
     LabelEdit,
     MilestoneCreate,
     PullRequestCreate,
+    PullRequestEdit,
     PullRequestInfo,
     ReleaseCreate,
     ReleaseInfo,
@@ -126,7 +127,9 @@ async def gh_info(ctx: Context[AppContext]) -> dict[str, Any]:
     # gh --version prints to stdout (not JSON)
     version_result = app.client.run("version", json_output=False)
     version_line = version_result.get("stdout", "") or ""
-    version = version_line.strip().split()[2] if len(version_line.strip().split()) > 2 else "unknown"
+    version = (
+        version_line.strip().split()[2] if len(version_line.strip().split()) > 2 else "unknown"
+    )
 
     # Find the first active host
     active_account: str | None = None
@@ -163,6 +166,70 @@ def _parse_search_result(
     return [], 0
 
 
+def _write_stdout(result: Any, resource: str) -> str:
+    """Return non-empty stdout from a successful non-JSON write command."""
+
+    if isinstance(result, dict):
+        stdout = result.get("stdout")
+        if isinstance(stdout, str) and stdout.strip():
+            return stdout.strip()
+    raise RuntimeError(
+        f"{resource} was created, but gh did not return the locator needed to read it back"
+    )
+
+
+def _created_url(result: Any, resource: str) -> str:
+    """Extract and validate the URL printed by a successful gh create command."""
+
+    stdout = _write_stdout(result, resource)
+    for token in reversed(stdout.split()):
+        url = token.rstrip(".,;)")
+        parsed = urlparse(url)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return url
+    raise RuntimeError(f"{resource} was created, but gh returned no valid resource URL")
+
+
+def _created_json(result: Any, resource: str) -> dict[str, Any]:
+    """Parse the response body from a successful gh api write command."""
+
+    raw = _write_stdout(result, resource)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"{resource} was created, but gh returned a non-JSON API response"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"{resource} was created, but gh returned an unexpected API response")
+    return parsed
+
+
+def _get_label(client: GhClient, owner: str, repo: str, name: str) -> dict[str, Any]:
+    """Read a label after a write using its exact REST resource path."""
+
+    result = client.run(
+        "api",
+        f"repos/{owner}/{repo}/labels/{quote(name, safe='')}",
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError(f"gh returned an unexpected response while reading label {name!r}")
+    return result
+
+
+def _workflow_run_id(url: str) -> int:
+    """Extract a workflow run identifier from its URL."""
+
+    parts = [part for part in urlparse(url).path.split("/") if part]
+    try:
+        runs_index = parts.index("runs")
+        return int(parts[runs_index + 1])
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(
+            f"Workflow was dispatched, but its run URL is malformed: {url!r}"
+        ) from exc
+
+
 @mcp.tool(annotations=_READ_ONLY_TOOL)
 async def gh_search_repos(
     query: str,
@@ -181,8 +248,7 @@ async def gh_search_repos(
     app = _app(ctx)
     limit = app.client.clamp_max_results(per_page)
     fields = (
-        "fullName,name,description,stargazersCount,forksCount,language,"
-        "createdAt,updatedAt,license"
+        "fullName,name,description,stargazersCount,forksCount,language,createdAt,updatedAt,license"
     )
     args = [
         "search",
@@ -414,7 +480,22 @@ async def gh_create_issue(
         for assignee in assignees:
             args.extend(["--assignee", assignee])
 
-    result = app.client.run(*args, "--json", "title,number,url")
+    create_result = app.client.run(*args, json_output=False)
+    created_url = _created_url(create_result, "Issue")
+    try:
+        result = app.client.run(
+            "issue",
+            "view",
+            created_url,
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            "title,number,url",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Issue was created at {created_url}, but its structured details could not be read"
+        ) from exc
     return IssueCreate(
         number=result.get("number", 0),
         title=result.get("title", title),
@@ -560,7 +641,22 @@ async def gh_create_pr(
         for user in review_users:
             args.extend(["--reviewer", user])
 
-    result = app.client.run(*args, "--json", "title,number,url")
+    create_result = app.client.run(*args, json_output=False)
+    created_url = _created_url(create_result, "Pull request")
+    try:
+        result = app.client.run(
+            "pr",
+            "view",
+            created_url,
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            "title,number,url",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Pull request was created at {created_url}, but structured readback failed"
+        ) from exc
     return PullRequestCreate(
         number=result.get("number", 0),
         title=result.get("title", title),
@@ -635,13 +731,15 @@ async def gh_list_repos(
     args = ["repo", "list"]
     if username:
         args.append(username)
-    args.extend([
-        "--json",
-        fields,
-        "--limit",
-        str(limit),
-    ])
-    
+    args.extend(
+        [
+            "--json",
+            fields,
+            "--limit",
+            str(limit),
+        ]
+    )
+
     # Translate type
     t = type.lower()
     if t == "fork":
@@ -681,7 +779,7 @@ async def gh_create_repo(
     app = _app(ctx)
     if not approval.approved:
         return RepoCreate(
-            full_name=name,
+            name=name,
             url="",
             message="Repository creation cancelled; no GitHub repo was created.",
         )
@@ -690,20 +788,37 @@ async def gh_create_repo(
         "repo",
         "create",
         name,
-        "--json",
-        "nameWithOwner,url",
+        "--private" if private else "--public",
     ]
     if description:
         args.extend(["--description", description])
-    if private:
-        args.append("--private")
     if auto_init:
-        args.append("--enable-gitignore")
-        args.append("--enable-wiki")
+        args.append("--add-readme")
 
-    result = app.client.run(*args)
+    app.client.run(*args, json_output=False)
+    full_name = name
+    if "/" not in full_name:
+        account = app.client.run("api", "user")
+        login = account.get("login") if isinstance(account, dict) else None
+        if not isinstance(login, str) or not login:
+            raise RuntimeError(
+                f"Repository {name!r} was created, but the authenticated owner could not be read"
+            )
+        full_name = f"{login}/{name}"
+    try:
+        result = app.client.run(
+            "repo",
+            "view",
+            full_name,
+            "--json",
+            "nameWithOwner,url",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Repository {full_name!r} was created, but its structured details could not be read"
+        ) from exc
     return RepoCreate(
-        full_name=result.get("nameWithOwner", name),
+        name=result.get("nameWithOwner", full_name),
         url=result.get("url", ""),
         message="Repository created successfully.",
     )
@@ -805,8 +920,6 @@ async def gh_create_release(
         tag_name,
         "--repo",
         f"{owner}/{repo}",
-        "--json",
-        "tagName,url",
     ]
     if name:
         args.extend(["--title", name])
@@ -819,7 +932,21 @@ async def gh_create_release(
     if target:
         args.extend(["--target", target])
 
-    result = app.client.run(*args)
+    app.client.run(*args, json_output=False)
+    try:
+        result = app.client.run(
+            "release",
+            "view",
+            tag_name,
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            "tagName,url",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Release {tag_name!r} was created, but its structured details could not be read"
+        ) from exc
     return ReleaseCreate(
         tag_name=result.get("tagName", tag_name),
         url=result.get("url", ""),
@@ -883,7 +1010,6 @@ async def gh_get_workflow(
     """Get details of a specific GitHub Actions workflow."""
 
     app = _app(ctx)
-    fields = "id,name,path,state"
     result = app.client.run(
         "api",
         f"repos/{owner}/{repo}/actions/workflows/{workflow_id}",
@@ -925,17 +1051,39 @@ async def gh_run_workflow(
         f"{owner}/{repo}",
         "--ref",
         ref,
-        "--json",
-        "databaseId,url",
     ]
     if fields:
         for field in fields:
             args.extend(["-f", field])
 
-    result = app.client.run(*args)
+    dispatch_result = app.client.run(*args, json_output=False)
+    stdout = dispatch_result.get("stdout", "") if isinstance(dispatch_result, dict) else ""
+    if not isinstance(stdout, str) or not stdout.strip():
+        return WorkflowRunCreate(
+            run_id=None,
+            url=None,
+            message="Workflow dispatch triggered successfully; GitHub did not return a run URL.",
+        )
+
+    created_url = _created_url(dispatch_result, "Workflow run")
+    run_id = _workflow_run_id(created_url)
+    try:
+        result = app.client.run(
+            "run",
+            "view",
+            str(run_id),
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            "databaseId,url",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Workflow run was dispatched at {created_url}, but structured readback failed"
+        ) from exc
     return WorkflowRunCreate(
-        run_id=result.get("databaseId"),
-        url=result.get("url"),
+        run_id=result.get("databaseId", run_id),
+        url=result.get("url", created_url),
         message="Workflow dispatch triggered successfully.",
     )
 
@@ -1052,7 +1200,7 @@ async def gh_watch_run(
         args.append("--exit-status")
 
     # gh run watch is a blocking command that outputs to stdout/stderr
-    result = app.client.run(*args, json_output=False)
+    app.client.run(*args, json_output=False)
 
     # After watch completes, fetch final status
     view_args = [
@@ -1064,7 +1212,7 @@ async def gh_watch_run(
     ]
     if owner and repo:
         view_args.extend(["--repo", f"{owner}/{repo}"])
-    
+
     view_result = app.client.run(*view_args)
     if isinstance(view_result, dict):
         conclusion = view_result.get("conclusion", "unknown")
@@ -1145,11 +1293,32 @@ async def gh_edit_issue(
         for assignee in assignees_remove:
             args.extend(["--remove-assignee", assignee])
     if milestone is not None:
-        args.extend(["--milestone", str(milestone)])
+        milestone_result = app.client.run(
+            "api",
+            f"repos/{owner}/{repo}/milestones/{milestone}",
+        )
+        milestone_title = milestone_result.get("title")
+        if not isinstance(milestone_title, str) or not milestone_title:
+            raise RuntimeError(f"Unable to resolve milestone #{milestone} to its title")
+        args.extend(["--milestone", milestone_title])
     if remove_milestone:
         args.append("--remove-milestone")
 
-    result = app.client.run(*args, "--json", "title,number,state,url")
+    app.client.run(*args, json_output=False)
+    try:
+        result = app.client.run(
+            "issue",
+            "view",
+            str(number),
+            "--repo",
+            f"{owner}/{repo}",
+            "--json",
+            "title,number,state,url",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Issue #{number} was edited, but its structured details could not be read"
+        ) from exc
     return IssueEdit(
         number=result.get("number", number),
         title=result.get("title", ""),
@@ -1242,7 +1411,13 @@ async def gh_create_label(
     if force:
         args.append("--force")
 
-    result = app.client.run(*args, "--json", "name,color,description,url")
+    app.client.run(*args, json_output=False)
+    try:
+        result = _get_label(app.client, owner, repo, name)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Label {name!r} was created, but its structured details could not be read"
+        ) from exc
     return LabelCreate(
         name=result.get("name", name),
         color=result.get("color", color),
@@ -1289,13 +1464,20 @@ async def gh_edit_label(
         f"{owner}/{repo}",
     ]
     if new_name:
-        args.extend(["--new-name", new_name])
+        args.extend(["--name", new_name])
     if color:
         args.extend(["--color", color])
     if description:
         args.extend(["--description", description])
 
-    result = app.client.run(*args, "--json", "name,color,description,url")
+    app.client.run(*args, json_output=False)
+    result_name = new_name or name
+    try:
+        result = _get_label(app.client, owner, repo, result_name)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Label {name!r} was edited, but its structured details could not be read"
+        ) from exc
     return LabelEdit(
         name=result.get("name", name),
         color=result.get("color", ""),
@@ -1329,6 +1511,8 @@ async def gh_list_milestones(
     result = app.client.run(
         "api",
         f"repos/{owner}/{repo}/milestones",
+        "-X",
+        "GET",
         "-f",
         f"per_page={limit}",
         "-f",
@@ -1396,21 +1580,36 @@ async def gh_create_milestone(
         payload_path = f.name
 
     try:
-        result = app.client.run(
+        create_result = app.client.run(
             "api",
             f"repos/{owner}/{repo}/milestones",
             "-X",
             "POST",
-            "-i",
+            "--input",
             payload_path,
-            "--jq",
-            "{number,title,url}",
+            json_output=False,
         )
     finally:
         os.unlink(payload_path)
 
+    created = _created_json(create_result, "Milestone")
+    number = created.get("number")
+    if not isinstance(number, int):
+        raise RuntimeError(
+            "Milestone was created, but the API response did not include its numeric identifier"
+        )
+    try:
+        result = app.client.run(
+            "api",
+            f"repos/{owner}/{repo}/milestones/{number}",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Milestone #{number} was created, but its structured details could not be read"
+        ) from exc
+
     return MilestoneCreate(
-        number=result.get("number", 0),
+        number=result.get("number", number),
         title=result.get("title", title),
         url=result.get("url", ""),
         message="Milestone created successfully.",
@@ -1423,6 +1622,7 @@ async def gh_create_milestone(
 # ---------------------------------------------------------------------------
 # Comment / Branch / Edit PR Tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(annotations=_WRITE_TOOL)
 async def gh_create_comment(
@@ -1439,7 +1639,7 @@ async def gh_create_comment(
     if not approval.approved:
         return CommentCreate(url="", message="Comment creation cancelled.")
 
-    result = app.client.run(
+    create_result = app.client.run(
         "issue",
         "comment",
         str(issue_number),
@@ -1447,11 +1647,11 @@ async def gh_create_comment(
         f"{owner}/{repo}",
         "--body",
         body,
+        json_output=False,
     )
-    # gh issue comment outputs the URL of the created comment to stdout
-    stdout = result.get("stdout", "") if isinstance(result, dict) else str(result)
+    created_url = _created_url(create_result, "Comment")
     return CommentCreate(
-        url=stdout.strip() if stdout else "",
+        url=created_url,
         message="Comment posted successfully.",
     )
 
@@ -1483,8 +1683,8 @@ async def gh_create_branch(
     ]
     if base:
         args.extend(["--base", base])
-        
-    app.client.run(*args)
+
+    app.client.run(*args, json_output=False)
     return BranchCreate(
         name=name,
         message=f"Branch '{name}' created successfully for issue #{issue_number}.",
@@ -1543,8 +1743,8 @@ async def gh_edit_pr(
     if base:
         args.extend(["--base", base])
 
-    app.client.run(*args)
-    
+    app.client.run(*args, json_output=False)
+
     # Fetch updated details
     fields = "title,url"
     info_result = app.client.run(
@@ -1556,7 +1756,7 @@ async def gh_edit_pr(
         "--json",
         fields,
     )
-    
+
     return PullRequestEdit(
         number=number,
         title=info_result.get("title", ""),
