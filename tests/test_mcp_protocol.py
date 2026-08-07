@@ -572,7 +572,7 @@ async def test_streamable_http_exact_sha_branch_keeps_session_live(
 
             server_info = await session.call_tool("gh_server_info", {})
             assert server_info.is_error is False
-            assert server_info.structured_content["server_version"] == "0.6.1"
+            assert server_info.structured_content["server_version"] == "0.6.2"
             assert len((await session.list_tools()).tools) == 44
     finally:
         get_settings.cache_clear()
@@ -612,14 +612,14 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             ClientSession(*streams) as session,
         ):
             initialized = await session.initialize()
-            assert initialized.server_info.version == "0.6.1"
+            assert initialized.server_info.version == "0.6.2"
 
             server_info = await session.call_tool("gh_server_info", {})
             assert server_info.is_error is False
             assert server_info.structured_content == {
                 "server_name": "mcp-gh-server",
-                "server_version": "0.6.1",
-                "tool_schema_version": "0.6.1",
+                "server_version": "0.6.2",
+                "tool_schema_version": "0.6.2",
                 "transport": "streamable-http",
                 "tool_count": 44,
                 "write_commands_enabled": False,
@@ -776,7 +776,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
 
             server_info_after_denial = await session.call_tool("gh_server_info", {})
             assert server_info_after_denial.is_error is False
-            assert server_info_after_denial.structured_content["server_version"] == "0.6.1"
+            assert server_info_after_denial.structured_content["server_version"] == "0.6.2"
 
             second_file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert second_file_result.is_error is False

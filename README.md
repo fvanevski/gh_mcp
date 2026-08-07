@@ -139,7 +139,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.6.1`, but availability in
+The action surface is version `0.6.2`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -225,7 +225,7 @@ MCP tool invocation reached server: tool=gh_get_pr
 ```
 
 After deploying the current release, delete and reinstall the Plus custom plugin and
-verify `gh_server_info` reports both versions as 0.6.1. An immediate namespace-disabled
+verify `gh_server_info` reports both versions as 0.6.2. An immediate namespace-disabled
 response with no `gh_get_pr` marker still proves rejection occurred in the host before
 the revised server operation. It does not indicate GitHub authentication, repository,
 PR, or readback failure and must not be retried as though a GitHub write partially ran.
