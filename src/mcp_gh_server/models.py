@@ -63,6 +63,7 @@ class IssueSearchItem(SearchResultItem):
 
     number: int
     state: str
+    body: str | None = None
     author: str | None = None
     created_at: str | None = Field(None, alias="createdAt")
     updated_at: str | None = Field(None, alias="updatedAt")
@@ -101,6 +102,7 @@ class IssueInfo(BaseModel):
     number: int
     title: str
     state: str
+    body: str | None = None
     author: str | None = None
     created_at: str | None = Field(None, alias="createdAt")
     updated_at: str | None = Field(None, alias="updatedAt")

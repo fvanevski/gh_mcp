@@ -15,7 +15,7 @@ direct JSON output or a post-write readback.
 - `gh_search_issues`: search issues and pull requests with qualifiers.
 - `gh_search_code`: search source code with qualifiers.
 - `gh_list_issues`: list issues in a repository with filters.
-- `gh_get_issue`: get details of a specific issue or pull request.
+- `gh_get_issue`: get details of a specific issue or pull request, including its body.
 - `gh_list_prs`: list pull requests in a repository.
 - `gh_get_pr`: get a bounded, fully typed pull-request snapshot and exact base/head
   commit SHAs through one explicit noninteractive GET.
@@ -139,7 +139,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.6.2`, but availability in
+The action surface is version `0.6.3`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -225,7 +225,7 @@ MCP tool invocation reached server: tool=gh_get_pr
 ```
 
 After deploying the current release, delete and reinstall the Plus custom plugin and
-verify `gh_server_info` reports both versions as 0.6.2. An immediate namespace-disabled
+verify `gh_server_info` reports both versions as 0.6.3. An immediate namespace-disabled
 response with no `gh_get_pr` marker still proves rejection occurred in the host before
 the revised server operation. It does not indicate GitHub authentication, repository,
 PR, or readback failure and must not be retried as though a GitHub write partially ran.

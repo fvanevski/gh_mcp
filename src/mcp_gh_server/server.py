@@ -601,7 +601,7 @@ async def gh_get_issue(
     *,
     ctx: Context[AppContext],
 ) -> IssueInfo:
-    """Get details of a specific issue or pull request."""
+    """Get details of a specific issue or pull request, including its body."""
 
     app = _app(ctx)
     fields = (
@@ -824,6 +824,7 @@ async def gh_get_pr(
         number=number,
         title=str(result.get("title") or ""),
         state=str(result.get("state") or "unknown"),
+        body=str(result.get("body")) if result.get("body") is not None else None,
         author=user.get("login") if isinstance(user, dict) else None,
         createdAt=result.get("created_at"),
         updatedAt=result.get("updated_at"),

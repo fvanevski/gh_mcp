@@ -44,8 +44,8 @@ class TestModels:
 
     def test_server_info(self) -> None:
         info = ServerInfo(
-            server_version="0.6.2",
-            tool_schema_version="0.6.2",
+            server_version="0.6.3",
+            tool_schema_version="0.6.3",
             transport="streamable-http",
             tool_count=44,
             write_commands_enabled=False,
@@ -53,7 +53,7 @@ class TestModels:
             pr_merge_enabled=False,
         )
         assert info.server_name == "mcp-gh-server"
-        assert info.server_version == "0.6.2"
+        assert info.server_version == "0.6.3"
 
     def test_issue_info(self) -> None:
         issue = IssueInfo(

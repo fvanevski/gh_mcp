@@ -90,8 +90,8 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     result = await gh_server_info(ctx=_context(client))
 
     assert result.server_name == "mcp-gh-server"
-    assert result.server_version == "0.6.2"
-    assert result.tool_schema_version == "0.6.2"
+    assert result.server_version == "0.6.3"
+    assert result.tool_schema_version == "0.6.3"
     assert result.transport == "stdio"
     assert result.tool_count == 44
     assert result.write_commands_enabled is True
