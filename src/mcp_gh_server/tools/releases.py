@@ -85,7 +85,11 @@ async def gh_create_release(
     prerelease: bool = False,
     target: str | None = None,
 ) -> ReleaseCreate:
-    """Create a new release in a repository."""
+    """Create a new release in a repository.
+
+    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host
+    is responsible for user-facing approval.
+    """
 
     app = app_from_context(ctx)
     require_write_enabled(app, owner, repo, action="release_create")
