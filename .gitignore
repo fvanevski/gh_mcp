@@ -38,3 +38,6 @@ Thumbs.db
 
 # Qwen Code files
 .qwen/
+
+# Serena project state
+.serena/
