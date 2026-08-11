@@ -161,6 +161,29 @@ async def test_run_logs_tail_selection_is_utf8_safe_and_marks_incomplete() -> No
     assert result.sha256 == hashlib.sha256(text.encode()).hexdigest()
 
 
+async def test_run_logs_tail_preserves_log_end_when_hard_cap_is_smaller() -> None:
+    text = "0123456789"
+    client = FakeGhClient([_run(), {"stdout": text}, _run()])
+
+    result = await gh_get_run_logs(
+        "octo",
+        "repo",
+        123,
+        2,
+        ctx=_context(client, hard_max=4),
+        tail_bytes=8,
+    )
+
+    assert result.text == "6789"
+    assert result.bytes_returned == 4
+    assert result.total_bytes == 10
+    assert result.truncated is True
+    assert result.warning is not None
+    assert "tail_bytes=8" in result.warning
+    assert "effective max_bytes=4" in result.warning
+    assert result.sha256 == hashlib.sha256(text.encode()).hexdigest()
+
+
 async def test_run_logs_literal_markers_are_inclusive_and_no_regex_is_interpreted() -> None:
     text = "before [start].* literal [end] after"
     client = FakeGhClient([_run(), {"stdout": text}, _run()])
@@ -208,9 +231,7 @@ async def test_run_logs_reject_attempt_mismatch_before_log_read() -> None:
 
 async def test_job_logs_verify_exact_job_membership_and_return_attempt_identity() -> None:
     text = "job succeeded"
-    client = FakeGhClient(
-        [_job(), _job_run(), {"stdout": text}, _job(), _job_run()]
-    )
+    client = FakeGhClient([_job(), _job_run(), {"stdout": text}, _job(), _job_run()])
 
     result = await gh_get_job_logs("octo", "repo", 456, 2, ctx=_context(client))
 
@@ -241,6 +262,15 @@ async def test_job_logs_reject_attempt_that_does_not_contain_exact_job() -> None
         await gh_get_job_logs("octo", "repo", 456, 2, ctx=_context(client))
 
     assert len(client.calls) == 2
+
+
+async def test_job_logs_reject_invalid_head_sha_before_log_read() -> None:
+    client = FakeGhClient([_job(head_sha="z" * 40)])
+
+    with pytest.raises(RuntimeError, match="valid head SHA"):
+        await gh_get_job_logs("octo", "repo", 456, 2, ctx=_context(client))
+
+    assert len(client.calls) == 1
 
 
 @pytest.mark.parametrize(
