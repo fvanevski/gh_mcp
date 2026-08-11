@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .legacy_git_write_adapter import gh_create_branch_from_sha
 from .legacy_write_adapters import gh_commit_files, gh_merge_pr, gh_submit_pr_review
 from .tooling import (
     ADD_EXTERNAL,
@@ -23,7 +24,7 @@ from .tools.actions import (
 )
 from .tools.diagnostics import gh_info, gh_server_info
 from .tools.discovery import gh_search_code, gh_search_issues, gh_search_repos
-from .tools.git import gh_create_branch, gh_create_branch_from_sha
+from .tools.git import gh_create_branch
 from .tools.issues import (
     gh_create_comment,
     gh_create_issue,
@@ -95,11 +96,21 @@ mcp.add_tool(
     annotations=ADD_EXTERNAL,
 )
 
-# Issue #9 keeps the 0.6.x public schemas stable while routing three nontrivial
-# exact-state writes through shared internal outcome adapters. The compatibility
-# layer preserves each tool's existing operation contract while adding semantic
-# result matching and tri-state ambiguity handling without changing public names
-# or return models.
+# Issue #9 keeps the 0.6.x public schemas stable while routing existing
+# nontrivial exact-state writes through shared internal outcome adapters. The
+# compatibility layer preserves each tool's existing public signature/model while
+# adding semantic result matching and tri-state ambiguity handling.
+mcp.remove_tool("gh_create_branch_from_sha")
+mcp.add_tool(
+    gh_create_branch_from_sha,
+    title="Create branch from exact commit",
+    description=(
+        "Additive write: create one new branch at an exact 40-character commit SHA. "
+        "The operation never moves or overwrites an existing branch, does not associate "
+        "the branch with an issue, and performs no interactive prompting or MCP elicitation."
+    ),
+    annotations=ADD_EXTERNAL,
+)
 mcp.remove_tool("gh_submit_pr_review")
 mcp.add_tool(
     gh_submit_pr_review,
