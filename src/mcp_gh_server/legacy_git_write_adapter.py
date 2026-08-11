@@ -1,4 +1,4 @@
-"""0.6.x compatibility adapter for exact Git-reference creation."""
+"""0.6.x compatibility adapters for Git-reference writes."""
 
 from __future__ import annotations
 
@@ -9,14 +9,18 @@ from urllib.parse import quote
 from mcp.server.mcpserver import Context
 from pydantic import Field
 
-from .models import BranchCreateFromSha
+from .legacy_write_support import (
+    raise_known_unapplied,
+    run_json_write_with_metadata,
+    run_write_with_metadata,
+)
+from .models import BranchCreate, BranchCreateFromSha
 from .request_governor import GitHubRequestResult
 from .tooling import (
     OBJECT_SHA_RE,
     OWNER_RE,
     REPO_RE,
     AppContext,
-    api_json_write,
     app_from_context,
     require_write_enabled,
     validate_branch,
@@ -29,6 +33,99 @@ from .write_contracts import (
 )
 
 logger = logging.getLogger("mcp_gh_server.server")
+
+
+async def gh_create_branch(
+    owner: Annotated[
+        str,
+        Field(
+            description="GitHub repository owner or organization login.",
+            min_length=1,
+            max_length=39,
+            pattern=OWNER_RE.pattern,
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            description="GitHub repository name without the owner prefix.",
+            min_length=1,
+            max_length=100,
+            pattern=REPO_RE.pattern,
+        ),
+    ],
+    issue_number: Annotated[int, Field(description="Positive issue number.", ge=1)],
+    name: Annotated[
+        str,
+        Field(description="New development branch name.", min_length=1, max_length=1024),
+    ],
+    *,
+    ctx: Context[AppContext],
+    base: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Existing branch name to use as the base. Full commit SHAs are rejected; "
+                "use gh_create_branch_from_sha for an immutable base."
+            ),
+            min_length=1,
+            max_length=1024,
+        ),
+    ] = None,
+) -> BranchCreate:
+    """Create a new branch for an issue from an existing branch name."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_create_branch")
+    app = app_from_context(ctx)
+    require_write_enabled(app, owner, repo, action="branch_create")
+    validate_branch(name)
+    if base is not None:
+        if OBJECT_SHA_RE.fullmatch(base):
+            raise ValueError(
+                "base accepts branch names only; use gh_create_branch_from_sha "
+                "with base_sha for an immutable commit base"
+            )
+        validate_branch(base)
+
+    args = [
+        "issue",
+        "develop",
+        str(issue_number),
+        "--repo",
+        f"{owner}/{repo}",
+        "--name",
+        name,
+    ]
+    if base:
+        args.extend(["--base", base])
+
+    async def write() -> GitHubRequestResult[Any]:
+        return await run_write_with_metadata(app.client, *args, json_output=False)
+
+    async def readback() -> dict[str, Any]:
+        # ``gh issue develop`` does not return a stable branch resource identity in
+        # the frozen 0.6.x contract. Do not upgrade process success to verified
+        # semantic success without an exact ref readback contract.
+        raise RuntimeError(
+            "legacy issue-development branch creation has no exact readback identity"
+        )
+
+    execution = await execute_write_readback(
+        resource="Issue development branch",
+        write=write,
+        readback=readback,
+        state_matches_requested=lambda _value: False,
+    )
+    raise_known_unapplied(execution)
+    status = legacy_write_status(execution.outcome)
+    message = status.warning or f"Branch '{name}' created successfully for issue #{issue_number}."
+    return BranchCreate(
+        name=name,
+        write_completed=status.write_completed,
+        readback_completed=status.readback_completed,
+        warning=status.warning,
+        message=message,
+    )
 
 
 async def gh_create_branch_from_sha(
@@ -64,7 +161,7 @@ async def gh_create_branch_from_sha(
     *,
     ctx: Context[AppContext],
 ) -> BranchCreateFromSha:
-    """Create an exact branch with independent semantic readback and no write replay."""
+    """Create an exact branch with authoritative readback and no write replay."""
 
     logger.info("MCP tool invocation reached server: tool=gh_create_branch_from_sha")
     app = app_from_context(ctx)
@@ -97,16 +194,13 @@ async def gh_create_branch_from_sha(
             label="Branch base commit",
         )
 
-    async def write() -> GitHubRequestResult[dict[str, Any]]:
-        created_ref = await api_json_write(
+    async def write() -> GitHubRequestResult[Any]:
+        return await run_json_write_with_metadata(
             app.client,
             "POST",
             f"repos/{owner}/{repo}/git/refs",
             {"ref": ref, "sha": expected},
         )
-        # The frozen 0.6.x helper returns only the response body on success. New
-        # 0.7.x exact writes must retain GhClient.run_with_metadata() directly.
-        return GitHubRequestResult(value=created_ref)
 
     async def readback() -> dict[str, Any]:
         existing_ref = await app.client.run(
@@ -159,8 +253,6 @@ async def gh_create_branch_from_sha(
 
     status = legacy_write_status(outcome)
     created = outcome.write_completed is True
-    # The frozen public schema cannot represent unknown creation identity.
-    # Preserve false and carry the exact ambiguity in warning/message instead.
 
     if outcome.write_completed is False and outcome.state_matches_requested is True:
         message = (
