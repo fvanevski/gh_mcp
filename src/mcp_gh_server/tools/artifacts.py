@@ -40,11 +40,7 @@ async def _get_workflow_run_identity(
         raise RuntimeError("GitHub did not return structured workflow-run metadata")
 
     actual_run_id = result.get("id")
-    if (
-        not isinstance(actual_run_id, int)
-        or isinstance(actual_run_id, bool)
-        or actual_run_id < 1
-    ):
+    if not isinstance(actual_run_id, int) or isinstance(actual_run_id, bool) or actual_run_id < 1:
         raise RuntimeError("GitHub returned a workflow run without a valid id")
     if actual_run_id != run_id:
         raise RuntimeError(
@@ -94,11 +90,7 @@ def _artifact_from_payload(
         )
 
     size_in_bytes = payload.get("size_in_bytes")
-    if (
-        not isinstance(size_in_bytes, int)
-        or isinstance(size_in_bytes, bool)
-        or size_in_bytes < 0
-    ):
+    if not isinstance(size_in_bytes, int) or isinstance(size_in_bytes, bool) or size_in_bytes < 0:
         raise RuntimeError("GitHub returned an artifact without a valid size_in_bytes")
 
     expired = payload.get("expired")
@@ -245,9 +237,7 @@ async def gh_list_run_artifacts(
         for item in raw_artifacts
     ]
 
-    verified_attempt, verified_head_sha = await _get_workflow_run_identity(
-        app, owner, repo, run_id
-    )
+    verified_attempt, verified_head_sha = await _get_workflow_run_identity(app, owner, repo, run_id)
     if (verified_attempt, verified_head_sha) != (attempt, head_sha):
         raise RuntimeError(
             "Workflow run attempt/head identity changed during the artifact metadata read; retry"
