@@ -35,7 +35,10 @@ from .tools.actions import (
 )
 from .tools.diagnostics import gh_info, gh_server_info
 from .tools.discovery import gh_search_code, gh_search_issues, gh_search_repos
-from .tools.git import gh_create_branch as _registered_gh_create_branch
+from .tools.git import (
+    gh_create_branch as _registered_gh_create_branch,
+    gh_get_ref,
+)
 from .tools.issues import (
     gh_get_issue,
     gh_list_issues,
@@ -53,7 +56,7 @@ from .tools.pull_requests import (
 from .tools.releases import gh_get_release, gh_list_releases
 from .tools.repositories import gh_get_file_contents, gh_get_repo, gh_list_repos
 
-# Importing one function from tools.git registers that domain's original tools;
+# Importing tools.git registers that domain's original tools;
 # every public write below is then rebound to the shared compatibility contract.
 del _registered_gh_create_branch
 
@@ -205,6 +208,7 @@ __all__ = [
     "gh_get_pr",
     "gh_get_pr_checks",
     "gh_get_pr_diff",
+    "gh_get_ref",
     "gh_get_release",
     "gh_get_repo",
     "gh_get_run",

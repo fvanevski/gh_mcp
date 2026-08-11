@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context
 from pydantic import Field
 
-from ..models import BranchCreate, BranchCreateFromSha
+from ..gh_client import GhClient
+from ..models import BranchCreate, BranchCreateFromSha, GitObjectType, GitRefInfo, GitRefInput
+from ..request_governor import GitHubRequestError
 from ..tooling import (
     ADD_EXTERNAL,
     OBJECT_SHA_RE,
     OWNER_RE,
+    READ_EXTERNAL,
     REPO_RE,
     AppContext,
     api_json_write,
@@ -21,7 +24,184 @@ from ..tooling import (
     mcp,
     require_write_enabled,
     validate_branch,
+    validate_repository,
 )
+
+_MAX_TAG_PEEL_DEPTH = 16
+
+
+def _parse_git_object(raw: object, *, resource: str) -> tuple[GitObjectType, str, str]:
+    """Validate one GitHub Git-object descriptor without upgrading ambiguous evidence."""
+
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"GitHub returned no Git object for {resource}")
+    object_type = raw.get("type")
+    object_sha = raw.get("sha")
+    object_url = raw.get("url")
+    if object_type not in {"commit", "tag", "tree", "blob"}:
+        raise RuntimeError(f"GitHub returned an unsupported Git object type for {resource}")
+    if not isinstance(object_sha, str) or not OBJECT_SHA_RE.fullmatch(object_sha):
+        raise RuntimeError(f"GitHub returned no exact 40-character object SHA for {resource}")
+    if not isinstance(object_url, str) or not object_url:
+        raise RuntimeError(f"GitHub returned no object URL for {resource}")
+    return cast(GitObjectType, object_type), object_sha.casefold(), object_url
+
+
+async def _peel_annotated_tag(
+    client: GhClient,
+    owner: str,
+    repo: str,
+    tag_sha: str,
+) -> str | None:
+    """Peel a bounded chain of annotated tag objects to a commit when one exists."""
+
+    current_sha = tag_sha
+    seen: set[str] = set()
+    for _ in range(_MAX_TAG_PEEL_DEPTH):
+        if current_sha in seen:
+            raise RuntimeError("GitHub annotated-tag peel returned a cyclic object chain")
+        seen.add(current_sha)
+        payload = await client.run(
+            "api",
+            f"repos/{owner}/{repo}/git/tags/{current_sha}",
+            "-X",
+            "GET",
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                f"GitHub returned an unexpected response while peeling tag object {current_sha}"
+            )
+        returned_sha = payload.get("sha")
+        if (
+            not isinstance(returned_sha, str)
+            or not OBJECT_SHA_RE.fullmatch(returned_sha)
+            or returned_sha.casefold() != current_sha
+        ):
+            raise RuntimeError(
+                "GitHub annotated-tag read did not preserve the exact requested tag-object SHA"
+            )
+        target_type, target_sha, _ = _parse_git_object(
+            payload.get("object"),
+            resource=f"annotated tag object {current_sha}",
+        )
+        if target_type == "commit":
+            return target_sha
+        if target_type != "tag":
+            return None
+        current_sha = target_sha
+
+    raise RuntimeError(
+        f"GitHub annotated-tag peel exceeded the {_MAX_TAG_PEEL_DEPTH}-object safety bound"
+    )
+
+
+async def _confirm_contents_read_access(client: GhClient, owner: str, repo: str) -> None:
+    """Prove Contents-read access before classifying an exact-ref 404 as missing."""
+
+    result = await client.run(
+        "api",
+        f"repos/{owner}/{repo}/branches",
+        "-X",
+        "GET",
+        "-f",
+        "per_page=1",
+    )
+    if not isinstance(result, list):
+        raise RuntimeError(
+            "GitHub returned an unexpected Contents-read probe response; ref absence is unverified"
+        )
+
+
+@mcp.tool(
+    title="Get exact Git reference",
+    description=(
+        "Read-only: resolve one exact branch or tag reference path such as heads/main or "
+        "tags/v1.0.0. This tool never performs matching-reference or prefix discovery. "
+        "Annotated tag objects retain their tag-object identity and are peeled through "
+        "bounded exact tag-object reads to a commit when applicable."
+    ),
+    annotations=READ_EXTERNAL,
+)
+async def gh_get_ref(
+    owner: Annotated[
+        str,
+        Field(
+            description="GitHub repository owner or organization login.",
+            min_length=1,
+            max_length=39,
+            pattern=OWNER_RE.pattern,
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            description="GitHub repository name without the owner prefix.",
+            min_length=1,
+            max_length=100,
+            pattern=REPO_RE.pattern,
+        ),
+    ],
+    ref: Annotated[
+        str,
+        Field(
+            description=(
+                "One exact Git ref path relative to refs/, formatted as heads/<branch> or "
+                "tags/<tag>. Do not pass refs/, a bare branch/tag name, or a matching prefix."
+            ),
+            min_length=6,
+            max_length=1024,
+            pattern=r"^(?:heads|tags)/.+$",
+        ),
+    ],
+    *,
+    ctx: Context[AppContext],
+) -> GitRefInfo:
+    """Resolve exactly one branch/tag ref while preserving immutable Git object identity."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_get_ref")
+    request = GitRefInput(owner=owner, repo=repo, ref=ref)
+    validate_repository(request.owner, request.repo)
+    app = app_from_context(ctx)
+    expected_ref = f"refs/{request.ref}"
+    ref_path = quote(request.ref, safe="/")
+
+    try:
+        payload = await app.client.run(
+            "api",
+            f"repos/{request.owner}/{request.repo}/git/ref/{ref_path}",
+            "-X",
+            "GET",
+        )
+    except GitHubRequestError as error:
+        if error.status_code != 404:
+            raise
+        await _confirm_contents_read_access(app.client, request.owner, request.repo)
+        return GitRefInfo(ref=expected_ref, found=False)
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub exact-reference lookup returned a non-object response")
+    returned_ref = payload.get("ref")
+    if returned_ref != expected_ref:
+        raise RuntimeError(
+            "GitHub exact-reference lookup returned a different ref; refusing ambiguous evidence"
+        )
+    object_type, object_sha, object_url = _parse_git_object(
+        payload.get("object"),
+        resource=expected_ref,
+    )
+    peeled_commit_sha = (
+        await _peel_annotated_tag(app.client, request.owner, request.repo, object_sha)
+        if object_type == "tag"
+        else None
+    )
+    return GitRefInfo(
+        ref=expected_ref,
+        found=True,
+        object_type=object_type,
+        object_sha=object_sha,
+        object_url=object_url,
+        peeled_commit_sha=peeled_commit_sha,
+    )
 
 
 @mcp.tool(
