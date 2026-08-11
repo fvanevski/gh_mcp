@@ -117,9 +117,7 @@ async def gh_create_branch_from_sha(
 
     def state_matches_requested(existing_ref: dict[str, Any]) -> bool:
         existing_object = existing_ref.get("object")
-        existing_sha = (
-            existing_object.get("sha") if isinstance(existing_object, dict) else None
-        )
+        existing_sha = existing_object.get("sha") if isinstance(existing_object, dict) else None
         existing_name = existing_ref.get("ref")
         return (
             existing_name == ref
@@ -165,8 +163,7 @@ async def gh_create_branch_from_sha(
 
     if outcome.write_completed is False and outcome.state_matches_requested is True:
         message = (
-            f"Branch '{name}' already exists at the requested exact commit; "
-            "no write was performed."
+            f"Branch '{name}' already exists at the requested exact commit; no write was performed."
         )
     elif status.warning is not None:
         message = status.warning

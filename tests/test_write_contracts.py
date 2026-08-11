@@ -309,9 +309,7 @@ async def test_merge_adapter_rejects_semantic_readback_mismatch() -> None:
         ]
     )
 
-    result = await gh_merge_pr(
-        "octo", "repo", 224, head_sha, "merge", ctx=_server_context(client)
-    )
+    result = await gh_merge_pr("octo", "repo", 224, head_sha, "merge", ctx=_server_context(client))
 
     assert len(client.calls) == 3
     assert result.write_completed is True
@@ -346,9 +344,7 @@ async def test_merge_adapter_preserves_unknown_transport_outcome_and_does_not_re
         ]
     )
 
-    result = await gh_merge_pr(
-        "octo", "repo", 224, head_sha, "squash", ctx=_server_context(client)
-    )
+    result = await gh_merge_pr("octo", "repo", 224, head_sha, "squash", ctx=_server_context(client))
 
     assert len(client.calls) == 3
     assert sum(1 for call, _ in client.calls if call[:2] == ("pr", "merge")) == 1
@@ -475,17 +471,20 @@ async def test_review_adapter_preserves_ambiguous_write_without_replay() -> None
     )
 
     assert len(client.calls) == 3
-    assert sum(
-        1
-        for call, _ in client.calls
-        if call[:4]
-        == (
-            "api",
-            "repos/octo/repo/pulls/224/reviews",
-            "-X",
-            "POST",
+    assert (
+        sum(
+            1
+            for call, _ in client.calls
+            if call[:4]
+            == (
+                "api",
+                "repos/octo/repo/pulls/224/reviews",
+                "-X",
+                "POST",
+            )
         )
-    ) == 1
+        == 1
+    )
     assert result.write_completed is False
     assert result.readback_completed is False
     assert result.warning is not None

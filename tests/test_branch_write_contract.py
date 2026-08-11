@@ -90,9 +90,7 @@ async def test_exact_branch_success_with_mismatched_readback_is_not_verified_suc
         ]
     )
 
-    result = await gh_create_branch_from_sha(
-        "octo", "repo", "feature", sha, ctx=_context(client)
-    )
+    result = await gh_create_branch_from_sha("octo", "repo", "feature", sha, ctx=_context(client))
 
     assert result.created is True
     assert result.write_completed is True
@@ -118,16 +116,17 @@ async def test_exact_branch_ambiguous_create_is_never_replayed() -> None:
         ]
     )
 
-    result = await gh_create_branch_from_sha(
-        "octo", "repo", "feature", sha, ctx=_context(client)
-    )
+    result = await gh_create_branch_from_sha("octo", "repo", "feature", sha, ctx=_context(client))
 
     assert len(client.calls) == 3
-    assert sum(
-        1
-        for call, _ in client.calls
-        if call[:4] == ("api", "repos/octo/repo/git/refs", "-X", "POST")
-    ) == 1
+    assert (
+        sum(
+            1
+            for call, _ in client.calls
+            if call[:4] == ("api", "repos/octo/repo/git/refs", "-X", "POST")
+        )
+        == 1
+    )
     assert result.created is False
     assert result.write_completed is False
     assert result.readback_completed is True
@@ -151,8 +150,6 @@ async def test_exact_branch_known_conflict_at_other_sha_preserves_no_overwrite_e
     )
 
     with pytest.raises(RuntimeError, match=f"already exists at {other_sha}"):
-        await gh_create_branch_from_sha(
-            "octo", "repo", "feature", sha, ctx=_context(client)
-        )
+        await gh_create_branch_from_sha("octo", "repo", "feature", sha, ctx=_context(client))
 
     assert len(client.calls) == 3

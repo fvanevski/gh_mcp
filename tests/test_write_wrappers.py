@@ -680,6 +680,7 @@ async def test_create_branch_from_sha_verifies_commit_and_creates_exact_ref() ->
         [
             {"sha": "a" * 40},
             {"ref": "refs/heads/feature/exact", "object": {"sha": "a" * 40}},
+            {"ref": "refs/heads/feature/exact", "object": {"sha": "a" * 40}},
         ]
     )
 
@@ -695,11 +696,18 @@ async def test_create_branch_from_sha_verifies_commit_and_creates_exact_ref() ->
     assert result.base_sha == "a" * 40
     assert result.ref == "refs/heads/feature/exact"
     assert result.write_completed is True
+    assert result.readback_completed is True
     assert client.calls[0] == (
         ("api", f"repos/octo/repo/git/commits/{'a' * 40}", "-X", "GET"),
         {},
     )
     assert client.calls[1][0][:3] == ("api", "repos/octo/repo/git/refs", "-X")
+    assert client.calls[2][0] == (
+        "api",
+        "repos/octo/repo/git/ref/heads/feature/exact",
+        "-X",
+        "GET",
+    )
     assert client.payloads == [{"ref": "refs/heads/feature/exact", "sha": "a" * 40}]
 
 
@@ -996,12 +1004,12 @@ async def test_submit_pr_review_is_exact_head_formal_review_with_readback() -> N
     review_url = "https://github.com/octo/repo/pull/224#pullrequestreview-91"
     client = FakeGhClient(
         [
+            {"login": "reviewer"},
             {
                 "base": {"sha": base_sha},
                 "head": {"sha": head_sha},
                 "user": {"login": "author"},
             },
-            {"login": "reviewer"},
             {"id": 91, "state": "APPROVED", "html_url": review_url},
             {
                 "id": 91,
@@ -1036,7 +1044,8 @@ async def test_submit_pr_review_is_exact_head_formal_review_with_readback() -> N
             "commit_id": head_sha,
         }
     ]
-    assert client.calls[1][0] == ("api", "user", "-X", "GET")
+    assert client.calls[0][0] == ("api", "user", "-X", "GET")
+    assert client.calls[1][0] == ("api", "repos/octo/repo/pulls/224", "-X", "GET")
     assert client.calls[2][0][:4] == (
         "api",
         "repos/octo/repo/pulls/224/reviews",
@@ -1053,12 +1062,17 @@ async def test_submit_pr_review_is_exact_head_formal_review_with_readback() -> N
 
 @pytest.mark.asyncio
 async def test_submit_pr_review_rejects_stale_head_before_write() -> None:
-    client = FakeGhClient([{"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}}])
+    client = FakeGhClient(
+        [
+            {"login": "reviewer"},
+            {"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}},
+        ]
+    )
 
-    with pytest.raises(RuntimeError, match="Pull request head changed"):
+    with pytest.raises(RuntimeError, match="precondition mismatch"):
         await gh_submit_pr_review("octo", "repo", 224, "c" * 40, "approve", ctx=_context(client))
 
-    assert len(client.calls) == 1
+    assert len(client.calls) == 2
     assert client.payloads == []
 
 
@@ -1067,12 +1081,12 @@ async def test_submit_pr_review_rejects_verified_self_approval_before_write() ->
     head_sha = "b" * 40
     client = FakeGhClient(
         [
+            {"login": "AUTHOR"},
             {
                 "base": {"sha": "a" * 40},
                 "head": {"sha": head_sha},
                 "user": {"login": "author"},
             },
-            {"login": "AUTHOR"},
         ]
     )
 
@@ -1136,12 +1150,12 @@ async def test_submit_pr_review_returns_partial_success_when_readback_fails() ->
     review_url = "https://github.com/octo/repo/pull/224#pullrequestreview-91"
     client = FakeGhClient(
         [
+            {"login": "reviewer"},
             {
                 "base": {"sha": "a" * 40},
                 "head": {"sha": head_sha},
                 "user": {"login": "author"},
             },
-            {"login": "reviewer"},
             {"id": 91, "state": "APPROVED", "html_url": review_url},
             RuntimeError("readback unavailable"),
         ]

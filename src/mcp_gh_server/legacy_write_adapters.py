@@ -308,10 +308,7 @@ async def gh_merge_pr(
             "--repo",
             f"{owner}/{repo}",
             "--json",
-            (
-                "number,url,state,mergedAt,mergeCommit,headRefOid,"
-                "mergeStateStatus,autoMergeRequest"
-            ),
+            ("number,url,state,mergedAt,mergeCommit,headRefOid,mergeStateStatus,autoMergeRequest"),
         )
         if not isinstance(value, dict):
             raise RuntimeError("GitHub returned a non-object pull-request merge readback")
@@ -323,9 +320,7 @@ async def gh_merge_pr(
         merged_at = value.get("mergedAt")
         merge_state_status = value.get("mergeStateStatus")
         merged = state.upper() == "MERGED" or isinstance(merged_at, str)
-        queued = (
-            isinstance(merge_state_status, str) and merge_state_status.upper() == "QUEUED"
-        )
+        queued = isinstance(merge_state_status, str) and merge_state_status.upper() == "QUEUED"
         auto_merge_enabled = isinstance(value.get("autoMergeRequest"), dict)
         return (
             isinstance(head_sha, str)
