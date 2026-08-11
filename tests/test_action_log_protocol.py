@@ -69,12 +69,14 @@ else:
 
 
 @pytest.mark.asyncio
-async def test_streamable_http_returns_run_and_job_log_evidence(tmp_path: Path) -> None:
+async def test_streamable_http_returns_run_and_job_log_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _write_fake_action_logs_gh(tmp_path)
-    original_path = os.environ.get("PATH", "")
-    os.environ["PATH"] = f"{tmp_path}:{original_path}"
-    os.environ["MCP_GH_ALLOW_WRITE_COMMANDS"] = "false"
-    os.environ["MCP_GH_TRANSPORT"] = "streamable-http"
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.setenv("MCP_GH_ALLOW_WRITE_COMMANDS", "false")
+    monkeypatch.setenv("MCP_GH_TRANSPORT", "streamable-http")
     get_settings.cache_clear()
     base_url = "http://127.0.0.1:8766"
     http_app = mcp.streamable_http_app(stateless_http=True)
@@ -123,5 +125,4 @@ async def test_streamable_http_returns_run_and_job_log_evidence(tmp_path: Path) 
             assert job_result.structured_content["text"] == "completed successfully"
             assert job_result.structured_content["truncated"] is True
     finally:
-        os.environ["PATH"] = original_path
         get_settings.cache_clear()
