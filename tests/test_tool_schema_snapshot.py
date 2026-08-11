@@ -142,6 +142,14 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "run_id"},
         {"owner", "repo", "run_id"},
     ),
+    "gh_list_run_artifacts": (
+        {"owner", "repo", "run_id", "page", "per_page", "name"},
+        {"owner", "repo", "run_id"},
+    ),
+    "gh_get_artifact": (
+        {"owner", "repo", "artifact_id"},
+        {"owner", "repo", "artifact_id"},
+    ),
     "gh_list_run_jobs": (
         {"owner", "repo", "run_id", "attempt", "page", "per_page"},
         {"owner", "repo", "run_id"},
@@ -248,6 +256,8 @@ READ_ONLY_TOOLS = {
     "gh_get_workflow",
     "gh_list_runs",
     "gh_get_run",
+    "gh_list_run_artifacts",
+    "gh_get_artifact",
     "gh_watch_run",
     "gh_list_run_jobs",
     "gh_get_failed_run_logs",
@@ -294,7 +304,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 46
+    assert len(tools) == 48
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -315,6 +325,31 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert {"total_count", "page", "per_page", "has_more", "truncated", "warning"} <= set(
         runs_output
     )
+
+    artifacts_schema = tools["gh_list_run_artifacts"].input_schema["properties"]
+    assert artifacts_schema["run_id"]["minimum"] == 1
+    assert artifacts_schema["page"]["minimum"] == 1
+    assert artifacts_schema["per_page"]["anyOf"][0]["maximum"] == 100
+    assert artifacts_schema["name"]["anyOf"][0]["minLength"] == 1
+    artifacts_output = tools["gh_list_run_artifacts"].output_schema["properties"]
+    assert {
+        "run_id",
+        "attempt",
+        "head_sha",
+        "total_count",
+        "page",
+        "per_page",
+        "has_more",
+        "truncated",
+        "warning",
+        "artifacts",
+    } <= set(artifacts_output)
+
+    artifact_schema = tools["gh_get_artifact"].input_schema["properties"]
+    assert artifact_schema["artifact_id"]["minimum"] == 1
+    artifact_output = tools["gh_get_artifact"].output_schema["properties"]
+    assert artifact_output["workflow_head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
+    assert artifact_output["expired"]["type"] == "boolean"
 
     for name, description in EXPECTED_DESCRIPTIONS.items():
         assert tools[name].description == description

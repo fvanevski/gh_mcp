@@ -554,6 +554,35 @@ class WorkflowRunsPage(SearchResults):
     warning: str | None = None
 
 
+class WorkflowArtifact(BaseModel):
+    """Immutable identity and metadata for one GitHub Actions artifact record."""
+
+    id: int = Field(ge=1)
+    name: str = Field(min_length=1)
+    size_in_bytes: int = Field(ge=0)
+    digest: str | None = None
+    expired: bool
+    created_at: str
+    expires_at: str
+    workflow_run_id: int = Field(ge=1)
+    workflow_head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
+class WorkflowArtifactsPage(BaseModel):
+    """One bounded artifact page pinned to an exact workflow-run attempt/head."""
+
+    run_id: int = Field(ge=1)
+    attempt: int = Field(ge=1)
+    head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    total_count: int = Field(ge=0)
+    page: int = Field(ge=1)
+    per_page: int = Field(ge=1, le=100)
+    has_more: bool
+    truncated: bool
+    warning: str | None = None
+    artifacts: list[WorkflowArtifact]
+
+
 class PullRequestCheck(BaseModel):
     """One CI check reported for an immutable pull-request snapshot."""
 

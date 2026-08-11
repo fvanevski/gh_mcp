@@ -33,6 +33,7 @@ from .tools.actions import (
     gh_list_workflows,
     gh_watch_run,
 )
+from .tools.artifacts import gh_get_artifact, gh_list_run_artifacts
 from .tools.diagnostics import gh_info, gh_server_info
 from .tools.discovery import gh_search_code, gh_search_issues, gh_search_repos
 from .tools.git import (
@@ -205,6 +206,7 @@ __all__ = [
     "gh_edit_issue",
     "gh_edit_label",
     "gh_edit_pr",
+    "gh_get_artifact",
     "gh_get_commit",
     "gh_get_failed_run_logs",
     "gh_get_file_contents",
@@ -226,6 +228,7 @@ __all__ = [
     "gh_list_prs",
     "gh_list_releases",
     "gh_list_repos",
+    "gh_list_run_artifacts",
     "gh_list_run_jobs",
     "gh_list_runs",
     "gh_list_workflows",
