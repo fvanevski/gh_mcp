@@ -7,7 +7,7 @@ import shlex
 from mcp.server.mcpserver import Context
 
 from ..models import SearchResults
-from ..tooling import AppContext, READ_EXTERNAL, app_from_context, mcp, parse_search_result
+from ..tooling import READ_EXTERNAL, AppContext, app_from_context, mcp, parse_search_result
 
 
 @mcp.tool(annotations=READ_EXTERNAL)
