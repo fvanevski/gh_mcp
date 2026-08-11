@@ -199,10 +199,21 @@ async def test_get_artifact_preserves_expiry_and_optional_digest(
     expired: bool,
     digest: str | None,
 ) -> None:
-    client = FakeGhClient([_artifact(expired=expired, digest=digest), _run()])
+    client = FakeGhClient([_artifact(expired=expired, digest=digest)])
 
     result = await gh_get_artifact("octo", "repo", 77, ctx=_context(client))
 
+    assert client.calls == [
+        (
+            (
+                "api",
+                "repos/octo/repo/actions/artifacts/77",
+                "-X",
+                "GET",
+            ),
+            {},
+        )
+    ]
     assert result.id == 77
     assert result.expired is expired
     assert result.digest == digest
@@ -217,6 +228,15 @@ async def test_get_artifact_rejects_artifact_identity_mismatch() -> None:
     client = FakeGhClient([_artifact(78)])
 
     with pytest.raises(RuntimeError, match="Artifact identity mismatch"):
+        await gh_get_artifact("octo", "repo", 77, ctx=_context(client))
+
+    assert len(client.calls) == 1
+
+
+async def test_get_artifact_rejects_invalid_workflow_head_identity() -> None:
+    client = FakeGhClient([_artifact(head_sha="not-a-sha")])
+
+    with pytest.raises(RuntimeError, match="invalid workflow head SHA"):
         await gh_get_artifact("octo", "repo", 77, ctx=_context(client))
 
     assert len(client.calls) == 1
@@ -256,13 +276,6 @@ async def test_list_artifacts_detects_run_identity_change_during_read() -> None:
     assert len(client.calls) == 3
 
 
-async def test_get_artifact_rejects_associated_run_head_mismatch() -> None:
-    client = FakeGhClient([_artifact(head_sha="a" * 40), _run(head_sha="b" * 40)])
-
-    with pytest.raises(RuntimeError, match="Artifact/head identity mismatch"):
-        await gh_get_artifact("octo", "repo", 77, ctx=_context(client))
-
-
 @pytest.mark.parametrize(
     "failure",
     [
@@ -279,20 +292,6 @@ async def test_get_artifact_preserves_governed_artifact_read_failures(
         await gh_get_artifact("octo", "repo", 77, ctx=_context(client))
 
     assert len(client.calls) == 1
-
-
-async def test_get_artifact_preserves_missing_associated_run_failure() -> None:
-    client = FakeGhClient(
-        [
-            _artifact(),
-            GitHubRequestError("run missing", status_code=404),
-        ]
-    )
-
-    with pytest.raises(GitHubRequestError, match="run missing"):
-        await gh_get_artifact("octo", "repo", 77, ctx=_context(client))
-
-    assert len(client.calls) == 2
 
 
 async def test_list_artifacts_preserves_missing_run_failure_before_listing() -> None:
