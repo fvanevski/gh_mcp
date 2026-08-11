@@ -67,7 +67,7 @@ def _parse_commit_person(raw: object, *, role: str) -> GitCommitPerson:
     date = raw.get("date")
     if not all(isinstance(value, str) for value in (name, email, date)):
         raise RuntimeError(f"GitHub returned incomplete commit {role} identity")
-    return GitCommitPerson(name=name, email=email, date=date)
+    return GitCommitPerson(name=cast(str, name), email=cast(str, email), date=cast(str, date))
 
 
 def _parse_commit_verification(raw: object) -> GitCommitVerification:

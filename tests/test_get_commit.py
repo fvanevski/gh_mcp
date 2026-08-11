@@ -63,9 +63,7 @@ def _commit_payload(
             for parent_sha in parents
         ],
         "author": _person("A. Author", "author@example.com", "2026-08-11T10:00:00Z"),
-        "committer": _person(
-            "C. Committer", "committer@example.com", "2026-08-11T10:01:00Z"
-        ),
+        "committer": _person("C. Committer", "committer@example.com", "2026-08-11T10:01:00Z"),
         "message": "Exact commit evidence\n\nPreserve immutable identity.",
         "verification": verification
         or {
