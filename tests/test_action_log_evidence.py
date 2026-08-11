@@ -222,7 +222,7 @@ async def test_run_logs_missing_marker_fails_closed() -> None:
 async def test_run_logs_reject_attempt_mismatch_before_log_read() -> None:
     client = FakeGhClient([_run(attempt=3)])
 
-    with pytest.raises(RuntimeError, match="attempt mismatch"):
+    with pytest.raises(RuntimeError, match=r"attempt .* expected \d+"):
         await gh_get_run_logs("octo", "repo", 123, 2, ctx=_context(client))
 
     assert len(client.calls) == 1
