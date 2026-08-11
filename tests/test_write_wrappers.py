@@ -380,7 +380,12 @@ async def test_create_release_executes_then_reads_tag() -> None:
     client = FakeGhClient(
         [
             {"stdout": url},
-            {"tagName": "v1", "url": url},
+            {
+                "tagName": "v1",
+                "url": url,
+                "isDraft": False,
+                "isPrerelease": False,
+            },
         ]
     )
 
@@ -403,7 +408,7 @@ async def test_create_release_executes_then_reads_tag() -> None:
         "--repo",
         "octo/repo",
         "--json",
-        "tagName,url",
+        "tagName,url,isDraft,isPrerelease",
     )
 
 
