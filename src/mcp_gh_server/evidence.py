@@ -22,6 +22,16 @@ class PaginationEvidence(BaseModel):
     def validate_completeness(self) -> PaginationEvidence:
         if self.returned_count > self.per_page:
             raise ValueError("returned_count cannot exceed per_page")
+        if self.total_count is not None:
+            offset = (self.page - 1) * self.per_page
+            expected_count = min(self.per_page, max(self.total_count - offset, 0))
+            if self.returned_count > expected_count:
+                raise ValueError("returned_count exceeds the authoritative total for this page")
+            authoritative_has_more = offset + expected_count < self.total_count
+            if self.has_more != authoritative_has_more:
+                raise ValueError("has_more conflicts with authoritative total_count")
+            if self.returned_count < expected_count and not self.truncated:
+                raise ValueError("an incomplete authoritative page must be marked truncated")
         if self.truncated and not self.warning:
             raise ValueError("truncated pagination evidence requires an explicit warning")
         return self
@@ -117,7 +127,8 @@ class BoundedTextAccumulator:
         if truncated:
             warnings.append(
                 f"{self._label} was truncated: returned {self._bytes_returned} of "
-                f"{self._total_bytes} UTF-8 bytes. sha256 fingerprints the complete evidence."
+                f"{self._total_bytes} UTF-8 bytes. sha256 fingerprints all evidence "
+                "supplied to this helper."
             )
         return BoundedTextEvidence(
             content="".join(self._content_parts),
