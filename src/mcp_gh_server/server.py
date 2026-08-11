@@ -39,6 +39,7 @@ from .tools.git import (
     gh_create_branch as _registered_gh_create_branch,
 )
 from .tools.git import (
+    gh_get_commit,
     gh_get_ref,
 )
 from .tools.issues import (
@@ -204,6 +205,7 @@ __all__ = [
     "gh_edit_issue",
     "gh_edit_label",
     "gh_edit_pr",
+    "gh_get_commit",
     "gh_get_failed_run_logs",
     "gh_get_file_contents",
     "gh_get_issue",

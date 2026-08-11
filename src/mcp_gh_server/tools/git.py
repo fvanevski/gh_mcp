@@ -1,4 +1,4 @@
-"""Focused Git reference and branch tools."""
+"""Focused Git reference, commit, and branch tools."""
 
 from __future__ import annotations
 
@@ -9,7 +9,17 @@ from mcp.server.mcpserver import Context
 from pydantic import Field
 
 from ..gh_client import GhClient
-from ..models import BranchCreate, BranchCreateFromSha, GitObjectType, GitRefInfo, GitRefInput
+from ..models import (
+    BranchCreate,
+    BranchCreateFromSha,
+    GitCommitInfo,
+    GitCommitInput,
+    GitCommitPerson,
+    GitCommitVerification,
+    GitObjectType,
+    GitRefInfo,
+    GitRefInput,
+)
 from ..request_governor import GitHubRequestError
 from ..tooling import (
     ADD_EXTERNAL,
@@ -45,6 +55,47 @@ def _parse_git_object(raw: object, *, resource: str) -> tuple[GitObjectType, str
     if not isinstance(object_url, str) or not object_url:
         raise RuntimeError(f"GitHub returned no object URL for {resource}")
     return cast(GitObjectType, object_type), object_sha.casefold(), object_url
+
+
+def _parse_commit_person(raw: object, *, role: str) -> GitCommitPerson:
+    """Validate raw immutable commit author/committer identity."""
+
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"GitHub returned no commit {role} identity")
+    name = raw.get("name")
+    email = raw.get("email")
+    date = raw.get("date")
+    if not all(isinstance(value, str) for value in (name, email, date)):
+        raise RuntimeError(f"GitHub returned incomplete commit {role} identity")
+    return GitCommitPerson(name=name, email=email, date=date)
+
+
+def _parse_commit_verification(raw: object) -> GitCommitVerification:
+    """Preserve GitHub verification fields without interpreting their evidentiary meaning."""
+
+    if not isinstance(raw, dict):
+        raise RuntimeError("GitHub returned no commit verification metadata")
+    verified = raw.get("verified")
+    reason = raw.get("reason")
+    if not isinstance(verified, bool) or not isinstance(reason, str):
+        raise RuntimeError("GitHub returned malformed commit verification metadata")
+
+    optional_fields: dict[str, str | None] = {}
+    for field_name in ("signature", "payload", "verified_at"):
+        value = raw.get(field_name)
+        if value is not None and not isinstance(value, str):
+            raise RuntimeError(
+                f"GitHub returned malformed commit verification field {field_name!r}"
+            )
+        optional_fields[field_name] = value
+
+    return GitCommitVerification(
+        verified=verified,
+        reason=reason,
+        signature=optional_fields["signature"],
+        payload=optional_fields["payload"],
+        verified_at=optional_fields["verified_at"],
+    )
 
 
 async def _peel_annotated_tag(
@@ -96,7 +147,7 @@ async def _peel_annotated_tag(
 
 
 async def _confirm_contents_read_access(client: GhClient, owner: str, repo: str) -> None:
-    """Prove Contents-read access before classifying an exact-ref 404 as missing."""
+    """Prove Contents-read access before classifying an exact-object 404 as missing."""
 
     result = await client.run(
         "api",
@@ -108,12 +159,12 @@ async def _confirm_contents_read_access(client: GhClient, owner: str, repo: str)
     )
     if not isinstance(result, list):
         raise RuntimeError(
-            "GitHub returned an unexpected Contents-read probe response; ref absence is unverified"
+            "GitHub returned an unexpected Contents-read probe response; absence is unverified"
         )
 
 
 async def _repository_is_empty(client: GhClient, owner: str, repo: str) -> bool:
-    """Read GitHub's authoritative repository-empty flag for exact-ref 409 classification."""
+    """Read GitHub's authoritative repository-empty flag for exact-object 409 classification."""
 
     result = await client.run(
         "repo",
@@ -125,7 +176,7 @@ async def _repository_is_empty(client: GhClient, owner: str, repo: str) -> bool:
     is_empty = result.get("isEmpty") if isinstance(result, dict) else None
     if not isinstance(is_empty, bool):
         raise RuntimeError(
-            "GitHub returned no authoritative repository-empty state; ref absence is unverified"
+            "GitHub returned no authoritative repository-empty state; absence is unverified"
         )
     return is_empty
 
@@ -226,6 +277,113 @@ async def gh_get_ref(
 
 
 @mcp.tool(
+    title="Get exact Git commit",
+    description=(
+        "Read-only: return immutable identity and commit-object evidence for one exact "
+        "40-character commit SHA. The result includes the tree SHA, every parent SHA, "
+        "author, committer, message, and GitHub's verification/signature metadata without "
+        "reinterpreting or upgrading that verification state."
+    ),
+    annotations=READ_EXTERNAL,
+)
+async def gh_get_commit(
+    owner: Annotated[
+        str,
+        Field(
+            description="GitHub repository owner or organization login.",
+            min_length=1,
+            max_length=39,
+            pattern=OWNER_RE.pattern,
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            description="GitHub repository name without the owner prefix.",
+            min_length=1,
+            max_length=100,
+            pattern=REPO_RE.pattern,
+        ),
+    ],
+    commit_sha: Annotated[
+        str,
+        Field(
+            description="Exact 40-character hexadecimal Git commit SHA.",
+            pattern=r"^[0-9A-Fa-f]{40}$",
+        ),
+    ],
+    *,
+    ctx: Context[AppContext],
+) -> GitCommitInfo:
+    """Read one exact Git commit object without revision guessing or prefix matching."""
+
+    logger.info("MCP tool invocation reached server: tool=gh_get_commit")
+    request = GitCommitInput(owner=owner, repo=repo, commit_sha=commit_sha)
+    validate_repository(request.owner, request.repo)
+    normalized_sha = request.commit_sha.casefold()
+    app = app_from_context(ctx)
+
+    try:
+        payload = await app.client.run(
+            "api",
+            f"repos/{request.owner}/{request.repo}/git/commits/{normalized_sha}",
+            "-X",
+            "GET",
+        )
+    except GitHubRequestError as error:
+        if error.status_code == 404:
+            await _confirm_contents_read_access(app.client, request.owner, request.repo)
+        elif error.status_code != 409 or not await _repository_is_empty(
+            app.client, request.owner, request.repo
+        ):
+            raise
+        return GitCommitInfo(commit_sha=normalized_sha, found=False)
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub exact-commit lookup returned a non-object response")
+    returned_sha = payload.get("sha")
+    if (
+        not isinstance(returned_sha, str)
+        or not OBJECT_SHA_RE.fullmatch(returned_sha)
+        or returned_sha.casefold() != normalized_sha
+    ):
+        raise RuntimeError(
+            "GitHub exact-commit lookup did not preserve the requested commit SHA; "
+            "refusing ambiguous evidence"
+        )
+
+    tree = payload.get("tree")
+    tree_sha = tree.get("sha") if isinstance(tree, dict) else None
+    if not isinstance(tree_sha, str) or not OBJECT_SHA_RE.fullmatch(tree_sha):
+        raise RuntimeError("GitHub exact-commit lookup returned no exact tree SHA")
+
+    raw_parents = payload.get("parents")
+    if not isinstance(raw_parents, list):
+        raise RuntimeError("GitHub exact-commit lookup returned no parent list")
+    parents: list[str] = []
+    for parent in raw_parents:
+        parent_sha = parent.get("sha") if isinstance(parent, dict) else None
+        if not isinstance(parent_sha, str) or not OBJECT_SHA_RE.fullmatch(parent_sha):
+            raise RuntimeError("GitHub exact-commit lookup returned a malformed parent SHA")
+        parents.append(parent_sha.casefold())
+
+    message = payload.get("message")
+    if not isinstance(message, str):
+        raise RuntimeError("GitHub exact-commit lookup returned no commit message")
+
+    return GitCommitInfo(
+        commit_sha=normalized_sha,
+        found=True,
+        tree_sha=tree_sha.casefold(),
+        parents=parents,
+        author=_parse_commit_person(payload.get("author"), role="author"),
+        committer=_parse_commit_person(payload.get("committer"), role="committer"),
+        message=message,
+        verification=_parse_commit_verification(payload.get("verification")),
+    )
+
+
+@mcp.tool(
     title="Create issue development branch",
     description=(
         "Additive write: create an issue development branch using a branch-name base. "
@@ -265,7 +423,7 @@ async def gh_create_branch(
         Field(
             description=(
                 "Existing branch name to use as the base. Full commit SHAs are rejected; "
-                "use gh_create_branch_from_sha for an immutable base."
+                "use gh_create_branch_from_sha for an immutable commit base."
             ),
             min_length=1,
             max_length=1024,
@@ -435,5 +593,5 @@ async def gh_create_branch_from_sha(
         base_sha=normalized_sha,
         ref=ref,
         created=True,
-        message=f"Branch '{name}' created at exact commit {normalized_sha}.",
+        message=f"Branch '{name}' created at exact commit {normalized_sha}."
     )

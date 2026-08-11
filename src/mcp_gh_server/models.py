@@ -347,6 +347,56 @@ class GitRefInfo(BaseModel):
     peeled_commit_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
 
 
+class GitCommitInput(BaseModel):
+    """Validated request for one exact Git commit object."""
+
+    owner: str = Field(
+        min_length=1,
+        max_length=39,
+        pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+    )
+    repo: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9_.-]{1,100}$",
+    )
+    commit_sha: str = Field(
+        description="Exact 40-character hexadecimal Git commit SHA.",
+        pattern=r"^[0-9A-Fa-f]{40}$",
+    )
+
+
+class GitCommitPerson(BaseModel):
+    """Git commit author or committer identity reported by the Git database route."""
+
+    name: str
+    email: str
+    date: str
+
+
+class GitCommitVerification(BaseModel):
+    """GitHub signature-verification metadata preserved without reinterpretation."""
+
+    verified: bool
+    reason: str
+    signature: str | None = None
+    payload: str | None = None
+    verified_at: str | None = None
+
+
+class GitCommitInfo(BaseModel):
+    """Exact immutable Git commit identity and verification evidence."""
+
+    commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    found: bool
+    tree_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    parents: list[str] = Field(default_factory=list)
+    author: GitCommitPerson | None = None
+    committer: GitCommitPerson | None = None
+    message: str | None = None
+    verification: GitCommitVerification | None = None
+
+
 class RepoInfo(BaseModel):
     """A GitHub repository."""
 
