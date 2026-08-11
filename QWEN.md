@@ -8,7 +8,9 @@ A Python MCP (Model Context Protocol) 2.0 server that wraps the `gh` CLI for Git
 
 **Architecture:**
 
-- `server.py` — MCP tool registration (27 read-only + 17 write tools), lifespan context, write-approval resolver via `Elicit`/`Resolve`.
+- `server.py` — small MCP composition/re-export root for the 44 public tools.
+- `tooling.py` — shared MCP instance/lifespan, annotations, validation, write-policy, readback, and bounded-evidence helpers.
+- `tools/` — cohesive tool-domain modules for diagnostics, discovery, issues, pull requests, repositories/content, releases, Actions, and Git references.
 - `gh_client.py` — `GhClient` dataclass: runs `gh` via `subprocess`, parses JSON, normalizes output with timing metadata.
 - `models.py` — Pydantic v2 result models (`IssueInfo`, `PullRequestInfo`, `SearchResults`, etc.).
 - `serialization.py` — `to_json_value()` converts `Decimal`, `datetime`, `bytes`, infinities, etc. to JSON-safe types.
