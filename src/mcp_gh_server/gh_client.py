@@ -371,9 +371,7 @@ def _api_endpoint_index(args: tuple[str, ...]) -> int | None:
 def _api_method(args: tuple[str, ...]) -> str:
     endpoint_index = _api_endpoint_index(args)
     default_method = (
-        "POST"
-        if endpoint_index is None or args[endpoint_index].casefold() == "graphql"
-        else "GET"
+        "POST" if endpoint_index is None or args[endpoint_index].casefold() == "graphql" else "GET"
     )
 
     explicit_method: str | None = None
@@ -392,9 +390,9 @@ def _api_method(args: tuple[str, ...]) -> str:
             has_body = True
             index += 2
             continue
-        elif arg.startswith(("--field=", "--raw-field=", "--input=")):
-            has_body = True
-        elif any(arg.startswith(prefix) and arg != prefix for prefix in ("-F", "-f")):
+        elif arg.startswith(("--field=", "--raw-field=", "--input=")) or any(
+            arg.startswith(prefix) and arg != prefix for prefix in ("-F", "-f")
+        ):
             has_body = True
         elif arg in _API_FLAGS_WITH_VALUE:
             index += 2
