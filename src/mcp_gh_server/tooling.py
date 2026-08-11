@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -19,6 +18,7 @@ from mcp.server.mcpserver import Context
 from mcp_types import ToolAnnotations
 
 from . import __version__
+from .evidence import bound_text_evidence
 from .gh_client import GhClient
 from .settings import Settings, get_settings
 
@@ -307,13 +307,17 @@ def workflow_run_id(url: str) -> int:
 
 
 def bounded_utf8(content: str, limit: int) -> tuple[str, int, int, bool, str]:
-    """Bound text at a complete UTF-8 code point and fingerprint the full response."""
+    """Compatibility projection of the shared bounded-text evidence contract."""
 
-    encoded = content.encode("utf-8")
-    total_bytes = len(encoded)
-    digest = hashlib.sha256(encoded).hexdigest()
-    if total_bytes <= limit:
-        return content, total_bytes, total_bytes, False, digest
-    bounded = encoded[:limit].decode("utf-8", errors="ignore")
-    returned_bytes = len(bounded.encode("utf-8"))
-    return bounded, returned_bytes, total_bytes, True, digest
+    evidence = bound_text_evidence(
+        content,
+        requested_max_bytes=limit,
+        hard_max_bytes=limit,
+    )
+    return (
+        evidence.content,
+        evidence.bytes_returned,
+        evidence.total_bytes,
+        evidence.truncated,
+        evidence.sha256,
+    )
