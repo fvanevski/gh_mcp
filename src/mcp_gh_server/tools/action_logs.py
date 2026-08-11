@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from mcp.server.mcpserver import Context
 from pydantic import Field
 
 from ..action_log_evidence import select_action_log_evidence
 from ..action_log_models import WorkflowJobLogs, WorkflowRunLogs
-from ..tooling import READ_EXTERNAL, AppContext, app_from_context, mcp, validate_repository
+from ..evidence import BoundedTextEvidence
+from ..tooling import (
+    OBJECT_SHA_RE,
+    READ_EXTERNAL,
+    AppContext,
+    app_from_context,
+    mcp,
+    validate_repository,
+)
 from .actions import _get_run_snapshot
 
 
@@ -41,7 +49,7 @@ async def _get_job_snapshot(
         raise RuntimeError("Workflow job identity mismatch")
     if not isinstance(run_id, int) or run_id < 1:
         raise RuntimeError("Workflow job payload is missing a valid run ID")
-    if not isinstance(head_sha, str) or len(head_sha) != 40:
+    if not isinstance(head_sha, str) or OBJECT_SHA_RE.fullmatch(head_sha) is None:
         raise RuntimeError("Workflow job payload is missing a valid head SHA")
     if not isinstance(status, str):
         raise RuntimeError("Workflow job payload is missing a valid status")
@@ -70,7 +78,7 @@ async def _get_job_snapshot(
         raise RuntimeError(
             f"Workflow run attempt mismatch: requested {attempt}, got {actual_attempt!r}"
         )
-    if not isinstance(run_head_sha, str) or len(run_head_sha) != 40:
+    if not isinstance(run_head_sha, str) or OBJECT_SHA_RE.fullmatch(run_head_sha) is None:
         raise RuntimeError("Workflow run attempt payload is missing a valid head SHA")
     if run_head_sha.casefold() != head_sha.casefold():
         raise RuntimeError("Workflow job head SHA does not match the requested run attempt")
@@ -99,7 +107,7 @@ def _select_log(
     start_marker: str | None,
     end_marker: str | None,
     label: str,
-) -> Any:
+) -> BoundedTextEvidence:
     return select_action_log_evidence(
         text,
         requested_max_bytes=max_bytes,
