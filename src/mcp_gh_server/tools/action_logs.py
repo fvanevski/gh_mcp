@@ -144,7 +144,7 @@ async def gh_get_job_logs(
     """Return bounded logs pinned to an exact job and caller-specified run attempt."""
 
     app = app_from_context(ctx)
-    validate_repository(app.settings, owner, repo)
+    validate_repository(owner, repo)
     before = await _get_job_snapshot(app, owner, repo, job_id, attempt)
     run_id, resolved_attempt, head_sha, status, conclusion, url = before
 
@@ -220,7 +220,7 @@ async def gh_get_run_logs(
     """Return bounded full logs pinned to one explicit workflow-run attempt."""
 
     app = app_from_context(ctx)
-    validate_repository(app.settings, owner, repo)
+    validate_repository(owner, repo)
     before = await _get_run_snapshot(app, owner, repo, run_id, attempt)
     resolved_attempt, head_sha, status, conclusion, url = before
 
