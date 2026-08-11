@@ -50,9 +50,7 @@ async def _label_write(
             return False
         if str(result.get("color") or "").casefold() != color.casefold():
             return False
-        if description is not None and result.get("description") != description:
-            return False
-        return True
+        return description is None or result.get("description") == description
 
     execution = await execute_write_readback(
         resource="Label upsert" if force else "Label creation",
@@ -165,9 +163,7 @@ async def gh_edit_label(
             return False
         if color is not None and str(result.get("color") or "").casefold() != color.casefold():
             return False
-        if description is not None and result.get("description") != description:
-            return False
-        return True
+        return description is None or result.get("description") == description
 
     execution = await execute_write_readback(
         resource="Label edit",
