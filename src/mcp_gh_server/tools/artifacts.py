@@ -40,7 +40,11 @@ async def _get_workflow_run_identity(
         raise RuntimeError("GitHub did not return structured workflow-run metadata")
 
     actual_run_id = result.get("id")
-    if not isinstance(actual_run_id, int) or actual_run_id < 1:
+    if (
+        not isinstance(actual_run_id, int)
+        or isinstance(actual_run_id, bool)
+        or actual_run_id < 1
+    ):
         raise RuntimeError("GitHub returned a workflow run without a valid id")
     if actual_run_id != run_id:
         raise RuntimeError(
@@ -303,7 +307,7 @@ async def gh_get_artifact(
     *,
     ctx: Context[AppContext],
 ) -> WorkflowArtifact:
-    """Return one artifact record after verifying its associated run/head identity."""
+    """Return one exact artifact record without requiring archive or run availability."""
 
     logger.info("MCP tool invocation reached server: tool=gh_get_artifact")
     app = app_from_context(ctx)
@@ -315,18 +319,4 @@ async def gh_get_artifact(
         "-X",
         "GET",
     )
-    artifact = _artifact_from_payload(result, expected_artifact_id=artifact_id)
-
-    _, head_sha = await _get_workflow_run_identity(
-        app,
-        owner,
-        repo,
-        artifact.workflow_run_id,
-    )
-    if artifact.workflow_head_sha != head_sha:
-        raise RuntimeError(
-            f"Artifact/head identity mismatch: artifact {artifact.id} reports head "
-            f"{artifact.workflow_head_sha}, workflow run {artifact.workflow_run_id} "
-            f"reports {head_sha}"
-        )
-    return artifact
+    return _artifact_from_payload(result, expected_artifact_id=artifact_id)
