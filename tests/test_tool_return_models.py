@@ -34,6 +34,8 @@ from mcp_gh_server.models import (
     RepositoryFile,
     SearchResults,
     ServerInfo,
+    WorkflowArtifact,
+    WorkflowArtifactsPage,
     WorkflowInfo,
     WorkflowJobsPage,
     WorkflowRun,
@@ -76,6 +78,8 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_run_workflow": WorkflowRunCreate,
     "gh_list_runs": WorkflowRunsPage,
     "gh_get_run": WorkflowRun,
+    "gh_list_run_artifacts": WorkflowArtifactsPage,
+    "gh_get_artifact": WorkflowArtifact,
     "gh_list_run_jobs": WorkflowJobsPage,
     "gh_get_failed_run_logs": WorkflowRunFailedLogs,
     "gh_watch_run": WorkflowRunWatchResult,
@@ -94,7 +98,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 46
+    assert len(EXPECTED_RETURN_MODELS) == 48
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)
