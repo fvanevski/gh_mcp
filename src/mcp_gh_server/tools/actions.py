@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from mcp.server.mcpserver import Context
 from pydantic import Field
 
+from ..evidence import pagination_evidence
 from ..models import (
     SearchResults,
     WorkflowInfo,
@@ -17,8 +19,10 @@ from ..models import (
     WorkflowRun,
     WorkflowRunCreate,
     WorkflowRunFailedLogs,
+    WorkflowRunsPage,
     WorkflowRunWatchResult,
 )
+from ..request_governor import GitHubRequestError
 from ..tooling import (
     MUTATE_EXTERNAL,
     OBJECT_SHA_RE,
@@ -34,6 +38,121 @@ from ..tooling import (
     validate_repository,
     workflow_run_id,
 )
+
+_GITHUB_RUNS_PER_PAGE_MAX = 100
+_GITHUB_FILTERED_RUNS_MAX = 1_000
+
+
+def _parse_run_created_boundary(value: str, *, field_name: str) -> datetime:
+    """Parse one timezone-aware, whole-second ISO 8601 creation boundary."""
+
+    if "T" not in value:
+        raise ValueError(f"{field_name} must be an ISO 8601 timestamp with an explicit timezone")
+    time_and_zone = value.split("T", 1)[1]
+    if "." in time_and_zone or "," in time_and_zone:
+        raise ValueError(f"{field_name} must use whole-second precision")
+    normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(
+            f"{field_name} must be an ISO 8601 timestamp with an explicit timezone"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field_name} must include an explicit timezone offset or Z")
+    return parsed.astimezone(UTC)
+
+
+def _workflow_run_created_filter(
+    created_from: str | None,
+    created_to: str | None,
+) -> str | None:
+    """Build GitHub's inclusive created search expression in normalized UTC."""
+
+    start = (
+        _parse_run_created_boundary(created_from, field_name="created_from")
+        if created_from is not None
+        else None
+    )
+    end = (
+        _parse_run_created_boundary(created_to, field_name="created_to")
+        if created_to is not None
+        else None
+    )
+    if start is not None and end is not None and start > end:
+        raise ValueError("created_from must not be later than created_to")
+
+    def render(value: datetime) -> str:
+        return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if start is not None and end is not None:
+        return f"{render(start)}..{render(end)}"
+    if start is not None:
+        return f">={render(start)}"
+    if end is not None:
+        return f"<={render(end)}"
+    return None
+
+
+async def _workflow_names_for_run_page(
+    app: AppContext,
+    owner: str,
+    repo: str,
+    workflow_ids: set[int],
+) -> dict[int, str]:
+    """Resolve exact workflow names for only the workflow IDs present on one run page."""
+
+    names: dict[int, str] = {}
+    for workflow_id in sorted(workflow_ids):
+        try:
+            workflow = await app.client.run(
+                "api",
+                f"repos/{owner}/{repo}/actions/workflows/{workflow_id}",
+                "-X",
+                "GET",
+            )
+        except GitHubRequestError as exc:
+            if exc.status_code == 404:
+                names[workflow_id] = ""
+                continue
+            raise
+        if not isinstance(workflow, dict):
+            raise RuntimeError("GitHub did not return structured workflow metadata")
+        name = workflow.get("name")
+        if not isinstance(name, str):
+            raise RuntimeError("GitHub did not return a valid workflow name")
+        names[workflow_id] = name
+    return names
+
+
+def _workflow_run_search_item(
+    item: dict[str, Any],
+    *,
+    workflow_name: str,
+) -> dict[str, Any]:
+    """Normalize one REST run while preserving historical gh-run-list field semantics."""
+
+    run_id = item.get("id")
+    if not isinstance(run_id, int) or run_id < 1:
+        raise RuntimeError("GitHub returned a workflow run without a valid id")
+    name = item.get("name")
+    run_name = name if isinstance(name, str) else ""
+    display_title = item.get("display_title")
+    return {
+        "databaseId": run_id,
+        "name": run_name,
+        "displayTitle": display_title if isinstance(display_title, str) else "",
+        "headBranch": item.get("head_branch"),
+        "headSha": item.get("head_sha"),
+        "conclusion": item.get("conclusion"),
+        "status": item.get("status"),
+        "event": item.get("event"),
+        "url": item.get("html_url"),
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at"),
+        "startedAt": item.get("run_started_at"),
+        "workflowName": workflow_name,
+    }
 
 
 @mcp.tool(annotations=READ_EXTERNAL)
@@ -181,41 +300,152 @@ async def gh_list_runs(
     branch: str | None = None,
     status: str | None = None,
     per_page: int | None = None,
-) -> SearchResults:
-    """List recent GitHub Actions workflow runs.
+    workflow_id: Annotated[
+        int | None,
+        Field(ge=1, description="Exact workflow identifier to scope the authoritative route."),
+    ] = None,
+    head_sha: Annotated[
+        str | None,
+        Field(
+            pattern=r"^[0-9A-Fa-f]{40}$",
+            description="Exact 40-character workflow-run head commit SHA.",
+        ),
+    ] = None,
+    event: str | None = None,
+    actor: str | None = None,
+    created_from: Annotated[
+        str | None,
+        Field(description="Inclusive timezone-aware ISO 8601 creation lower bound."),
+    ] = None,
+    created_to: Annotated[
+        str | None,
+        Field(description="Inclusive timezone-aware ISO 8601 creation upper bound."),
+    ] = None,
+    check_suite_id: Annotated[
+        int | None,
+        Field(ge=1, description="Exact check-suite identifier."),
+    ] = None,
+    page: Annotated[int, Field(ge=1, le=10_000, description="One-based result page.")] = 1,
+) -> WorkflowRunsPage:
+    """List one authoritative, bounded page of GitHub Actions workflow runs.
 
-    status: completed, in_progress, queued, pending, requested, waiting,
-            actionable, null (all).
+    Existing branch, status, and per_page callers remain supported. Exact workflow,
+    head-SHA, event, actor, creation-range, and check-suite filters are sent to GitHub's
+    workflow-runs REST route rather than applied locally.
     """
 
     app = app_from_context(ctx)
-    limit = app.client.clamp_max_results(per_page)
-    fields = (
-        "databaseId,name,displayTitle,headBranch,headSha,conclusion,status,"
-        "event,url,createdAt,updatedAt,startedAt,workflowName"
-    )
+    validate_repository(owner, repo)
+    if workflow_id is not None and workflow_id < 1:
+        raise ValueError("workflow_id must be positive")
+    if check_suite_id is not None and check_suite_id < 1:
+        raise ValueError("check_suite_id must be positive")
+    if head_sha is not None and not OBJECT_SHA_RE.fullmatch(head_sha):
+        raise ValueError("head_sha must be exactly 40 hexadecimal characters")
+    if page < 1:
+        raise ValueError("page must be positive")
+    if per_page is not None and per_page < 1:
+        raise ValueError("per_page must be positive")
+
+    created = _workflow_run_created_filter(created_from, created_to)
+    requested_per_page = app.settings.default_max_results if per_page is None else per_page
+    hard_per_page = min(app.settings.hard_max_results, _GITHUB_RUNS_PER_PAGE_MAX)
+    effective_per_page = min(requested_per_page, hard_per_page)
+
+    endpoint = f"repos/{owner}/{repo}/actions/runs"
+    if workflow_id is not None:
+        endpoint = f"repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs"
+
     args = [
-        "run",
-        "list",
-        "--repo",
-        f"{owner}/{repo}",
-        "--json",
-        fields,
-        "--limit",
-        str(limit),
+        "api",
+        endpoint,
+        "-X",
+        "GET",
+        "-f",
+        f"page={page}",
+        "-f",
+        f"per_page={effective_per_page}",
+        "-f",
+        "exclude_pull_requests=true",
     ]
+    filters: list[tuple[str, str]] = []
     if branch:
-        args.extend(["--branch", branch])
+        filters.append(("branch", branch))
     if status:
-        args.extend(["--status", status])
+        filters.append(("status", status))
+    if event:
+        filters.append(("event", event))
+    if actor:
+        filters.append(("actor", actor))
+    if created is not None:
+        filters.append(("created", created))
+    if check_suite_id is not None:
+        filters.append(("check_suite_id", str(check_suite_id)))
+    if head_sha is not None:
+        filters.append(("head_sha", head_sha.casefold()))
+    for key, value in filters:
+        args.extend(["-f", f"{key}={value}"])
 
     result = await app.client.run(*args)
-    items: list[Any] = result if isinstance(result, list) else []
-    return SearchResults(
-        total_count=len(items),
+    if not isinstance(result, dict):
+        raise RuntimeError("GitHub did not return structured workflow runs")
+    raw_runs = result.get("workflow_runs")
+    if not isinstance(raw_runs, list):
+        raise RuntimeError("GitHub did not return a workflow runs list")
+    total_count = result.get("total_count")
+    if not isinstance(total_count, int) or total_count < 0:
+        raise RuntimeError("GitHub did not return a valid workflow run count")
+
+    run_items: list[dict[str, Any]] = []
+    workflow_ids: set[int] = set()
+    for item in raw_runs:
+        if not isinstance(item, dict):
+            raise RuntimeError("GitHub returned a malformed workflow run item")
+        item_workflow_id = item.get("workflow_id")
+        if not isinstance(item_workflow_id, int) or item_workflow_id < 1:
+            raise RuntimeError("GitHub returned a workflow run without a valid workflow id")
+        run_items.append(item)
+        workflow_ids.add(item_workflow_id)
+
+    workflow_names = await _workflow_names_for_run_page(app, owner, repo, workflow_ids)
+    items: list[Any] = [
+        _workflow_run_search_item(
+            item,
+            workflow_name=workflow_names[item["workflow_id"]],
+        )
+        for item in run_items
+    ]
+
+    filtered_search = bool(filters)
+    accessible_total = (
+        min(total_count, _GITHUB_FILTERED_RUNS_MAX) if filtered_search else total_count
+    )
+    evidence = pagination_evidence(
+        page=page,
+        requested_per_page=per_page,
+        default_per_page=app.settings.default_max_results,
+        hard_max_results=hard_per_page,
+        returned_count=len(items),
+        total_count=accessible_total,
+    )
+    search_boundary_uncertain = filtered_search and total_count >= _GITHUB_FILTERED_RUNS_MAX
+    warnings = [evidence.warning] if evidence.warning else []
+    if search_boundary_uncertain:
+        warnings.append(
+            "GitHub limits workflow-run searches using actor/branch/check_suite_id/created/"
+            "event/head_sha/status to at most 1,000 results; total_count at or above that "
+            "boundary cannot establish completeness beyond the accessible search window."
+        )
+
+    return WorkflowRunsPage(
+        total_count=total_count,
         items=items,
-        truncated=len(items) >= limit,
+        truncated=evidence.truncated or search_boundary_uncertain,
         query=f"{owner}/{repo} runs",
+        page=evidence.page,
+        per_page=evidence.per_page,
+        has_more=evidence.has_more,
+        warning=" ".join(warnings) or None,
     )
 
 

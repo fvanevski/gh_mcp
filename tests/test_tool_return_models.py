@@ -39,6 +39,7 @@ from mcp_gh_server.models import (
     WorkflowRun,
     WorkflowRunCreate,
     WorkflowRunFailedLogs,
+    WorkflowRunsPage,
     WorkflowRunWatchResult,
 )
 
@@ -73,7 +74,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_list_workflows": SearchResults,
     "gh_get_workflow": WorkflowInfo,
     "gh_run_workflow": WorkflowRunCreate,
-    "gh_list_runs": SearchResults,
+    "gh_list_runs": WorkflowRunsPage,
     "gh_get_run": WorkflowRun,
     "gh_list_run_jobs": WorkflowJobsPage,
     "gh_get_failed_run_logs": WorkflowRunFailedLogs,
