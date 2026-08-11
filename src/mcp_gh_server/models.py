@@ -295,8 +295,7 @@ class GitRefInput(BaseModel):
     )
     ref: str = Field(
         description=(
-            "Exact Git reference path relative to refs/, formatted as heads/<branch> or "
-            "tags/<tag>."
+            "Exact Git reference path relative to refs/, formatted as heads/<branch> or tags/<tag>."
         ),
         min_length=6,
         max_length=1024,
@@ -326,9 +325,7 @@ class GitRefInput(BaseModel):
             or "//" in value
             or invalid_character
             or any(
-                not component
-                or component.startswith(".")
-                or component.endswith(".lock")
+                not component or component.startswith(".") or component.endswith(".lock")
                 for component in components
             )
         ):
