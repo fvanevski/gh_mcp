@@ -91,6 +91,7 @@ class GitHubRequestGovernor:
         max_read_attempts: int = 3,
         backoff_base_seconds: float = 0.25,
         backoff_max_seconds: float = 2.0,
+        rate_limit_fallback_seconds: float = 60.0,
         monotonic_clock: Clock = monotonic,
         wall_clock: Clock = time,
         sleep: Sleep = _default_sleep,
@@ -103,11 +104,14 @@ class GitHubRequestGovernor:
             raise ValueError("backoff delays must be non-negative")
         if backoff_base_seconds > backoff_max_seconds:
             raise ValueError("backoff_base_seconds cannot exceed backoff_max_seconds")
+        if rate_limit_fallback_seconds <= 0:
+            raise ValueError("rate_limit_fallback_seconds must be positive")
 
         self._write_spacing_seconds = write_spacing_seconds
         self._max_read_attempts = max_read_attempts
         self._backoff_base_seconds = backoff_base_seconds
         self._backoff_max_seconds = backoff_max_seconds
+        self._rate_limit_fallback_seconds = rate_limit_fallback_seconds
         self._monotonic_clock = monotonic_clock
         self._wall_clock = wall_clock
         self._sleep = sleep
@@ -198,11 +202,16 @@ class GitHubRequestGovernor:
 
     def _record_rate_limit(self, metadata: GitHubRequestMetadata) -> None:
         deadline = self._rate_limit_deadline(metadata)
+        blocked_metadata = metadata
         if deadline is None:
-            return
+            deadline = self._wall_clock() + self._rate_limit_fallback_seconds
+            blocked_metadata = replace(
+                metadata,
+                retry_after_seconds=self._rate_limit_fallback_seconds,
+            )
         if self._blocked_until_wall is None or deadline > self._blocked_until_wall:
             self._blocked_until_wall = deadline
-            self._blocked_metadata = metadata
+            self._blocked_metadata = blocked_metadata
 
     def _record_success_rate_limit(self, metadata: GitHubRequestMetadata) -> str | None:
         if metadata.rate_limit_remaining != 0 or metadata.rate_limit_reset_epoch is None:

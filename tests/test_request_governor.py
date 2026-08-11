@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from mcp_gh_server.gh_client import GhClient, _infer_request_kind
+from mcp_gh_server.gh_client import GhClient, _infer_request_kind, _prepare_command_args
 from mcp_gh_server.request_governor import (
     READ_REQUEST,
     WRITE_REQUEST,
@@ -116,6 +116,44 @@ async def test_retry_after_stops_current_request_and_blocks_following_requests()
 
     clock.advance(7.0)
     assert (await governor.execute(READ_REQUEST, blocked)).value is None
+    assert blocked_called
+
+
+@pytest.mark.asyncio
+async def test_headerless_rate_limit_uses_policy_fallback_cooldown() -> None:
+    clock = _FakeClock()
+    governor = _governor(clock, rate_limit_fallback_seconds=60.0)
+
+    async def limited() -> GitHubRequestResult[None]:
+        raise GitHubRequestError(
+            "secondary rate limit",
+            rate_limited=True,
+            metadata=GitHubRequestMetadata(request_id="req-fallback"),
+        )
+
+    with pytest.raises(GitHubRequestError, match="secondary rate limit"):
+        await governor.execute(READ_REQUEST, limited)
+
+    blocked_called = False
+
+    async def blocked() -> GitHubRequestResult[str]:
+        nonlocal blocked_called
+        blocked_called = True
+        return GitHubRequestResult(value="ok")
+
+    with pytest.raises(GitHubRequestError, match="paused by a prior rate-limit") as raised:
+        await governor.execute(READ_REQUEST, blocked)
+    assert not blocked_called
+    assert raised.value.metadata.request_id == "req-fallback"
+    assert raised.value.metadata.retry_after_seconds == pytest.approx(60.0)
+
+    clock.advance(59.0)
+    with pytest.raises(GitHubRequestError) as still_blocked:
+        await governor.execute(READ_REQUEST, blocked)
+    assert still_blocked.value.metadata.retry_after_seconds == pytest.approx(1.0)
+
+    clock.advance(1.0)
+    assert (await governor.execute(READ_REQUEST, blocked)).value == "ok"
     assert blocked_called
 
 
@@ -266,6 +304,11 @@ def test_write_spacing_cannot_be_configured_below_github_guidance() -> None:
         GitHubRequestGovernor(write_spacing_seconds=0.999)
 
 
+def test_rate_limit_fallback_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        GitHubRequestGovernor(rate_limit_fallback_seconds=0)
+
+
 def test_gh_subprocess_boundary_has_no_parallel_source_bypass() -> None:
     package = Path(__file__).parents[1] / "src" / "mcp_gh_server"
     subprocess_boundaries = {
@@ -295,7 +338,69 @@ def test_request_classification_fails_closed_for_mutations_and_unknown_commands(
         is GitHubRequestKind.WRITE
     )
     assert _infer_request_kind(("api", "graphql")) is GitHubRequestKind.WRITE
+    assert (
+        _infer_request_kind(("api", "--hostname", "github.com", "graphql"))
+        is GitHubRequestKind.WRITE
+    )
     assert _infer_request_kind(("extension", "custom")) is GitHubRequestKind.WRITE
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("api", "repos/octo/repo/issues", "--input", "payload.json"),
+        ("api", "repos/octo/repo/issues", "--input=payload.json"),
+        ("api", "repos/octo/repo/issues", "--field", "title=example"),
+        ("api", "repos/octo/repo/issues", "--field=title=example"),
+        ("api", "repos/octo/repo/issues", "--raw-field", "title=example"),
+        ("api", "repos/octo/repo/issues", "--raw-field=title=example"),
+        ("api", "repos/octo/repo/issues", "-Ftitle=example"),
+        ("api", "repos/octo/repo/issues", "-ftitle=example"),
+    ],
+)
+def test_body_bearing_api_forms_without_explicit_method_are_writes(
+    args: tuple[str, ...],
+) -> None:
+    assert _infer_request_kind(args) is GitHubRequestKind.WRITE
+
+
+def test_explicit_api_get_overrides_implicit_post_defaults() -> None:
+    assert (
+        _infer_request_kind(
+            ("api", "repos/octo/repo/issues", "-X", "GET", "--input", "payload.json")
+        )
+        is GitHubRequestKind.READ
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (
+            ("api", "repos/octo/repo", "-X", "GET"),
+            ["api", "repos/octo/repo", "--include", "-X", "GET"],
+        ),
+        (
+            ("api", "-X", "GET", "search/issues"),
+            ["api", "-X", "GET", "search/issues", "--include"],
+        ),
+        (
+            ("api", "--hostname", "github.com", "repos/octo/repo"),
+            ["api", "--hostname", "github.com", "repos/octo/repo", "--include"],
+        ),
+    ],
+)
+def test_api_include_injection_preserves_supported_argument_order(
+    args: tuple[str, ...],
+    expected: list[str],
+) -> None:
+    prepared, parse_headers = _prepare_command_args(
+        args,
+        conditional_etag=None,
+        conditional_last_modified=None,
+    )
+    assert parse_headers
+    assert prepared == expected
 
 
 @pytest.mark.asyncio
@@ -390,4 +495,31 @@ raise SystemExit(1)
     assert raised.value.rate_limited
     assert raised.value.metadata.request_id == "req-limit"
     assert raised.value.metadata.retry_after_seconds == 5.0
+    assert count_path.read_text() == "1"
+
+
+@pytest.mark.asyncio
+async def test_headerless_cli_rate_limit_blocks_next_request_without_reexecuting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    count_path = tmp_path / "count"
+    _fake_gh(
+        tmp_path,
+        f"""from pathlib import Path
+import sys
+path = Path({str(count_path)!r})
+count = int(path.read_text()) + 1 if path.exists() else 1
+path.write_text(str(count))
+print("secondary rate limit", file=sys.stderr)
+raise SystemExit(1)
+""",
+    )
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+
+    with pytest.raises(GitHubRequestError, match="rate limit detected"):
+        await client.run("repo", "view", "octo/repo", "--json", "nameWithOwner")
+    with pytest.raises(GitHubRequestError, match="paused by a prior rate-limit"):
+        await client.run("repo", "view", "octo/repo", "--json", "nameWithOwner")
+
     assert count_path.read_text() == "1"

@@ -74,7 +74,31 @@ _READ_SUBCOMMANDS: dict[str, frozenset[str]] = {
     "search": frozenset({"code", "commits", "issues", "repos"}),
     "workflow": frozenset({"list", "view"}),
 }
-_API_FIELD_FLAGS = frozenset({"-F", "--field", "-f", "--raw-field"})
+_API_BODY_FLAGS = frozenset({"-F", "--field", "-f", "--raw-field", "--input"})
+_API_FLAGS_WITH_VALUE = frozenset(
+    {
+        "--cache",
+        "-F",
+        "--field",
+        "-H",
+        "--header",
+        "--hostname",
+        "--input",
+        "-q",
+        "--jq",
+        "-X",
+        "--method",
+        "-p",
+        "--preview",
+        "-f",
+        "--raw-field",
+        "-t",
+        "--template",
+    }
+)
+_API_BOOLEAN_FLAGS = frozenset(
+    {"-i", "--include", "--paginate", "--silent", "--slurp", "--verbose"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,8 +261,8 @@ class GhClient:
             )
             if rate_limited:
                 message += (
-                    "; GitHub rate limit detected; retries are stopped until the reported "
-                    "retry/reset condition permits another request"
+                    "; GitHub rate limit detected; retries are stopped and further requests "
+                    "remain blocked until the applicable reset, retry, or fallback cooldown"
                 )
             elif ambiguous:
                 message += (
@@ -319,11 +343,41 @@ def _infer_request_kind(args: tuple[str, ...]) -> GitHubRequestKind:
     return GitHubRequestKind.WRITE
 
 
+def _api_endpoint_index(args: tuple[str, ...]) -> int | None:
+    """Locate the API endpoint without assuming that it precedes supported flags."""
+
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            return index + 1 if index + 1 < len(args) else None
+        if arg in _API_FLAGS_WITH_VALUE:
+            if index + 1 >= len(args):
+                return None
+            index += 2
+            continue
+        if arg in _API_BOOLEAN_FLAGS:
+            index += 1
+            continue
+        if arg.startswith("-"):
+            if "=" in arg or (len(arg) > 2 and not arg.startswith("--")):
+                index += 1
+                continue
+            return None
+        return index
+    return None
+
+
 def _api_method(args: tuple[str, ...]) -> str:
-    default_method = "POST" if len(args) >= 2 and args[1] == "graphql" else "GET"
+    endpoint_index = _api_endpoint_index(args)
+    default_method = (
+        "POST"
+        if endpoint_index is None or args[endpoint_index].casefold() == "graphql"
+        else "GET"
+    )
 
     explicit_method: str | None = None
-    has_field = False
+    has_body = False
     index = 1
     while index < len(args):
         arg = args[index]
@@ -334,15 +388,22 @@ def _api_method(args: tuple[str, ...]) -> str:
                 continue
         elif arg.startswith("--method="):
             explicit_method = arg.split("=", 1)[1]
-        elif arg in _API_FIELD_FLAGS or any(
-            arg.startswith(prefix) and arg != prefix for prefix in ("-F", "-f")
-        ):
-            has_field = True
+        elif arg in _API_BODY_FLAGS:
+            has_body = True
+            index += 2
+            continue
+        elif arg.startswith(("--field=", "--raw-field=", "--input=")):
+            has_body = True
+        elif any(arg.startswith(prefix) and arg != prefix for prefix in ("-F", "-f")):
+            has_body = True
+        elif arg in _API_FLAGS_WITH_VALUE:
+            index += 2
+            continue
         index += 1
 
     if explicit_method:
         return explicit_method.upper()
-    if has_field:
+    if has_body:
         return "POST"
     return default_method
 
@@ -368,7 +429,9 @@ def _prepare_command_args(
 
     prepared = list(args)
     if is_api and not paginated and not parse_headers:
-        prepared.insert(2, "--include")
+        endpoint_index = _api_endpoint_index(args)
+        insert_at = endpoint_index + 1 if endpoint_index is not None else len(prepared)
+        prepared.insert(insert_at, "--include")
         parse_headers = True
     if conditional_etag is not None:
         prepared.extend(["-H", f"If-None-Match: {conditional_etag}"])
