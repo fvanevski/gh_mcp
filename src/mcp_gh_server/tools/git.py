@@ -146,7 +146,13 @@ async def _peel_annotated_tag(
     )
 
 
-async def _confirm_contents_read_access(client: GhClient, owner: str, repo: str) -> None:
+async def _confirm_contents_read_access(
+    client: GhClient,
+    owner: str,
+    repo: str,
+    *,
+    resource_kind: str = "ref",
+) -> None:
     """Prove Contents-read access before classifying an exact-object 404 as missing."""
 
     result = await client.run(
@@ -159,11 +165,18 @@ async def _confirm_contents_read_access(client: GhClient, owner: str, repo: str)
     )
     if not isinstance(result, list):
         raise RuntimeError(
-            "GitHub returned an unexpected Contents-read probe response; absence is unverified"
+            "GitHub returned an unexpected Contents-read probe response; "
+            f"{resource_kind} absence is unverified"
         )
 
 
-async def _repository_is_empty(client: GhClient, owner: str, repo: str) -> bool:
+async def _repository_is_empty(
+    client: GhClient,
+    owner: str,
+    repo: str,
+    *,
+    resource_kind: str = "ref",
+) -> bool:
     """Read GitHub's authoritative repository-empty flag for exact-object 409 classification."""
 
     result = await client.run(
@@ -176,7 +189,8 @@ async def _repository_is_empty(client: GhClient, owner: str, repo: str) -> bool:
     is_empty = result.get("isEmpty") if isinstance(result, dict) else None
     if not isinstance(is_empty, bool):
         raise RuntimeError(
-            "GitHub returned no authoritative repository-empty state; absence is unverified"
+            "GitHub returned no authoritative repository-empty state; "
+            f"{resource_kind} absence is unverified"
         )
     return is_empty
 
@@ -332,9 +346,17 @@ async def gh_get_commit(
         )
     except GitHubRequestError as error:
         if error.status_code == 404:
-            await _confirm_contents_read_access(app.client, request.owner, request.repo)
+            await _confirm_contents_read_access(
+                app.client,
+                request.owner,
+                request.repo,
+                resource_kind="commit",
+            )
         elif error.status_code != 409 or not await _repository_is_empty(
-            app.client, request.owner, request.repo
+            app.client,
+            request.owner,
+            request.repo,
+            resource_kind="commit",
         ):
             raise
         return GitCommitInfo(commit_sha=normalized_sha, found=False)
@@ -423,7 +445,7 @@ async def gh_create_branch(
         Field(
             description=(
                 "Existing branch name to use as the base. Full commit SHAs are rejected; "
-                "use gh_create_branch_from_sha for an immutable commit base."
+                "use gh_create_branch_from_sha for an immutable base."
             ),
             min_length=1,
             max_length=1024,
@@ -593,5 +615,5 @@ async def gh_create_branch_from_sha(
         base_sha=normalized_sha,
         ref=ref,
         created=True,
-        message=f"Branch '{name}' created at exact commit {normalized_sha}."
+        message=f"Branch '{name}' created at exact commit {normalized_sha}.",
     )
