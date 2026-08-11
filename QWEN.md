@@ -10,6 +10,8 @@ A Python MCP (Model Context Protocol) 2.0 server that wraps the `gh` CLI for Git
 
 - `server.py` — small MCP composition/re-export root for the 44 public tools.
 - `tooling.py` — shared MCP instance/lifespan, annotations, validation, write-policy, readback, and bounded-evidence helpers.
+- `write_contracts.py` — shared typed exact-state preconditions, tri-state mutation/readback outcomes, semantic state verification, and governed JSON-write metadata helpers.
+- `legacy_write_adapters.py` — 0.6.x compatibility projection for nontrivial exact-state writes; preserves existing public return schemas while using the shared internal outcome contract.
 - `tools/` — cohesive tool-domain modules for diagnostics, discovery, issues, pull requests, repositories/content, releases, Actions, and Git references.
 - `gh_client.py` — `GhClient` dataclass: the sole `gh` subprocess boundary; parses JSON, normalizes output, classifies requests conservatively, and enters request governance before every execution.
 - `request_governor.py` — shared serialization, mutative-request pacing, safe-read retry, rate-limit cooldown, and request metadata policy.
@@ -51,14 +53,15 @@ uv run pytest
 
 - **No direct GitHub API calls.** Everything goes through `GhClient`, then the shared `GitHubRequestGovernor`, and finally the noninteractive `gh` CLI subprocess boundary. Do not spawn `gh` elsewhere or bypass governor policy.
 - **Conservative request classification.** Known read-only `gh` routes may use bounded retry for transient transport/server failures. For `gh api`, explicit `GET`/`HEAD` remains read-only, while GraphQL defaults and body-bearing implicit-POST forms (`-F/--field`, `-f/--raw-field`, and `--input`, including attached long forms) are classified as writes. Mutations, malformed/unknown API forms, and unknown commands fail closed as non-retryable writes.
-- **Order-safe API header capture.** Non-paginated `gh api` calls may receive an internal `--include` flag so request/rate-limit headers can be parsed. Injection is positioned after the detected endpoint and must preserve both `gh api <endpoint> ...` and supported flag-before-endpoint forms such as `gh api -X GET <endpoint>`.
 - **Rate-limit cooldown is fail-closed.** `Retry-After` is authoritative when present; an exhausted primary limit uses `X-RateLimit-Reset`; otherwise a rate-limit response establishes the governor's policy fallback cooldown (60 seconds by default) before another queued request may execute. The fallback duration is constructor policy, not a hard-coded secondary-rate-limit trigger threshold.
+- **Exact-state write contract.** Every new nontrivial 0.7.x write must use the shared `write_contracts.py` contract and return an `ExactWriteResult`-derived schema with `precondition_checked`, tri-state `write_completed`, `readback_completed`, `state_matches_requested`, `warning`, and `request_id`. Verify expected state immediately before mutation, or encode it as an atomic server-side compare-and-swap precondition such as `beforeOid`. Never replay an ambiguous mutation automatically. Authoritative readback must verify the requested semantic invariant, not merely command exit status. The 0.6.x public schemas remain frozen; `legacy_write_adapters.py` is the compatibility bridge and must not be used as a model for new 0.7.x tools.
+- **Order-safe API header capture.** Non-paginated `gh api` calls may receive an internal `--include` flag so request/rate-limit headers can be parsed. Injection is positioned after the detected endpoint and must preserve both `gh api <endpoint> ...` and supported flag-before-endpoint forms such as `gh api -X GET <endpoint>`.
 - **JSON-safe output.** All `gh` output passes through `to_json_value()` — `Decimal` → string, `bytes` → `base64:` prefix, `datetime` → ISO 8601, infinities → string.
 - **Logs to stderr.** Never pollute stdout (stdio protocol channel).
 - **Write commands gated.** `MCP_GH_ALLOW_WRITE_COMMANDS=false` (default) disables all write tools. With `true` + `MCP_GH_CONFIRM_WRITE_COMMANDS=true`, MCP elicitation prompts a human before execution.
 - **Result limits.** `MCP_GH_DEFAULT_MAX_RESULTS=30`, capped at `MCP_GH_HARD_MAX_RESULTS=100`.
 - **Strict typing.** `mypy` runs in strict mode. All new public functions should have type annotations.
-- **Pydantic v2 models.** All tool return types are Pydantic models in `models.py`.
+- **Pydantic v2 models.** Tool-specific return models remain in `models.py`; the shared exact-write metadata/base model lives in `write_contracts.py` so future write result models can derive from one contract.
 - **Tool annotations.** Read-only tools use `_READ_ONLY_TOOL`; write tools use `_WRITE_TOOL` with `ToolAnnotations`.
 
 ## Test structure
@@ -66,6 +69,7 @@ uv run pytest
 - `test_serialization.py` — `to_json_value()` edge cases (decimals, datetimes, bytes, infinities).
 - `test_settings.py` — Settings parsing, env var precedence, limit validation.
 - `test_request_governor.py` — serialization, pacing, retry, rate-limit/fallback cooldown, implicit API mutation classification, API argument-order preservation, ambiguous-write, and subprocess-boundary invariants.
+- `test_write_contracts.py` — exact-state precondition ordering, tri-state write outcomes, semantic readback matching, write/readback failure, and no-replay ambiguity regressions.
 - `test_mcp_schema.py` — MCP tool schema validation.
 - `test_integration.py` — End-to-end integration against a real `gh` CLI.
 - `exercise_tools.py` — Tool exercise harness.

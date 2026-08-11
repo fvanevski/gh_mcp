@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .legacy_write_adapters import gh_commit_files, gh_merge_pr, gh_submit_pr_review
 from .tooling import (
     ADD_EXTERNAL,
     MUTATE_EXTERNAL,
@@ -45,17 +46,9 @@ from .tools.pull_requests import (
     gh_list_pr_commits,
     gh_list_pr_files,
     gh_list_prs,
-    gh_merge_pr,
-    gh_submit_pr_review,
 )
 from .tools.releases import gh_create_release, gh_get_release, gh_list_releases
-from .tools.repositories import (
-    gh_commit_files,
-    gh_create_repo,
-    gh_get_file_contents,
-    gh_get_repo,
-    gh_list_repos,
-)
+from .tools.repositories import gh_create_repo, gh_get_file_contents, gh_get_repo, gh_list_repos
 
 # These four tools historically derived their public descriptions from longer
 # server.py docstrings. Preserve those descriptions explicitly at composition
@@ -100,6 +93,46 @@ mcp.add_tool(
         "is responsible for user-facing approval."
     ),
     annotations=ADD_EXTERNAL,
+)
+
+# Issue #9 keeps the 0.6.x public schemas stable while routing three nontrivial
+# exact-state writes through shared internal outcome adapters. The compatibility
+# layer preserves each tool's existing operation contract while adding semantic
+# result matching and tri-state ambiguity handling without changing public names
+# or return models.
+mcp.remove_tool("gh_submit_pr_review")
+mcp.add_tool(
+    gh_submit_pr_review,
+    title="Submit pull request review",
+    description=(
+        "Write action: submit a formal APPROVED, CHANGES_REQUESTED, or COMMENTED "
+        "GitHub review for one pull request at an exact expected head commit. This is "
+        "not an issue comment, never prompts, and never merges the pull request."
+    ),
+    annotations=ADD_EXTERNAL,
+)
+mcp.remove_tool("gh_merge_pr")
+mcp.add_tool(
+    gh_merge_pr,
+    title="Merge pull request at exact head",
+    description=(
+        "Destructive write: merge one pull request using an explicit strategy only when "
+        "its head still matches expected_head_sha. This tool cannot use administrator "
+        "bypass, delete the branch, or silently merge a changed revision. It requires "
+        "MCP_GH_ALLOW_PR_MERGE=true in addition to ordinary write authorization."
+    ),
+    annotations=MUTATE_EXTERNAL,
+)
+mcp.remove_tool("gh_commit_files")
+mcp.add_tool(
+    gh_commit_files,
+    title="Commit repository files atomically",
+    description=(
+        "Write action: create or replace complete UTF-8 files in one Git commit and "
+        "conditionally advance one branch only when its head matches expected_head_sha. "
+        "This tool requires host approval and server-side content-commit authorization."
+    ),
+    annotations=MUTATE_EXTERNAL,
 )
 
 __all__ = [
