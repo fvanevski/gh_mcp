@@ -368,7 +368,7 @@ def _prepare_command_args(
 
     prepared = list(args)
     if is_api and not paginated and not parse_headers:
-        prepared.insert(1, "--include")
+        prepared.insert(2, "--include")
         parse_headers = True
     if conditional_etag is not None:
         prepared.extend(["-H", f"If-None-Match: {conditional_etag}"])
