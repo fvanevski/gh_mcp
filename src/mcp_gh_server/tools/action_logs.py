@@ -15,6 +15,7 @@ from ..tooling import (
     READ_EXTERNAL,
     AppContext,
     app_from_context,
+    logger,
     mcp,
     validate_repository,
 )
@@ -51,7 +52,7 @@ async def _get_job_snapshot(
         raise RuntimeError("Workflow job payload is missing a valid run ID")
     if not isinstance(head_sha, str) or OBJECT_SHA_RE.fullmatch(head_sha) is None:
         raise RuntimeError("Workflow job payload is missing a valid head SHA")
-    if not isinstance(status, str):
+    if not isinstance(status, str) or not status:
         raise RuntimeError("Workflow job payload is missing a valid status")
     if conclusion is not None and not isinstance(conclusion, str):
         raise RuntimeError("Workflow job payload has an invalid conclusion")
@@ -131,18 +132,64 @@ def _select_log(
     annotations=READ_EXTERNAL,
 )
 async def gh_get_job_logs(
-    owner: str,
-    repo: str,
-    job_id: Annotated[int, Field(ge=1)],
-    attempt: Annotated[int, Field(ge=1)],
+    owner: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=39,
+            pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+            description="Canonical GitHub repository owner.",
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=100,
+            pattern=r"^[A-Za-z0-9_.-]+$",
+            description="Canonical GitHub repository name without path separators.",
+        ),
+    ],
+    job_id: Annotated[int, Field(ge=1, description="Positive workflow job identifier.")],
+    attempt: Annotated[int, Field(ge=1, description="Exact workflow run attempt.")],
+    *,
     ctx: Context[AppContext],
-    max_bytes: Annotated[int | None, Field(ge=1, le=1_000_000)] = None,
-    tail_bytes: Annotated[int | None, Field(ge=1, le=1_000_000)] = None,
-    start_marker: Annotated[str | None, Field(min_length=1, max_length=4096)] = None,
-    end_marker: Annotated[str | None, Field(min_length=1, max_length=4096)] = None,
+    max_bytes: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=1_000_000,
+            description="Maximum returned UTF-8 bytes, capped by server policy.",
+        ),
+    ] = None,
+    tail_bytes: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=1_000_000,
+            description="Return only the final bounded UTF-8 bytes of the source log.",
+        ),
+    ] = None,
+    start_marker: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            max_length=4096,
+            description="Inclusive literal start marker; never treated as a regex.",
+        ),
+    ] = None,
+    end_marker: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            max_length=4096,
+            description="Inclusive literal end marker at or after the selected start.",
+        ),
+    ] = None,
 ) -> WorkflowJobLogs:
     """Return bounded logs pinned to an exact job and caller-specified run attempt."""
 
+    logger.info("MCP tool invocation reached server: tool=gh_get_job_logs")
     app = app_from_context(ctx)
     validate_repository(owner, repo)
     before = await _get_job_snapshot(app, owner, repo, job_id, attempt)
@@ -166,7 +213,7 @@ async def gh_get_job_logs(
         raise RuntimeError("GitHub returned invalid workflow-job log output")
 
     after = await _get_job_snapshot(app, owner, repo, job_id, attempt)
-    if after != before:
+    if after[:3] != before[:3]:
         raise RuntimeError("Workflow job identity changed during the log evidence read")
 
     evidence = _select_log(
@@ -207,18 +254,64 @@ async def gh_get_job_logs(
     annotations=READ_EXTERNAL,
 )
 async def gh_get_run_logs(
-    owner: str,
-    repo: str,
-    run_id: Annotated[int, Field(ge=1)],
-    attempt: Annotated[int, Field(ge=1)],
+    owner: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=39,
+            pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+            description="Canonical GitHub repository owner.",
+        ),
+    ],
+    repo: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=100,
+            pattern=r"^[A-Za-z0-9_.-]+$",
+            description="Canonical GitHub repository name without path separators.",
+        ),
+    ],
+    run_id: Annotated[int, Field(ge=1, description="Positive workflow run identifier.")],
+    attempt: Annotated[int, Field(ge=1, description="Exact workflow run attempt.")],
+    *,
     ctx: Context[AppContext],
-    max_bytes: Annotated[int | None, Field(ge=1, le=1_000_000)] = None,
-    tail_bytes: Annotated[int | None, Field(ge=1, le=1_000_000)] = None,
-    start_marker: Annotated[str | None, Field(min_length=1, max_length=4096)] = None,
-    end_marker: Annotated[str | None, Field(min_length=1, max_length=4096)] = None,
+    max_bytes: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=1_000_000,
+            description="Maximum returned UTF-8 bytes, capped by server policy.",
+        ),
+    ] = None,
+    tail_bytes: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            le=1_000_000,
+            description="Return only the final bounded UTF-8 bytes of the source log.",
+        ),
+    ] = None,
+    start_marker: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            max_length=4096,
+            description="Inclusive literal start marker; never treated as a regex.",
+        ),
+    ] = None,
+    end_marker: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            max_length=4096,
+            description="Inclusive literal end marker at or after the selected start.",
+        ),
+    ] = None,
 ) -> WorkflowRunLogs:
     """Return bounded full logs pinned to one explicit workflow-run attempt."""
 
+    logger.info("MCP tool invocation reached server: tool=gh_get_run_logs")
     app = app_from_context(ctx)
     validate_repository(owner, repo)
     before = await _get_run_snapshot(app, owner, repo, run_id, attempt)
@@ -240,7 +333,7 @@ async def gh_get_run_logs(
         raise RuntimeError("GitHub returned invalid workflow-run log output")
 
     after = await _get_run_snapshot(app, owner, repo, run_id, attempt)
-    if after != before:
+    if after[:2] != before[:2]:
         raise RuntimeError("Workflow run identity changed during the log evidence read")
 
     evidence = _select_log(
