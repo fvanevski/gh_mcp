@@ -262,7 +262,7 @@ async def test_rate_limit_is_not_treated_as_safe_read_retry() -> None:
 
 
 def test_write_spacing_cannot_be_configured_below_github_guidance() -> None:
-    with pytest.raises(ValueError, match="at least 1.0"):
+    with pytest.raises(ValueError, match=r"at least 1.0"):
         GitHubRequestGovernor(write_spacing_seconds=0.999)
 
 
@@ -287,9 +287,7 @@ def test_request_classification_fails_closed_for_mutations_and_unknown_commands(
     assert _infer_request_kind(("issue", "view", "1")) is GitHubRequestKind.READ
     assert _infer_request_kind(("issue", "create")) is GitHubRequestKind.WRITE
     assert (
-        _infer_request_kind(
-            ("api", "repos/octo/repo/contents/file", "-X", "GET", "-f", "ref=main")
-        )
+        _infer_request_kind(("api", "repos/octo/repo/contents/file", "-X", "GET", "-f", "ref=main"))
         is GitHubRequestKind.READ
     )
     assert (

@@ -320,10 +320,7 @@ def _infer_request_kind(args: tuple[str, ...]) -> GitHubRequestKind:
 
 
 def _api_method(args: tuple[str, ...]) -> str:
-    if len(args) >= 2 and args[1] == "graphql":
-        default_method = "POST"
-    else:
-        default_method = "GET"
+    default_method = "POST" if len(args) >= 2 and args[1] == "graphql" else "GET"
 
     explicit_method: str | None = None
     has_field = False

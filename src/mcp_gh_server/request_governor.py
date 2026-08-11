@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from time import monotonic, time
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T")
 Clock = Callable[[], float]
@@ -49,7 +49,7 @@ class GitHubRequestMetadata:
 
 
 @dataclass(frozen=True, slots=True)
-class GitHubRequestResult(Generic[T]):
+class GitHubRequestResult[T]:
     """One governed result plus request metadata."""
 
     value: T
@@ -185,7 +185,7 @@ class GitHubRequestGovernor:
         )
 
     def _backoff_delay(self, attempts: int) -> float:
-        delay = self._backoff_base_seconds * (2 ** max(attempts - 1, 0))
+        delay = float(self._backoff_base_seconds * (2 ** max(attempts - 1, 0)))
         return min(delay, self._backoff_max_seconds)
 
     async def _pace_write(self) -> None:
