@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 from urllib.parse import quote
 
@@ -26,6 +27,8 @@ from .write_contracts import (
     legacy_write_status,
     require_write_precondition,
 )
+
+logger = logging.getLogger("mcp_gh_server.server")
 
 
 async def gh_create_branch_from_sha(
@@ -63,6 +66,7 @@ async def gh_create_branch_from_sha(
 ) -> BranchCreateFromSha:
     """Create an exact branch with independent semantic readback and no write replay."""
 
+    logger.info("MCP tool invocation reached server: tool=gh_create_branch_from_sha")
     app = app_from_context(ctx)
     require_write_enabled(app, owner, repo, action="branch_create")
     validate_branch(name)
@@ -154,12 +158,9 @@ async def gh_create_branch_from_sha(
         raise execution.error
 
     status = legacy_write_status(outcome)
-    if outcome.write_completed is True:
-        created = True
-    else:
-        # The frozen public schema cannot represent unknown creation identity.
-        # Preserve false and carry the exact ambiguity in warning/message instead.
-        created = False
+    created = outcome.write_completed is True
+    # The frozen public schema cannot represent unknown creation identity.
+    # Preserve false and carry the exact ambiguity in warning/message instead.
 
     if outcome.write_completed is False and outcome.state_matches_requested is True:
         message = (

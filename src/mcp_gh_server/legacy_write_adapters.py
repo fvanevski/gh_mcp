@@ -8,6 +8,7 @@ compatibility adapters here.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import Context
@@ -29,6 +30,8 @@ from .write_contracts import (
     make_write_outcome,
     require_write_precondition,
 )
+
+logger = logging.getLogger("mcp_gh_server.server")
 
 
 def _review_state(action: Literal["approve", "request_changes", "comment"]) -> str:
@@ -68,6 +71,7 @@ async def gh_submit_pr_review(
 ) -> PullRequestReviewSubmission:
     """Submit an exact-head review while preserving the frozen 0.6.x result schema."""
 
+    logger.info("MCP tool invocation reached server: tool=gh_submit_pr_review")
     app = app_from_context(ctx)
     require_write_enabled(app, owner, repo, action="pr_review")
     if action in {"request_changes", "comment"} and not body.strip():
@@ -254,6 +258,7 @@ async def gh_merge_pr(
 ) -> PullRequestMerge:
     """Merge one exact PR head through the shared precondition/readback executor."""
 
+    logger.info("MCP tool invocation reached server: tool=gh_merge_pr")
     app = app_from_context(ctx)
     require_write_enabled(app, owner, repo, action="pr_merge")
     expected = expected_head_sha.lower()
