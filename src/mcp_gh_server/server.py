@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from .tooling import ADD_EXTERNAL, MUTATE_EXTERNAL, READ_EXTERNAL, AppContext, app_lifespan, mcp
+from .tooling import (
+    ADD_EXTERNAL,
+    MUTATE_EXTERNAL,
+    READ_EXTERNAL,
+    AppContext,
+    app_lifespan,
+    mcp,
+)
 from .tools.actions import (
     gh_get_failed_run_logs,
     gh_get_run,
@@ -53,45 +60,47 @@ from .tools.repositories import (
 # These four tools historically derived their public descriptions from longer
 # server.py docstrings. Preserve those descriptions explicitly at composition
 # time while the implementation lives in the cohesive issue domain module.
-_PRESERVED_DESCRIPTIONS = (
-    (
-        "gh_create_issue",
-        gh_create_issue,
-        ADD_EXTERNAL,
+mcp.remove_tool("gh_create_issue")
+mcp.add_tool(
+    gh_create_issue,
+    description=(
         "Create a new issue in a repository.\n\n"
         "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval.",
+        "is responsible for user-facing approval."
     ),
-    (
-        "gh_edit_issue",
-        gh_edit_issue,
-        MUTATE_EXTERNAL,
+    annotations=ADD_EXTERNAL,
+)
+mcp.remove_tool("gh_edit_issue")
+mcp.add_tool(
+    gh_edit_issue,
+    description=(
         "Edit an existing issue in a repository.\n\n"
         "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval.",
+        "is responsible for user-facing approval."
     ),
-    (
-        "gh_list_milestones",
-        gh_list_milestones,
-        READ_EXTERNAL,
+    annotations=MUTATE_EXTERNAL,
+)
+mcp.remove_tool("gh_list_milestones")
+mcp.add_tool(
+    gh_list_milestones,
+    description=(
         "List milestones in a repository via the GitHub API.\n\n"
-        "state: open, closed, or all (default: all).",
+        "state: open, closed, or all (default: all)."
     ),
-    (
-        "gh_create_milestone",
-        gh_create_milestone,
-        ADD_EXTERNAL,
+    annotations=READ_EXTERNAL,
+)
+mcp.remove_tool("gh_create_milestone")
+mcp.add_tool(
+    gh_create_milestone,
+    description=(
         "Create a new milestone in a repository via the GitHub API.\n\n"
         "due_on: due date in ISO format (e.g. '2026-12-31').\n"
         "state: open or closed (default: open).\n\n"
         "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval.",
+        "is responsible for user-facing approval."
     ),
+    annotations=ADD_EXTERNAL,
 )
-for _name, _function, _annotations, _description in _PRESERVED_DESCRIPTIONS:
-    mcp.remove_tool(_name)
-    mcp.add_tool(_function, description=_description, annotations=_annotations)
-del _name, _function, _annotations, _description
 
 __all__ = [
     "AppContext",
