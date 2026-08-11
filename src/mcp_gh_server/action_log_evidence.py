@@ -57,13 +57,19 @@ def select_action_log_evidence(
     full_bytes = content.encode("utf-8")
     total_bytes = len(full_bytes)
     digest = hashlib.sha256(full_bytes).hexdigest()
-    selected = content
+    effective_limit = min(requested, hard_max_bytes)
     selection_notes: list[str] = []
 
     if tail_bytes is not None:
-        selected = _utf8_suffix(content, tail_bytes)
-        if len(selected.encode("utf-8")) < total_bytes:
-            selection_notes.append(f"Selected the final {tail_bytes} UTF-8 bytes.")
+        tail_limit = min(tail_bytes, effective_limit)
+        returned = _utf8_suffix(content, tail_limit)
+        if tail_bytes > effective_limit:
+            selection_notes.append(
+                f"Requested tail_bytes={tail_bytes} was limited to the effective "
+                f"max_bytes={effective_limit}."
+            )
+        if len(returned.encode("utf-8")) < total_bytes:
+            selection_notes.append(f"Selected the final {tail_limit} UTF-8 bytes.")
     else:
         start_index = 0
         if start_marker is not None:
@@ -80,11 +86,9 @@ def select_action_log_evidence(
             end_index = marker_index + len(end_marker)
             selection_notes.append("Applied inclusive literal end_marker selection.")
 
-        if start_marker is not None or end_marker is not None:
-            selected = content[start_index:end_index]
+        selected = content[start_index:end_index]
+        returned = _utf8_prefix(selected, effective_limit)
 
-    effective_limit = min(requested, hard_max_bytes)
-    returned = _utf8_prefix(selected, effective_limit)
     bytes_returned = len(returned.encode("utf-8"))
     truncated = bytes_returned < total_bytes
 
