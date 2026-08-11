@@ -10,6 +10,7 @@ from mcp_gh_server.models import (
     BranchCreateFromSha,
     CommentCreate,
     CommitFilesResult,
+    GitRefInfo,
     IssueCreate,
     IssueEdit,
     IssueInfo,
@@ -61,6 +62,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_get_repo": RepoInfo,
     "gh_list_repos": SearchResults,
     "gh_get_file_contents": RepositoryFile,
+    "gh_get_ref": GitRefInfo,
     "gh_commit_files": CommitFilesResult,
     "gh_create_repo": RepoCreate,
     "gh_list_releases": SearchResults,
@@ -89,7 +91,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 44
+    assert len(EXPECTED_RETURN_MODELS) == 45
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)

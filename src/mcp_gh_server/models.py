@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 # ---------------------------------------------------------------------------
 # Info tools
@@ -275,6 +275,76 @@ class PullRequestEdit(WriteResult):
 # ---------------------------------------------------------------------------
 # Repository tools
 # ---------------------------------------------------------------------------
+
+
+GitObjectType = Literal["commit", "tag", "tree", "blob"]
+
+
+class GitRefInput(BaseModel):
+    """Validated request for one exact branch or tag reference."""
+
+    owner: str = Field(
+        min_length=1,
+        max_length=39,
+        pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+    )
+    repo: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9_.-]{1,100}$",
+    )
+    ref: str = Field(
+        description=(
+            "Exact Git reference path relative to refs/, formatted as heads/<branch> or tags/<tag>."
+        ),
+        min_length=6,
+        max_length=1024,
+        pattern=r"^(?:heads|tags)/.+$",
+    )
+
+    @field_validator("ref")
+    @classmethod
+    def require_exact_branch_or_tag_ref(cls, value: str) -> str:
+        """Reject malformed or matching-pattern-like ref input before GitHub is contacted."""
+
+        suffix = value.split("/", 1)[1] if "/" in value else ""
+        components = suffix.split("/") if suffix else []
+        invalid_character = any(
+            ord(character) <= 32
+            or ord(character) == 127
+            or character in {"~", "^", ":", "?", "*", "[", "\\"}
+            for character in value
+        )
+        if (
+            not (value.startswith("heads/") or value.startswith("tags/"))
+            or not suffix
+            or len(value.encode()) > 1024
+            or value.endswith(("/", "."))
+            or ".." in value
+            or "@{" in value
+            or "//" in value
+            or invalid_character
+            or any(
+                not component or component.startswith(".") or component.endswith(".lock")
+                for component in components
+            )
+        ):
+            raise ValueError(
+                "ref must be one exact valid branch or tag path relative to refs/, such as "
+                "'heads/main' or 'tags/v1.0.0'"
+            )
+        return value
+
+
+class GitRefInfo(BaseModel):
+    """Exact Git reference identity and optional annotated-tag peel result."""
+
+    ref: str = Field(pattern=r"^refs/(?:heads|tags)/.+$")
+    found: bool
+    object_type: GitObjectType | None = None
+    object_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    object_url: str | None = Field(default=None, min_length=1)
+    peeled_commit_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
 
 
 class RepoInfo(BaseModel):

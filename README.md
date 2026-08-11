@@ -6,7 +6,7 @@ direct JSON output or a post-write readback.
 
 ## Tools
 
-### Read-only (27)
+### Read-only (28)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -38,6 +38,8 @@ direct JSON output or a post-write readback.
 - `gh_list_labels`: list labels in a repository.
 - `gh_list_milestones`: list milestones in a repository.
 - `gh_get_file_contents`: read a complete file at an exact branch, tag, or commit ref.
+- `gh_get_ref`: resolve one exact branch or tag Git ref, preserving direct
+         object identity and returning the peeled commit SHA for annotated tags.
 
 ### Write (17)
 

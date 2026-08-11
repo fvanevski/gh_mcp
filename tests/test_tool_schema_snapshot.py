@@ -80,6 +80,10 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "path", "ref"},
         {"owner", "repo", "path", "ref"},
     ),
+    "gh_get_ref": (
+        {"owner", "repo", "ref"},
+        {"owner", "repo", "ref"},
+    ),
     "gh_commit_files": (
         {"owner", "repo", "branch", "expected_head_sha", "files", "commit_message"},
         {"owner", "repo", "branch", "expected_head_sha", "files", "commit_message"},
@@ -218,6 +222,7 @@ READ_ONLY_TOOLS = {
     "gh_get_repo",
     "gh_list_repos",
     "gh_get_file_contents",
+    "gh_get_ref",
     "gh_list_releases",
     "gh_get_release",
     "gh_list_workflows",
@@ -270,7 +275,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 44
+    assert len(tools) == 45
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
