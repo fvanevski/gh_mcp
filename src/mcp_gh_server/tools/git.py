@@ -265,7 +265,7 @@ async def gh_create_branch(
         Field(
             description=(
                 "Existing branch name to use as the base. Full commit SHAs are rejected; "
-                "use gh_create_branch_from_sha for an immutable commit base."
+                "use gh_create_branch_from_sha for an immutable base."
             ),
             min_length=1,
             max_length=1024,
