@@ -11,7 +11,8 @@ A Python MCP (Model Context Protocol) 2.0 server that wraps the `gh` CLI for Git
 - `server.py` — small MCP composition/re-export root for the 44 public tools.
 - `tooling.py` — shared MCP instance/lifespan, annotations, validation, write-policy, readback, and bounded-evidence helpers.
 - `tools/` — cohesive tool-domain modules for diagnostics, discovery, issues, pull requests, repositories/content, releases, Actions, and Git references.
-- `gh_client.py` — `GhClient` dataclass: runs `gh` via `subprocess`, parses JSON, normalizes output with timing metadata.
+- `gh_client.py` — `GhClient` dataclass: the sole `gh` subprocess boundary; parses JSON, normalizes output, and enters request governance before every execution.
+- `request_governor.py` — shared serialization, mutative-request pacing, safe-read retry, rate-limit cooldown, and request metadata policy.
 - `models.py` — Pydantic v2 result models (`IssueInfo`, `PullRequestInfo`, `SearchResults`, etc.).
 - `serialization.py` — `to_json_value()` converts `Decimal`, `datetime`, `bytes`, infinities, etc. to JSON-safe types.
 - `settings.py` — `Settings` Pydantic model backed by `MCP_GH_*` env vars + `.env` file.
@@ -48,7 +49,8 @@ uv run pytest
 
 ## Development conventions
 
-- **No direct GitHub API calls.** Everything goes through `gh` CLI subprocesses. Rate limits, auth, and permissions are governed by `gh` and the `GITHUB_TOKEN`.
+- **No direct GitHub API calls.** Everything goes through `GhClient`, then the shared `GitHubRequestGovernor`, and finally the noninteractive `gh` CLI subprocess boundary. Do not spawn `gh` elsewhere or bypass governor policy.
+- **Conservative request classification.** Known read-only `gh` routes may use bounded retry for transient transport/server failures. Mutations and unknown routes fail closed as non-retryable writes; rate-limit responses are surfaced rather than blindly replayed.
 - **JSON-safe output.** All `gh` output passes through `to_json_value()` — `Decimal` → string, `bytes` → `base64:` prefix, `datetime` → ISO 8601, infinities → string.
 - **Logs to stderr.** Never pollute stdout (stdio protocol channel).
 - **Write commands gated.** `MCP_GH_ALLOW_WRITE_COMMANDS=false` (default) disables all write tools. With `true` + `MCP_GH_CONFIRM_WRITE_COMMANDS=true`, MCP elicitation prompts a human before execution.
@@ -61,6 +63,7 @@ uv run pytest
 
 - `test_serialization.py` — `to_json_value()` edge cases (decimals, datetimes, bytes, infinities).
 - `test_settings.py` — Settings parsing, env var precedence, limit validation.
+- `test_request_governor.py` — serialization, pacing, retry, rate-limit, ambiguous-write, and subprocess-boundary invariants.
 - `test_mcp_schema.py` — MCP tool schema validation.
 - `test_integration.py` — End-to-end integration against a real `gh` CLI.
 - `exercise_tools.py` — Tool exercise harness.
