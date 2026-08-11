@@ -42,6 +42,16 @@ An ambiguous transport outcome therefore projects to `write_completed=false` in
 | `gh_create_branch` | GitHub issue-development create semantics | frozen wrapper has no structured exact ref readback; reports unverified |
 | `gh_create_branch_from_sha` | exact commit resolution immediately before mutation | exact ref name and commit SHA |
 
+## Symbolic assignee invariant
+
+GitHub CLI accepts `@me` as an assignee selector for issue/PR creation and
+assignee edits, but structured readback returns the authenticated account's
+concrete login. Compatibility adapters therefore keep the original `@me` CLI
+argument unchanged, resolve the authenticated login once before mutation when
+needed, and compare authoritative readback against that concrete login. This
+normalization applies to create, add-assignee, and remove-assignee verification
+for both issues and pull requests.
+
 ## Merge-method invariant
 
 `gh_merge_pr` must not treat an arbitrary `autoMergeRequest` as proof that the
@@ -59,7 +69,10 @@ The test suite must retain:
   ambiguous-transport executor tests;
 - exact-branch and exact-head regressions;
 - a 17-tool compatibility binding inventory;
-- successful governor warning/request-id propagation through a real adapter, including request ID with no governor warning;
+- successful governor warning/request-id propagation through a real adapter,
+  including request ID with no governor warning;
+- complete blob/tree/commit/ref request-ID preservation for atomic content commits;
+- `@me` normalization for issue/PR create and assignee add/remove readback;
 - wrong-method auto-merge rejection after ambiguous transport failure;
 - false draft/prerelease release-state rejection after a failed write; and
 - conservative `readback_completed=false` behavior where the frozen wrapper

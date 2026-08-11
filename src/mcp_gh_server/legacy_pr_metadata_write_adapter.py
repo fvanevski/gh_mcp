@@ -6,6 +6,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Context
 
+from .legacy_assignee_support import resolve_assignee_groups
 from .legacy_write_support import raise_known_unapplied, run_write_with_metadata
 from .models import PullRequestCreate, PullRequestEdit
 from .request_governor import GitHubRequestResult
@@ -51,6 +52,7 @@ async def gh_create_pr(
 
     app = app_from_context(ctx)
     require_write_enabled(app, owner, repo, action="pr_create")
+    (expected_assignees,) = await resolve_assignee_groups(app.client, assignees)
     args = [
         "pr",
         "create",
@@ -121,7 +123,9 @@ async def gh_create_pr(
             return False
         if labels and not set(labels).issubset(_names(value.get("labels"), "name")):
             return False
-        if assignees and not set(assignees).issubset(_names(value.get("assignees"), "login")):
+        if expected_assignees and not expected_assignees.issubset(
+            _names(value.get("assignees"), "login")
+        ):
             return False
         if review_users and not set(review_users).issubset(
             _names(value.get("reviewRequests"), "login")
@@ -187,6 +191,12 @@ async def gh_edit_pr(
     if base == "":
         raise ValueError("pull request base cannot be empty")
 
+    expected_assignees_add, expected_assignees_remove = await resolve_assignee_groups(
+        app.client,
+        assignees_add,
+        assignees_remove,
+    )
+
     args = ["pr", "edit", str(number), "--repo", f"{owner}/{repo}"]
     if title is not None:
         args.extend(["--title", title])
@@ -251,9 +261,9 @@ async def gh_edit_pr(
         if labels_remove and set(labels_remove) & current_labels:
             return False
         current_assignees = _names(value.get("assignees"), "login")
-        if assignees_add and not set(assignees_add).issubset(current_assignees):
+        if expected_assignees_add and not expected_assignees_add.issubset(current_assignees):
             return False
-        if assignees_remove and set(assignees_remove) & current_assignees:
+        if expected_assignees_remove & current_assignees:
             return False
         return bool(value.get("url"))
 

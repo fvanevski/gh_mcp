@@ -6,6 +6,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Context
 
+from .legacy_assignee_support import resolve_assignee_groups
 from .legacy_write_support import raise_known_unapplied, run_write_with_metadata
 from .models import IssueCreate, IssueEdit
 from .request_governor import GitHubRequestResult
@@ -53,6 +54,7 @@ async def gh_create_issue(
 
     app = app_from_context(ctx)
     require_write_enabled(app, owner, repo, action="issue_create")
+    (expected_assignees,) = await resolve_assignee_groups(app.client, assignees)
     args = [
         "issue",
         "create",
@@ -113,7 +115,9 @@ async def gh_create_issue(
             return False
         if labels and not set(labels).issubset(_label_names(result.get("labels"))):
             return False
-        if assignees and not set(assignees).issubset(_assignee_names(result.get("assignees"))):
+        if expected_assignees and not expected_assignees.issubset(
+            _assignee_names(result.get("assignees"))
+        ):
             return False
         return isinstance(result.get("number"), int) and bool(result.get("url"))
 
@@ -177,6 +181,12 @@ async def gh_edit_issue(
         raise ValueError("at least one issue edit must be provided")
     if title == "":
         raise ValueError("issue title cannot be empty")
+
+    expected_assignees_add, expected_assignees_remove = await resolve_assignee_groups(
+        app.client,
+        assignees_add,
+        assignees_remove,
+    )
 
     args = ["issue", "edit", str(number), "--repo", f"{owner}/{repo}"]
     if title is not None:
@@ -251,9 +261,9 @@ async def gh_edit_issue(
         if labels_remove and set(labels_remove) & current_labels:
             return False
         current_assignees = _assignee_names(result.get("assignees"))
-        if assignees_add and not set(assignees_add).issubset(current_assignees):
+        if expected_assignees_add and not expected_assignees_add.issubset(current_assignees):
             return False
-        if assignees_remove and set(assignees_remove) & current_assignees:
+        if expected_assignees_remove & current_assignees:
             return False
         current_milestone = result.get("milestone")
         current_number = (
