@@ -30,6 +30,11 @@ GitHub documents two distinct absence-related boundaries for Git-database reads:
   authoritative `Repository.isEmpty` field is the boolean `true`. `false`, malformed probe
   data, or a failed probe remains an error.
 
+The 409 condition is intentionally expressed as a Ruff-compliant short-circuit compound
+condition: non-409 failures re-raise without evaluating the repository-empty probe, while a
+409 invokes that probe and re-raises unless `isEmpty` is exactly `true`. This is behaviorally
+identical to separate `elif` branches while satisfying the repository's `SIM114` gate.
+
 Authentication, permission, transport, rate-limit, malformed-response, ambiguous 409, and
 annotated-tag evidence failures are not reported as missing refs.
 
@@ -61,3 +66,7 @@ uv run ruff format --check .
 uv run mypy
 uv run pytest
 ```
+
+Any commit that changes the PR head invalidates prior exact-head acceptance evidence. Even a
+semantics-preserving Ruff repair must be revalidated on the resulting full head SHA before a
+final acceptance decision.
