@@ -203,6 +203,24 @@ async def test_writes_are_strictly_serialized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_write_still_establishes_spacing() -> None:
+    clock = _FakeClock()
+    governor = _governor(clock)
+
+    async def cancelled() -> GitHubRequestResult[None]:
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        await governor.execute(WRITE_REQUEST, cancelled)
+
+    async def next_write() -> GitHubRequestResult[str]:
+        return GitHubRequestResult(value="next")
+
+    assert (await governor.execute(WRITE_REQUEST, next_write)).value == "next"
+    assert clock.sleeps == [pytest.approx(1.0)]
+
+
+@pytest.mark.asyncio
 async def test_ambiguous_write_is_never_retried() -> None:
     clock = _FakeClock()
     governor = _governor(clock)

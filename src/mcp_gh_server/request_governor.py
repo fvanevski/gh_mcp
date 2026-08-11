@@ -146,6 +146,10 @@ class GitHubRequestGovernor:
                         raise
                     await self._sleep(self._backoff_delay(attempts))
                     continue
+                except BaseException:
+                    if policy.kind is GitHubRequestKind.WRITE:
+                        self._last_write_finished_at = self._monotonic_clock()
+                    raise
 
                 if policy.kind is GitHubRequestKind.WRITE:
                     self._last_write_finished_at = self._monotonic_clock()
