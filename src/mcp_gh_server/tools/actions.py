@@ -22,6 +22,7 @@ from ..models import (
     WorkflowRunsPage,
     WorkflowRunWatchResult,
 )
+from ..request_governor import GitHubRequestError
 from ..tooling import (
     MUTATE_EXTERNAL,
     OBJECT_SHA_RE,
@@ -47,6 +48,9 @@ def _parse_run_created_boundary(value: str, *, field_name: str) -> datetime:
 
     if "T" not in value:
         raise ValueError(f"{field_name} must be an ISO 8601 timestamp with an explicit timezone")
+    time_and_zone = value.split("T", 1)[1]
+    if "." in time_and_zone or "," in time_and_zone:
+        raise ValueError(f"{field_name} must use whole-second precision")
     normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
         parsed = datetime.fromisoformat(normalized)
@@ -56,8 +60,6 @@ def _parse_run_created_boundary(value: str, *, field_name: str) -> datetime:
         ) from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{field_name} must include an explicit timezone offset or Z")
-    if parsed.microsecond:
-        raise ValueError(f"{field_name} must use whole-second precision")
     return parsed.astimezone(UTC)
 
 
@@ -92,18 +94,53 @@ def _workflow_run_created_filter(
     return None
 
 
-def _workflow_run_search_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Normalize the REST run shape to the historical gh-run-list item keys."""
+async def _workflow_names_for_run_page(
+    app: AppContext,
+    owner: str,
+    repo: str,
+    workflow_ids: set[int],
+) -> dict[int, str]:
+    """Resolve exact workflow names for only the workflow IDs present on one run page."""
+
+    names: dict[int, str] = {}
+    for workflow_id in sorted(workflow_ids):
+        try:
+            workflow = await app.client.run(
+                "api",
+                f"repos/{owner}/{repo}/actions/workflows/{workflow_id}",
+                "-X",
+                "GET",
+            )
+        except GitHubRequestError as exc:
+            if exc.status_code == 404:
+                names[workflow_id] = ""
+                continue
+            raise
+        if not isinstance(workflow, dict):
+            raise RuntimeError("GitHub did not return structured workflow metadata")
+        name = workflow.get("name")
+        if not isinstance(name, str):
+            raise RuntimeError("GitHub did not return a valid workflow name")
+        names[workflow_id] = name
+    return names
+
+
+def _workflow_run_search_item(
+    item: dict[str, Any],
+    *,
+    workflow_name: str,
+) -> dict[str, Any]:
+    """Normalize one REST run while preserving historical gh-run-list field semantics."""
 
     run_id = item.get("id")
     if not isinstance(run_id, int) or run_id < 1:
         raise RuntimeError("GitHub returned a workflow run without a valid id")
     name = item.get("name")
-    workflow_name = name if isinstance(name, str) else ""
+    run_name = name if isinstance(name, str) else ""
     display_title = item.get("display_title")
     return {
         "databaseId": run_id,
-        "name": workflow_name,
+        "name": run_name,
         "displayTitle": display_title if isinstance(display_title, str) else "",
         "headBranch": item.get("head_branch"),
         "headSha": item.get("head_sha"),
@@ -359,11 +396,25 @@ async def gh_list_runs(
     if not isinstance(total_count, int) or total_count < 0:
         raise RuntimeError("GitHub did not return a valid workflow run count")
 
-    items: list[Any] = []
+    run_items: list[dict[str, Any]] = []
+    workflow_ids: set[int] = set()
     for item in raw_runs:
         if not isinstance(item, dict):
             raise RuntimeError("GitHub returned a malformed workflow run item")
-        items.append(_workflow_run_search_item(item))
+        item_workflow_id = item.get("workflow_id")
+        if not isinstance(item_workflow_id, int) or item_workflow_id < 1:
+            raise RuntimeError("GitHub returned a workflow run without a valid workflow id")
+        run_items.append(item)
+        workflow_ids.add(item_workflow_id)
+
+    workflow_names = await _workflow_names_for_run_page(app, owner, repo, workflow_ids)
+    items: list[Any] = [
+        _workflow_run_search_item(
+            item,
+            workflow_name=workflow_names[item["workflow_id"]],
+        )
+        for item in run_items
+    ]
 
     filtered_search = bool(filters)
     accessible_total = (
