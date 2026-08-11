@@ -544,6 +544,16 @@ class WorkflowRun(BaseModel):
     workflow_name: str | None = Field(None, alias="workflowName")
 
 
+class WorkflowRunsPage(SearchResults):
+    """One bounded workflow-run result page with explicit completeness metadata."""
+
+    total_count: int = Field(ge=0)
+    page: int = Field(ge=1)
+    per_page: int = Field(ge=1, le=100)
+    has_more: bool
+    warning: str | None = None
+
+
 class PullRequestCheck(BaseModel):
     """One CI check reported for an immutable pull-request snapshot."""
 

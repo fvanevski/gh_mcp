@@ -121,7 +121,21 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "workflow_id"},
     ),
     "gh_list_runs": (
-        {"owner", "repo", "branch", "status", "per_page"},
+        {
+            "owner",
+            "repo",
+            "branch",
+            "status",
+            "per_page",
+            "workflow_id",
+            "head_sha",
+            "event",
+            "actor",
+            "created_from",
+            "created_to",
+            "check_suite_id",
+            "page",
+        },
         {"owner", "repo"},
     ),
     "gh_get_run": (
@@ -291,6 +305,16 @@ async def test_exact_tool_surface_snapshot() -> None:
         assert tool.annotations.destructive_hint is (name in DESTRUCTIVE_WRITE_TOOLS)
         assert tool.annotations.idempotent_hint is (name in READ_ONLY_TOOLS)
         assert tool.annotations.open_world_hint is (name != "gh_server_info")
+
+    runs_schema = tools["gh_list_runs"].input_schema["properties"]
+    assert runs_schema["workflow_id"]["anyOf"][0]["minimum"] == 1
+    assert runs_schema["head_sha"]["anyOf"][0]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert runs_schema["check_suite_id"]["anyOf"][0]["minimum"] == 1
+    assert runs_schema["page"]["minimum"] == 1
+    runs_output = tools["gh_list_runs"].output_schema["properties"]
+    assert {"total_count", "page", "per_page", "has_more", "truncated", "warning"} <= set(
+        runs_output
+    )
 
     for name, description in EXPECTED_DESCRIPTIONS.items():
         assert tools[name].description == description
