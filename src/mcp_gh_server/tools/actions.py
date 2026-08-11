@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from mcp.server.mcpserver import Context
@@ -58,7 +58,7 @@ def _parse_run_created_boundary(value: str, *, field_name: str) -> datetime:
         raise ValueError(f"{field_name} must include an explicit timezone offset or Z")
     if parsed.microsecond:
         raise ValueError(f"{field_name} must use whole-second precision")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def _workflow_run_created_filter(
@@ -359,7 +359,7 @@ async def gh_list_runs(
     if not isinstance(total_count, int) or total_count < 0:
         raise RuntimeError("GitHub did not return a valid workflow run count")
 
-    items: list[dict[str, Any]] = []
+    items: list[Any] = []
     for item in raw_runs:
         if not isinstance(item, dict):
             raise RuntimeError("GitHub returned a malformed workflow run item")
