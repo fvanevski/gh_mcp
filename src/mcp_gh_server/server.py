@@ -37,6 +37,8 @@ from .tools.diagnostics import gh_info, gh_server_info
 from .tools.discovery import gh_search_code, gh_search_issues, gh_search_repos
 from .tools.git import (
     gh_create_branch as _registered_gh_create_branch,
+)
+from .tools.git import (
     gh_get_ref,
 )
 from .tools.issues import (
