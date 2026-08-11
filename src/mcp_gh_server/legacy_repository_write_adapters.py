@@ -33,10 +33,11 @@ logger = logging.getLogger("mcp_gh_server.server")
 
 def _metadata_note(result: GitHubRequestResult[Any]) -> str | None:
     warning = result.metadata.warning
-    if warning is None:
-        return None
     if result.metadata.request_id is not None:
-        return f"{warning} GitHub request id: {result.metadata.request_id}."
+        warning = combine_warnings(
+            warning,
+            f"GitHub request id: {result.metadata.request_id}.",
+        )
     return warning
 
 
