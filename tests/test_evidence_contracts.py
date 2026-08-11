@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from mcp_gh_server.evidence import (
     BoundedTextAccumulator,
     BoundedTextEvidence,
+    PaginationEvidence,
     bound_text_evidence,
     pagination_evidence,
 )
@@ -108,6 +109,18 @@ def test_short_authoritative_page_is_marked_incomplete() -> None:
     assert evidence.truncated is True
     assert evidence.warning is not None
     assert "incomplete" in evidence.warning
+
+
+def test_pagination_model_rejects_false_complete_authoritative_page() -> None:
+    with pytest.raises(ValidationError, match="must be marked truncated"):
+        PaginationEvidence(
+            total_count=30,
+            page=1,
+            per_page=30,
+            returned_count=29,
+            has_more=False,
+            truncated=False,
+        )
 
 
 def test_complete_text_reports_bytes_and_full_digest() -> None:
