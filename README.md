@@ -6,7 +6,7 @@ direct JSON output or a post-write readback.
 
 ## Tools
 
-### Read-only (29)
+### Read-only (31)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -31,6 +31,10 @@ direct JSON output or a post-write readback.
 - `gh_get_workflow`: get details of a specific workflow.
 - `gh_list_runs`: list recent GitHub Actions workflow runs.
 - `gh_get_run`: get details of a specific workflow run.
+- `gh_list_run_artifacts`: list one bounded page of artifact metadata for an exact
+  workflow run, with optional exact-name filtering and run attempt/head identity.
+- `gh_get_artifact`: get one exact artifact's metadata, including digest, expiry,
+  associated workflow run, and workflow head SHA.
 - `gh_watch_run`: poll a workflow run until completion or a caller-supplied timeout.
 - `gh_get_pr_checks`: return bounded CI check summaries pinned to an exact PR revision.
 - `gh_list_run_jobs`: list one bounded page of jobs and steps for an exact run attempt.
