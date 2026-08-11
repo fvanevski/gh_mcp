@@ -292,6 +292,18 @@ async def test_missing_workflow_metadata_preserves_historical_empty_workflow_nam
     assert result.items[0]["workflowName"] == ""
 
 
+async def test_non_404_workflow_metadata_failure_is_not_silenced() -> None:
+    client = FakeGhClient(
+        [
+            _payload(1, [_run(5)]),
+            GitHubRequestError("workflow metadata forbidden", status_code=403),
+        ]
+    )
+
+    with pytest.raises(GitHubRequestError, match="workflow metadata forbidden"):
+        await gh_list_runs("octo", "repo", ctx=_context(client))
+
+
 async def test_workflow_metadata_lookup_is_deduplicated_per_returned_page() -> None:
     client = FakeGhClient(
         [
