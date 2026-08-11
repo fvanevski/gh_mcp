@@ -37,7 +37,7 @@ An ambiguous transport outcome therefore projects to `write_completed=false` in
 | `gh_merge_pr` | exact `expected_head_sha` immediately before mutation plus `--match-head-commit` | merged/queued state, or matching auto-merge method |
 | `gh_create_repo` | GitHub create-only repository identity | canonical repository identity |
 | `gh_commit_files` | atomic GraphQL `beforeOid` compare-and-swap | branch ref equals newly created commit |
-| `gh_create_release` | GitHub tag/release create semantics | release tag/identity and legacy-exposed requested state |
+| `gh_create_release` | GitHub tag/release create semantics | release tag/identity plus exact requested draft/prerelease booleans and supplied name |
 | `gh_run_workflow` | dispatch is append-only | exact run id when `gh` returns a stable run URL; otherwise unverified |
 | `gh_create_branch` | GitHub issue-development create semantics | frozen wrapper has no structured exact ref readback; reports unverified |
 | `gh_create_branch_from_sha` | exact commit resolution immediately before mutation | exact ref name and commit SHA |
@@ -59,8 +59,9 @@ The test suite must retain:
   ambiguous-transport executor tests;
 - exact-branch and exact-head regressions;
 - a 17-tool compatibility binding inventory;
-- successful governor warning/request-id propagation through a real adapter;
-- wrong-method auto-merge rejection after ambiguous transport failure; and
+- successful governor warning/request-id propagation through a real adapter, including request ID with no governor warning;
+- wrong-method auto-merge rejection after ambiguous transport failure;
+- false draft/prerelease release-state rejection after a failed write; and
 - conservative `readback_completed=false` behavior where the frozen wrapper
   cannot perform structured authoritative readback.
 

@@ -267,8 +267,8 @@ def legacy_write_status(outcome: WriteOutcomeMetadata) -> LegacyWriteStatus:
     """Project the exact contract without claiming unknown/mismatched state as success."""
 
     warning = outcome.warning
-    if warning is not None and outcome.request_id is not None:
-        warning = f"{warning} GitHub request id: {outcome.request_id}."
+    if outcome.request_id is not None:
+        warning = combine_warnings(warning, f"GitHub request id: {outcome.request_id}.")
     return LegacyWriteStatus(
         write_completed=outcome.write_completed is True,
         readback_completed=(

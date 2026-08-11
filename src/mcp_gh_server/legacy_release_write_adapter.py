@@ -60,13 +60,9 @@ async def gh_create_release(
         )
 
     async def readback() -> dict[str, Any]:
-        fields = ["tagName", "url"]
+        fields = ["tagName", "url", "isDraft", "isPrerelease"]
         if name is not None:
             fields.append("name")
-        if draft:
-            fields.append("isDraft")
-        if prerelease:
-            fields.append("isPrerelease")
         value = await app.client.run(
             "release",
             "view",
@@ -85,9 +81,9 @@ async def gh_create_release(
             return False
         if name is not None and value.get("name") != name:
             return False
-        if draft and value.get("isDraft") is not True:
+        if value.get("isDraft") is not draft:
             return False
-        if prerelease and value.get("isPrerelease") is not True:
+        if value.get("isPrerelease") is not prerelease:
             return False
         return bool(value.get("url"))
 
