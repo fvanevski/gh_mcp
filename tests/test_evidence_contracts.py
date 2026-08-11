@@ -205,3 +205,20 @@ def test_evidence_models_remain_json_safe_through_serialization_layer() -> None:
     )
     dumped = evidence.model_dump(mode="python")
     assert to_json_value(dumped) == evidence.model_dump(mode="json")
+
+
+def test_legacy_bounded_utf8_projection_preserves_tuple_contract() -> None:
+    from mcp_gh_server.tooling import bounded_utf8
+
+    evidence = bound_text_evidence(
+        "ab😀cd",
+        requested_max_bytes=5,
+        hard_max_bytes=5,
+    )
+    assert bounded_utf8("ab😀cd", 5) == (
+        evidence.content,
+        evidence.bytes_returned,
+        evidence.total_bytes,
+        evidence.truncated,
+        evidence.sha256,
+    )
