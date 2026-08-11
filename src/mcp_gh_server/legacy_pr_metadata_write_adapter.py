@@ -96,8 +96,7 @@ async def gh_create_pr(
         if created_url is None:
             raise RuntimeError("pull request creation returned no stable URL for readback")
         fields = (
-            "title,number,url,body,headRefName,baseRefName,isDraft,"
-            "labels,assignees,reviewRequests"
+            "title,number,url,body,headRefName,baseRefName,isDraft,labels,assignees,reviewRequests"
         )
         value = await app.client.run(
             "pr",

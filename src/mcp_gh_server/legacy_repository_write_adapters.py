@@ -156,9 +156,7 @@ async def gh_commit_files(
         blob_sha = blob.get("sha") if isinstance(blob, dict) else None
         if not isinstance(blob_sha, str):
             raise RuntimeError(f"GitHub did not return a blob SHA for {file.path!r}")
-        tree_entries.append(
-            {"path": file.path, "mode": file.mode, "type": "blob", "sha": blob_sha}
-        )
+        tree_entries.append({"path": file.path, "mode": file.mode, "type": "blob", "sha": blob_sha})
 
     tree_result = await run_json_write_with_metadata(
         app.client,
@@ -194,8 +192,7 @@ async def gh_commit_files(
 
     cas_payload = {
         "query": (
-            "mutation($input: UpdateRefsInput!) { "
-            "updateRefs(input: $input) { clientMutationId } }"
+            "mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }"
         ),
         "variables": {
             "input": {

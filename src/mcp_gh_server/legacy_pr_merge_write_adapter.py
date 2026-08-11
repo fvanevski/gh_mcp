@@ -128,8 +128,7 @@ async def gh_merge_pr(
             return False
         configured_method = auto_merge.get("mergeMethod")
         return (
-            isinstance(configured_method, str)
-            and configured_method.casefold() == method.casefold()
+            isinstance(configured_method, str) and configured_method.casefold() == method.casefold()
         )
 
     execution = await execute_write_readback(

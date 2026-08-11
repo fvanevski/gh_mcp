@@ -241,9 +241,7 @@ async def test_legacy_writes_without_structured_readback_do_not_claim_verificati
     assert comment.warning is not None
     assert "Do not retry automatically" in comment.warning
 
-    branch_client = MetadataAwareClient(
-        write_results=[GitHubRequestResult(value={"stdout": ""})]
-    )
+    branch_client = MetadataAwareClient(write_results=[GitHubRequestResult(value={"stdout": ""})])
     branch = await gh_create_branch(
         "octo",
         "repo",
