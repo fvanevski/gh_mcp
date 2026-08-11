@@ -14,11 +14,11 @@ The tool uses GitHub's workflow-runs REST API rather than locally filtering a br
 - `created` — derived from `created_from` / `created_to`
 - `check_suite_id`
 
-The tool performs one discovery request per invocation; it does not poll, watch, rerun, dispatch, or locally post-filter workflow runs.
+The tool performs exactly one workflow-run discovery request per invocation; it does not poll, watch, rerun, dispatch, or locally post-filter workflow runs. After that bounded discovery response, it resolves only the distinct `workflow_id` values present on the returned page through exact workflow-metadata reads. Because a page can contain at most 100 runs, these compatibility reads are bounded to at most 100 distinct workflow IDs and are deduplicated within the page.
 
 ## Creation ranges and timezone handling
 
-`created_from` and `created_to` are inclusive bounds. Each supplied bound must be a whole-second ISO 8601 timestamp containing an explicit UTC offset or `Z`. Naive timestamps, date-only values, fractional seconds, and reversed ranges are rejected before GitHub is contacted.
+`created_from` and `created_to` are inclusive bounds. Each supplied bound must be a whole-second ISO 8601 timestamp containing an explicit UTC offset or `Z`. Naive timestamps, date-only values, any fractional-second syntax (including zero-valued forms such as `.000Z`), and reversed ranges are rejected before GitHub is contacted.
 
 Bounds are normalized to UTC before being sent to GitHub. For example, `2026-08-01T03:00:00-07:00` becomes `2026-08-01T10:00:00Z`. Two bounds are encoded as GitHub's inclusive `START..END` range. A single lower bound uses `>=TIMESTAMP`; a single upper bound uses `<=TIMESTAMP`.
 
@@ -36,6 +36,8 @@ Requesting more than the effective hard page size is never silently clipped. If 
 
 GitHub documents an additional maximum of 1,000 results for workflow-run searches using `actor`, `branch`, `check_suite_id`, `created`, `event`, `head_sha`, or `status`. When GitHub's returned `total_count` reaches or exceeds that boundary, `gh_list_runs` conservatively sets `truncated=true` and warns that global completeness beyond the accessible search window is not established. At the end of that accessible window, `has_more=false` rather than directing callers to an inaccessible page.
 
-## Backward-compatible item shape
+## Backward-compatible item semantics
 
 Run items retain the historical `gh run list --json` keys used by existing callers: `databaseId`, `name`, `displayTitle`, `headBranch`, `headSha`, `conclusion`, `status`, `event`, `url`, `createdAt`, `updatedAt`, `startedAt`, and `workflowName`. The REST response is normalized to those keys; pagination metadata is added at the enclosing result level.
+
+`name` and `workflowName` are intentionally distinct. `name` comes from the workflow-run payload. `workflowName` is resolved from the run's exact `workflow_id`, matching the historical GitHub CLI behavior rather than aliasing the run `name`. If exact workflow metadata returns HTTP 404—for example for an organization/enterprise ruleset workflow that is visible as a run but whose workflow metadata cannot be read—`workflowName` is the empty string while the run remains in the result. Non-404 workflow-metadata failures are surfaced rather than silently fabricating a name.
