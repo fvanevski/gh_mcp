@@ -193,9 +193,9 @@ async def gh_get_ref(
     except GitHubRequestError as error:
         if error.status_code == 404:
             await _confirm_contents_read_access(app.client, request.owner, request.repo)
-        elif error.status_code != 409:
-            raise
-        elif not await _repository_is_empty(app.client, request.owner, request.repo):
+        elif error.status_code != 409 or not await _repository_is_empty(
+            app.client, request.owner, request.repo
+        ):
             raise
         return GitRefInfo(ref=expected_ref, found=False)
 
@@ -265,7 +265,7 @@ async def gh_create_branch(
         Field(
             description=(
                 "Existing branch name to use as the base. Full commit SHAs are rejected; "
-                "use gh_create_branch_from_sha for an immutable base."
+                "use gh_create_branch_from_sha for an immutable commit base."
             ),
             min_length=1,
             max_length=1024,
