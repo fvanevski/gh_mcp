@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     max_pr_file_patch_bytes: int = Field(default=8_000, ge=1, le=100_000)
     max_pr_commit_message_bytes: int = Field(default=4_000, ge=1, le=100_000)
     max_failed_run_log_bytes: int = Field(default=500_000, ge=1, le=1_000_000)
+    max_action_log_bytes: int = Field(default=500_000, ge=1, le=1_000_000)
 
     default_max_results: int = Field(default=30, ge=1)
     hard_max_results: int = Field(default=100, ge=1)
