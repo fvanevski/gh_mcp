@@ -112,6 +112,24 @@ async def _confirm_contents_read_access(client: GhClient, owner: str, repo: str)
         )
 
 
+async def _repository_is_empty(client: GhClient, owner: str, repo: str) -> bool:
+    """Read GitHub's authoritative repository-empty flag for exact-ref 409 classification."""
+
+    result = await client.run(
+        "repo",
+        "view",
+        f"{owner}/{repo}",
+        "--json",
+        "isEmpty",
+    )
+    is_empty = result.get("isEmpty") if isinstance(result, dict) else None
+    if not isinstance(is_empty, bool):
+        raise RuntimeError(
+            "GitHub returned no authoritative repository-empty state; ref absence is unverified"
+        )
+    return is_empty
+
+
 @mcp.tool(
     title="Get exact Git reference",
     description=(
@@ -173,9 +191,13 @@ async def gh_get_ref(
             "GET",
         )
     except GitHubRequestError as error:
-        if error.status_code != 404:
+        if error.status_code == 404:
+            await _confirm_contents_read_access(app.client, request.owner, request.repo)
+        elif error.status_code == 409:
+            if not await _repository_is_empty(app.client, request.owner, request.repo):
+                raise
+        else:
             raise
-        await _confirm_contents_read_access(app.client, request.owner, request.repo)
         return GitRefInfo(ref=expected_ref, found=False)
 
     if not isinstance(payload, dict):

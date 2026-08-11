@@ -41,6 +41,18 @@ def _object_url(kind: str, sha: str) -> str:
     return f"https://api.github.com/repos/octo/repo/git/{kind}/{sha}"
 
 
+def _tag_read(tag_sha: str, target_type: str, target_sha: str) -> dict[str, Any]:
+    kind = "tags" if target_type == "tag" else f"{target_type}s"
+    return {
+        "sha": tag_sha,
+        "object": {
+            "type": target_type,
+            "sha": target_sha,
+            "url": _object_url(kind, target_sha),
+        },
+    }
+
+
 async def test_branch_ref_returns_exact_commit_identity() -> None:
     sha = "a" * 40
     client = FakeGhClient(
@@ -109,14 +121,7 @@ async def test_annotated_tag_preserves_tag_object_and_peeled_commit() -> None:
                     "url": _object_url("tags", tag_sha),
                 },
             },
-            {
-                "sha": tag_sha,
-                "object": {
-                    "type": "commit",
-                    "sha": commit_sha,
-                    "url": _object_url("commits", commit_sha),
-                },
-            },
+            _tag_read(tag_sha, "commit", commit_sha),
         ]
     )
 
@@ -148,22 +153,8 @@ async def test_nested_annotated_tags_are_peeled_by_exact_object_sha() -> None:
                     "url": _object_url("tags", outer_sha),
                 },
             },
-            {
-                "sha": outer_sha,
-                "object": {
-                    "type": "tag",
-                    "sha": inner_sha,
-                    "url": _object_url("tags", inner_sha),
-                },
-            },
-            {
-                "sha": inner_sha,
-                "object": {
-                    "type": "commit",
-                    "sha": commit_sha,
-                    "url": _object_url("commits", commit_sha),
-                },
-            },
+            _tag_read(outer_sha, "tag", inner_sha),
+            _tag_read(inner_sha, "commit", commit_sha),
         ]
     )
 
@@ -176,6 +167,84 @@ async def test_nested_annotated_tags_are_peeled_by_exact_object_sha() -> None:
         f"repos/octo/repo/git/tags/{outer_sha}",
         f"repos/octo/repo/git/tags/{inner_sha}",
     ]
+
+
+async def test_annotated_tag_cycle_fails_closed() -> None:
+    outer_sha = "1" * 40
+    inner_sha = "2" * 40
+    client = FakeGhClient(
+        [
+            {
+                "ref": "refs/tags/cycle",
+                "object": {
+                    "type": "tag",
+                    "sha": outer_sha,
+                    "url": _object_url("tags", outer_sha),
+                },
+            },
+            _tag_read(outer_sha, "tag", inner_sha),
+            _tag_read(inner_sha, "tag", outer_sha),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="cyclic object chain"):
+        await gh_get_ref("octo", "repo", "tags/cycle", ctx=_context(client))
+
+    assert len(client.calls) == 3
+
+
+async def test_annotated_tag_peel_accepts_commit_at_exact_depth_bound() -> None:
+    tag_shas = [f"{index:040x}" for index in range(1, 17)]
+    commit_sha = "f" * 40
+    tag_reads = [
+        _tag_read(tag_sha, "tag", tag_shas[index + 1])
+        for index, tag_sha in enumerate(tag_shas[:-1])
+    ]
+    tag_reads.append(_tag_read(tag_shas[-1], "commit", commit_sha))
+    client = FakeGhClient(
+        [
+            {
+                "ref": "refs/tags/deep",
+                "object": {
+                    "type": "tag",
+                    "sha": tag_shas[0],
+                    "url": _object_url("tags", tag_shas[0]),
+                },
+            },
+            *tag_reads,
+        ]
+    )
+
+    result = await gh_get_ref("octo", "repo", "tags/deep", ctx=_context(client))
+
+    assert result.peeled_commit_sha == commit_sha
+    assert len(client.calls) == 17
+
+
+async def test_annotated_tag_peel_rejects_chain_beyond_depth_bound() -> None:
+    tag_shas = [f"{index:040x}" for index in range(1, 18)]
+    tag_reads = [
+        _tag_read(tag_sha, "tag", tag_shas[index + 1])
+        for index, tag_sha in enumerate(tag_shas[:-1])
+    ]
+    client = FakeGhClient(
+        [
+            {
+                "ref": "refs/tags/too-deep",
+                "object": {
+                    "type": "tag",
+                    "sha": tag_shas[0],
+                    "url": _object_url("tags", tag_shas[0]),
+                },
+            },
+            *tag_reads[:16],
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="exceeded the 16-object safety bound"):
+        await gh_get_ref("octo", "repo", "tags/too-deep", ctx=_context(client))
+
+    assert len(client.calls) == 17
 
 
 async def test_missing_ref_requires_successful_contents_permission_probe() -> None:
@@ -198,6 +267,60 @@ async def test_missing_ref_requires_successful_contents_permission_probe() -> No
         "-f",
         "per_page=1",
     )
+
+
+async def test_empty_repository_409_is_classified_as_missing_only_after_empty_probe() -> None:
+    conflict = GitHubRequestError("empty or unavailable", status_code=409)
+    client = FakeGhClient([conflict, {"isEmpty": True}])
+
+    result = await gh_get_ref("octo", "repo", "heads/main", ctx=_context(client))
+
+    assert result.ref == "refs/heads/main"
+    assert result.found is False
+    assert result.object_type is None
+    assert result.object_sha is None
+    assert result.object_url is None
+    assert result.peeled_commit_sha is None
+    assert client.calls[1][0] == (
+        "repo",
+        "view",
+        "octo/repo",
+        "--json",
+        "isEmpty",
+    )
+
+
+async def test_nonempty_repository_409_preserves_original_conflict() -> None:
+    conflict = GitHubRequestError("repository unavailable", status_code=409)
+    client = FakeGhClient([conflict, {"isEmpty": False}])
+
+    with pytest.raises(GitHubRequestError) as raised:
+        await gh_get_ref("octo", "repo", "heads/main", ctx=_context(client))
+
+    assert raised.value is conflict
+    assert len(client.calls) == 2
+
+
+async def test_409_with_unreadable_empty_state_is_not_classified_as_missing() -> None:
+    conflict = GitHubRequestError("empty or unavailable", status_code=409)
+    client = FakeGhClient([conflict, {"isEmpty": "unknown"}])
+
+    with pytest.raises(RuntimeError, match="repository-empty state"):
+        await gh_get_ref("octo", "repo", "heads/main", ctx=_context(client))
+
+    assert len(client.calls) == 2
+
+
+async def test_409_with_failed_empty_probe_is_not_classified_as_missing() -> None:
+    conflict = GitHubRequestError("empty or unavailable", status_code=409)
+    forbidden = GitHubRequestError("repository probe forbidden", status_code=403)
+    client = FakeGhClient([conflict, forbidden])
+
+    with pytest.raises(GitHubRequestError) as raised:
+        await gh_get_ref("octo", "repo", "heads/main", ctx=_context(client))
+
+    assert raised.value is forbidden
+    assert len(client.calls) == 2
 
 
 @pytest.mark.parametrize(
