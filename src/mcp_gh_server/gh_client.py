@@ -6,18 +6,49 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shlex
 import signal
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 
+from .request_governor import (
+    READ_REQUEST,
+    WRITE_REQUEST,
+    GitHubRequestError,
+    GitHubRequestGovernor,
+    GitHubRequestKind,
+    GitHubRequestMetadata,
+    GitHubRequestPolicy,
+    GitHubRequestResult,
+)
 from .serialization import to_json_value
 
 logger = logging.getLogger(__name__)
 
 _MAX_GITHUB_ERROR_DETAIL_CHARS = 4_000
+_HTTP_STATUS_RE = re.compile(r"\bHTTP(?:/\S+)?\s+(\d{3})\b", re.IGNORECASE)
+_HTTP_ERROR_STATUS_RE = re.compile(r"\bHTTP\s+(\d{3})\b", re.IGNORECASE)
+_TRANSPORT_FAILURE_MARKERS = (
+    "connection reset",
+    "connection refused",
+    "connection timed out",
+    "context deadline exceeded",
+    "i/o timeout",
+    "network is unreachable",
+    "no such host",
+    "temporary failure",
+    "tls handshake timeout",
+    "unexpected eof",
+)
+_RATE_LIMIT_MARKERS = (
+    "api rate limit exceeded",
+    "secondary rate limit",
+    "rate limit exceeded",
+    "abuse detection",
+)
 
 _ENV_OVERRIDES = {
     "GH_PROMPT_DISABLED": "1",
@@ -32,12 +63,57 @@ _ENV_OVERRIDES = {
     "GH_NO_EXTENSION_UPDATE_NOTIFIER": "1",
 }
 
+_READ_SUBCOMMANDS: dict[str, frozenset[str]] = {
+    "auth": frozenset({"status"}),
+    "issue": frozenset({"list", "status", "view"}),
+    "label": frozenset({"list"}),
+    "pr": frozenset({"checks", "diff", "list", "status", "view"}),
+    "release": frozenset({"list", "view"}),
+    "repo": frozenset({"list", "view"}),
+    "run": frozenset({"list", "view", "watch"}),
+    "search": frozenset({"code", "commits", "issues", "repos"}),
+    "workflow": frozenset({"list", "view"}),
+}
+_API_BODY_FLAGS = frozenset({"-F", "--field", "-f", "--raw-field", "--input"})
+_API_FLAGS_WITH_VALUE = frozenset(
+    {
+        "--cache",
+        "-F",
+        "--field",
+        "-H",
+        "--header",
+        "--hostname",
+        "--input",
+        "-q",
+        "--jq",
+        "-X",
+        "--method",
+        "-p",
+        "--preview",
+        "-f",
+        "--raw-field",
+        "-t",
+        "--template",
+    }
+)
+_API_BOOLEAN_FLAGS = frozenset(
+    {"-i", "--include", "--paginate", "--silent", "--slurp", "--verbose"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _IncludedResponse:
+    body: str
+    status_code: int | None
+    headers: dict[str, str]
+
 
 @dataclass(slots=True)
 class GhClient:
     """Run ``gh`` without a terminal and parse its structured output."""
 
     settings: Any  # Settings (typed via import to avoid circular import)
+    governor: GitHubRequestGovernor = field(default_factory=GitHubRequestGovernor)
 
     async def run(
         self,
@@ -46,14 +122,69 @@ class GhClient:
         json_output: bool = True,
         stdin_text: str | None = None,
         timeout: float | None = None,
+        conditional_etag: str | None = None,
+        conditional_last_modified: str | None = None,
     ) -> Any:
-        """Execute a noninteractive ``gh`` command.
+        """Execute a governed, noninteractive ``gh`` command and return its payload."""
 
-        Standard input is closed unless ``stdin_text`` is explicitly supplied.
-        This prevents a child process from consuming MCP protocol input.
-        """
+        result = await self.run_with_metadata(
+            *args,
+            expected_returncode=expected_returncode,
+            json_output=json_output,
+            stdin_text=stdin_text,
+            timeout=timeout,
+            conditional_etag=conditional_etag,
+            conditional_last_modified=conditional_last_modified,
+        )
+        return result.value
 
-        cmd = ["gh", *args]
+    async def run_with_metadata(
+        self,
+        *args: str,
+        expected_returncode: int | set[int] = 0,
+        json_output: bool = True,
+        stdin_text: str | None = None,
+        timeout: float | None = None,
+        conditional_etag: str | None = None,
+        conditional_last_modified: str | None = None,
+    ) -> GitHubRequestResult[Any]:
+        """Execute ``gh`` and retain request identity/rate-limit metadata."""
+
+        policy = _request_policy(args)
+
+        async def attempt() -> GitHubRequestResult[Any]:
+            return await self._run_once(
+                *args,
+                expected_returncode=expected_returncode,
+                json_output=json_output,
+                stdin_text=stdin_text,
+                timeout=timeout,
+                policy=policy,
+                conditional_etag=conditional_etag,
+                conditional_last_modified=conditional_last_modified,
+            )
+
+        return await self.governor.execute(policy, attempt)
+
+    async def _run_once(
+        self,
+        *args: str,
+        expected_returncode: int | set[int],
+        json_output: bool,
+        stdin_text: str | None,
+        timeout: float | None,
+        policy: GitHubRequestPolicy,
+        conditional_etag: str | None,
+        conditional_last_modified: str | None,
+    ) -> GitHubRequestResult[Any]:
+        """Execute one subprocess attempt; callers must enter through the governor."""
+
+        prepared_args, parse_headers = _prepare_command_args(
+            args,
+            conditional_etag=conditional_etag,
+            conditional_last_modified=conditional_last_modified,
+        )
+        cmd = ["gh", *prepared_args]
         rendered = _redacted_command(cmd)
         logger.debug("Running gh command: %s", rendered)
         started = perf_counter()
@@ -77,45 +208,101 @@ class GhClient:
             )
         except TimeoutError as exc:
             await _terminate_process(process)
-            raise RuntimeError(
-                f"gh command timed out after {command_timeout:g}s: {rendered}"
+            message = f"gh command timed out after {command_timeout:g}s: {rendered}"
+            ambiguous = policy.kind is GitHubRequestKind.WRITE
+            if ambiguous:
+                message += (
+                    "; write outcome may be ambiguous; re-read authoritative state before retrying"
+                )
+            raise GitHubRequestError(
+                message,
+                retryable=True,
+                ambiguous=ambiguous,
             ) from exc
         except asyncio.CancelledError:
             await _terminate_process(process)
             raise
 
         duration_ms = (perf_counter() - started) * 1000
-        stdout = stdout_bytes.decode(errors="replace").strip()
+        raw_stdout = stdout_bytes.decode(errors="replace")
         stderr = stderr_bytes.decode(errors="replace").strip()
+        included = (
+            _split_included_response(raw_stdout)
+            if parse_headers
+            else _IncludedResponse(body=raw_stdout, status_code=None, headers={})
+        )
+        stdout = included.body.strip()
+        status_code = included.status_code or _status_from_stderr(stderr)
+        metadata = _metadata_from_headers(
+            included.headers,
+            not_modified=included.status_code == 304,
+        )
 
         expected_returncodes = (
             expected_returncode if isinstance(expected_returncode, set) else {expected_returncode}
         )
+        conditional_request = conditional_etag is not None or conditional_last_modified is not None
+        if included.status_code == 304 and conditional_request:
+            return GitHubRequestResult(value=None, metadata=metadata)
+
         if process.returncode not in expected_returncodes:
             github_detail = _github_error_detail(stdout)
             detail_suffix = f"; GitHub response: {github_detail}" if github_detail else ""
-            raise RuntimeError(
+            rate_limited = _is_rate_limited(status_code, stdout, stderr, metadata)
+            retryable = _is_retryable_failure(status_code, stderr)
+            ambiguous = (
+                policy.kind is GitHubRequestKind.WRITE
+                and not rate_limited
+                and (status_code is None or retryable)
+            )
+            message = (
                 f"gh command failed (exit {process.returncode}): "
                 f"{stderr or 'no stderr output'}{detail_suffix}"
             )
+            if rate_limited:
+                message += (
+                    "; GitHub rate limit detected; retries are stopped and further requests "
+                    "remain blocked until the applicable reset, retry, or fallback cooldown"
+                )
+            elif ambiguous:
+                message += (
+                    "; write outcome may be ambiguous; re-read authoritative state before retrying"
+                )
+            raise GitHubRequestError(
+                message,
+                status_code=status_code,
+                retryable=retryable,
+                ambiguous=ambiguous,
+                rate_limited=rate_limited,
+                metadata=metadata,
+            )
         if process.returncode != 0 and not stdout:
-            raise RuntimeError(
+            raise GitHubRequestError(
                 f"gh command returned status {process.returncode} without structured output: "
-                f"{stderr or 'no stderr output'}"
+                f"{stderr or 'no stderr output'}",
+                status_code=status_code,
+                metadata=metadata,
             )
 
         if not json_output:
-            return {"stdout": stdout, "_duration_ms": duration_ms}
+            return GitHubRequestResult(
+                value={"stdout": stdout, "_duration_ms": duration_ms},
+                metadata=metadata,
+            )
 
         if not stdout:
-            return {}
+            return GitHubRequestResult(value={}, metadata=metadata)
 
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"gh returned non-JSON output: {stdout[:200]}") from exc
+            raise GitHubRequestError(
+                f"gh returned non-JSON output: {stdout[:200]}",
+                status_code=status_code,
+                metadata=metadata,
+            ) from exc
 
-        return _normalize(data, duration_ms)
+        return GitHubRequestResult(value=_normalize(data, duration_ms), metadata=metadata)
 
     def clamp_max_results(self, requested: int | None) -> int:
         """Clamp per_page to configured limits."""
@@ -131,6 +318,232 @@ class GhClient:
         if self.settings.github_token is not None:
             env["GH_TOKEN"] = self.settings.github_token.get_secret_value()
         return env
+
+
+def _request_policy(args: tuple[str, ...]) -> GitHubRequestPolicy:
+    return READ_REQUEST if _infer_request_kind(args) is GitHubRequestKind.READ else WRITE_REQUEST
+
+
+def _infer_request_kind(args: tuple[str, ...]) -> GitHubRequestKind:
+    """Classify known reads; unknown commands fail closed as non-retryable writes."""
+
+    if not args:
+        return GitHubRequestKind.WRITE
+    command = args[0]
+    if command == "api":
+        return (
+            GitHubRequestKind.READ
+            if _api_method(args) in {"GET", "HEAD"}
+            else GitHubRequestKind.WRITE
+        )
+    if command == "version":
+        return GitHubRequestKind.READ
+    if len(args) >= 2 and args[1] in _READ_SUBCOMMANDS.get(command, frozenset()):
+        return GitHubRequestKind.READ
+    return GitHubRequestKind.WRITE
+
+
+def _api_endpoint_index(args: tuple[str, ...]) -> int | None:
+    """Locate the API endpoint without assuming that it precedes supported flags."""
+
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            return index + 1 if index + 1 < len(args) else None
+        if arg in _API_FLAGS_WITH_VALUE:
+            if index + 1 >= len(args):
+                return None
+            index += 2
+            continue
+        if arg in _API_BOOLEAN_FLAGS:
+            index += 1
+            continue
+        if arg.startswith("-"):
+            if "=" in arg or (len(arg) > 2 and not arg.startswith("--")):
+                index += 1
+                continue
+            return None
+        return index
+    return None
+
+
+def _api_method(args: tuple[str, ...]) -> str:
+    endpoint_index = _api_endpoint_index(args)
+    default_method = (
+        "POST" if endpoint_index is None or args[endpoint_index].casefold() == "graphql" else "GET"
+    )
+
+    explicit_method: str | None = None
+    has_body = False
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        if arg in {"-X", "--method"}:
+            if index + 1 < len(args):
+                explicit_method = args[index + 1]
+                index += 2
+                continue
+        elif arg.startswith("--method="):
+            explicit_method = arg.split("=", 1)[1]
+        elif arg in _API_BODY_FLAGS:
+            has_body = True
+            index += 2
+            continue
+        elif arg.startswith(("--field=", "--raw-field=", "--input=")) or any(
+            arg.startswith(prefix) and arg != prefix for prefix in ("-F", "-f")
+        ):
+            has_body = True
+        elif arg in _API_FLAGS_WITH_VALUE:
+            index += 2
+            continue
+        index += 1
+
+    if explicit_method:
+        return explicit_method.upper()
+    if has_body:
+        return "POST"
+    return default_method
+
+
+def _prepare_command_args(
+    args: tuple[str, ...],
+    *,
+    conditional_etag: str | None,
+    conditional_last_modified: str | None,
+) -> tuple[list[str], bool]:
+    conditional_request = conditional_etag is not None or conditional_last_modified is not None
+    is_api = bool(args) and args[0] == "api"
+    paginated = "--paginate" in args or "--slurp" in args
+    parse_headers = is_api and ("--include" in args or "-i" in args)
+
+    if conditional_request:
+        if not is_api or _api_method(args) not in {"GET", "HEAD"}:
+            raise ValueError("conditional headers are supported only for read-only gh api requests")
+        if paginated:
+            raise ValueError("conditional headers are not supported with gh api pagination")
+        _validate_header_value(conditional_etag, "conditional_etag")
+        _validate_header_value(conditional_last_modified, "conditional_last_modified")
+
+    prepared = list(args)
+    if is_api and not paginated and not parse_headers:
+        endpoint_index = _api_endpoint_index(args)
+        insert_at = endpoint_index + 1 if endpoint_index is not None else len(prepared)
+        prepared.insert(insert_at, "--include")
+        parse_headers = True
+    if conditional_etag is not None:
+        prepared.extend(["-H", f"If-None-Match: {conditional_etag}"])
+    if conditional_last_modified is not None:
+        prepared.extend(["-H", f"If-Modified-Since: {conditional_last_modified}"])
+    return prepared, parse_headers
+
+
+def _validate_header_value(value: str | None, name: str) -> None:
+    if value is not None and ("\r" in value or "\n" in value):
+        raise ValueError(f"{name} must not contain line breaks")
+
+
+def _split_included_response(stdout: str) -> _IncludedResponse:
+    remaining = stdout
+    status_code: int | None = None
+    headers: dict[str, str] = {}
+
+    while remaining.startswith("HTTP/"):
+        boundary, separator_length = _header_boundary(remaining)
+        if boundary is None:
+            break
+        block = remaining[:boundary]
+        remaining = remaining[boundary + separator_length :]
+        lines = block.splitlines()
+        if not lines:
+            break
+        match = _HTTP_STATUS_RE.search(lines[0])
+        if match is None:
+            break
+        status_code = int(match.group(1))
+        headers = {}
+        for line in lines[1:]:
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            headers[key.strip().casefold()] = value.strip()
+        if not remaining.startswith("HTTP/"):
+            break
+
+    return _IncludedResponse(body=remaining, status_code=status_code, headers=headers)
+
+
+def _header_boundary(value: str) -> tuple[int | None, int]:
+    crlf = value.find("\r\n\r\n")
+    lf = value.find("\n\n")
+    valid = [(position, length) for position, length in ((crlf, 4), (lf, 2)) if position >= 0]
+    if not valid:
+        return None, 0
+    return min(valid, key=lambda item: item[0])
+
+
+def _metadata_from_headers(
+    headers: Mapping[str, str],
+    *,
+    not_modified: bool,
+) -> GitHubRequestMetadata:
+    return GitHubRequestMetadata(
+        request_id=headers.get("x-github-request-id"),
+        retry_after_seconds=_nonnegative_float(headers.get("retry-after")),
+        rate_limit_reset_epoch=_nonnegative_int(headers.get("x-ratelimit-reset")),
+        rate_limit_remaining=_nonnegative_int(headers.get("x-ratelimit-remaining")),
+        etag=headers.get("etag"),
+        last_modified=headers.get("last-modified"),
+        not_modified=not_modified,
+    )
+
+
+def _nonnegative_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _nonnegative_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _status_from_stderr(stderr: str) -> int | None:
+    match = _HTTP_ERROR_STATUS_RE.search(stderr)
+    return int(match.group(1)) if match else None
+
+
+def _is_rate_limited(
+    status_code: int | None,
+    stdout: str,
+    stderr: str,
+    metadata: GitHubRequestMetadata,
+) -> bool:
+    if status_code == 429:
+        return True
+    if status_code == 403 and metadata.rate_limit_remaining == 0:
+        return True
+    detail = f"{stderr}\n{stdout}".casefold()
+    return any(marker in detail for marker in _RATE_LIMIT_MARKERS)
+
+
+def _is_retryable_failure(status_code: int | None, stderr: str) -> bool:
+    if status_code in {408, 500, 502, 503, 504}:
+        return True
+    if status_code is not None:
+        return False
+    detail = stderr.casefold()
+    return any(marker in detail for marker in _TRANSPORT_FAILURE_MARKERS)
 
 
 def _github_error_detail(stdout: str) -> str | None:
