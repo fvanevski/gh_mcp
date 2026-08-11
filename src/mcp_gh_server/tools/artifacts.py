@@ -204,8 +204,9 @@ async def gh_list_run_artifacts(
     validate_repository(owner, repo)
 
     attempt, head_sha = await _get_workflow_run_identity(app, owner, repo, run_id)
+    requested_per_page = app.settings.default_max_results if per_page is None else per_page
     hard_per_page = min(app.settings.hard_max_results, _GITHUB_ARTIFACTS_PER_PAGE_MAX)
-    limit = min(app.client.clamp_max_results(per_page), _GITHUB_ARTIFACTS_PER_PAGE_MAX)
+    limit = min(requested_per_page, hard_per_page)
 
     args = [
         "api",
