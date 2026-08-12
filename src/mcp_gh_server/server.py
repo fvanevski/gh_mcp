@@ -45,12 +45,6 @@ from .tools.git import (
     gh_get_ref,
 )
 from .tools.issue_state import gh_set_issue_state
-from .tools.issues import (
-    gh_get_issue,
-    gh_list_issues,
-    gh_list_labels,
-    gh_list_milestones,
-)
 from .tools.pr_draft_state import gh_set_pr_draft_state
 from .tools.pr_reviews import gh_get_pr_review_state, gh_list_pr_reviews
 from .tools.pull_requests import (
@@ -63,6 +57,7 @@ from .tools.pull_requests import (
 )
 from .tools.releases import gh_get_release, gh_list_releases
 from .tools.repositories import gh_get_file_contents, gh_get_repo, gh_list_repos
+from .tools.workflow_dispatch import gh_run_workflow_exact
 
 # Importing tools.git registers that domain's original tools;
 # every public write below is then rebound to the shared compatibility contract.
@@ -242,6 +237,7 @@ __all__ = [
     "gh_list_workflows",
     "gh_merge_pr",
     "gh_run_workflow",
+    "gh_run_workflow_exact",
     "gh_search_code",
     "gh_search_issues",
     "gh_search_repos",
