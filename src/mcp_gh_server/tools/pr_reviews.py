@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from mcp.server.mcpserver import Context
 from pydantic import Field
@@ -51,7 +51,7 @@ query PullRequestReviewState(
           path
           line
           originalLine
-          comments {
+          comments(first: 1) {
             totalCount
           }
         }
@@ -172,7 +172,9 @@ def _aggregate_pagination(
     warning = None
     if has_more:
         if total_count is None:
-            warning = f"{label} exceeds the aggregate limit of {limit}; additional evidence exists."
+            warning = (
+                f"{label} exceeds the aggregate limit of {limit}; additional evidence exists."
+            )
         else:
             warning = (
                 f"{label} was truncated: returned {returned_count} of {total_count} records "
@@ -266,9 +268,12 @@ async def _read_thread_state(
     if not isinstance(pull_request, dict):
         raise RuntimeError("GitHub GraphQL did not return the requested pull request")
 
-    decision = pull_request.get("reviewDecision")
-    if decision is not None and (not isinstance(decision, str) or decision not in _REVIEW_DECISIONS):
+    raw_decision = pull_request.get("reviewDecision")
+    if raw_decision is not None and (
+        not isinstance(raw_decision, str) or raw_decision not in _REVIEW_DECISIONS
+    ):
         raise RuntimeError("GitHub returned an unknown pull-request review decision")
+    decision = cast(ReviewDecision | None, raw_decision)
 
     connection = pull_request.get("reviewThreads")
     if not isinstance(connection, dict):
@@ -303,7 +308,7 @@ async def _read_thread_state(
         total_count=total_count,
         label="Review-thread evidence",
     )
-    return unresolved, evidence, decision  # type: ignore[return-value]
+    return unresolved, evidence, decision
 
 
 async def _read_requested_reviewers(
@@ -367,8 +372,6 @@ def _requirements_result(
     exact_head_evidence: bool,
     review_decision: ReviewDecision | None,
     current_approvals: list[PullRequestReview],
-    current_change_requests: list[PullRequestReview],
-    stale_approvals: list[PullRequestReview],
     requested_reviewers: list[str],
     requested_teams: list[str],
     unresolved_threads: list[PullRequestReviewThread],
@@ -385,25 +388,17 @@ def _requirements_result(
     if review_decision != "APPROVED":
         return None, "GitHub did not report a review decision that establishes satisfaction."
 
-    unresolved_visible_state = any(
-        (
-            current_change_requests,
-            stale_approvals,
-            requested_reviewers,
-            requested_teams,
-            unresolved_threads,
-        )
-    )
+    unresolved_visible_state = any((requested_reviewers, requested_teams, unresolved_threads))
     if not current_approvals or unresolved_visible_state:
         return (
             None,
             "GitHub reports APPROVED, but visible review evidence is insufficient for a "
-            "conservative all-requirements conclusion.",
+            "conservative exact-head all-requirements conclusion.",
         )
     return (
         True,
-        "GitHub reports APPROVED and complete exact-head review evidence contains no "
-        "conflicting, stale-approval, requested-reviewer, or unresolved-thread state.",
+        "GitHub reports APPROVED and complete exact-head review evidence contains a "
+        "current-head approval with no outstanding requested reviewer or unresolved thread.",
     )
 
 
@@ -639,8 +634,6 @@ async def gh_get_pr_review_state(
         exact_head_evidence=exact_head_evidence,
         review_decision=review_decision,
         current_approvals=current_approvals,
-        current_change_requests=current_change_requests,
-        stale_approvals=stale_approvals,
         requested_reviewers=requested_reviewers,
         requested_teams=requested_teams,
         unresolved_threads=unresolved_threads,
