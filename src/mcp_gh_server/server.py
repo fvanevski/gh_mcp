@@ -45,6 +45,12 @@ from .tools.git import (
     gh_get_ref,
 )
 from .tools.issue_state import gh_set_issue_state
+from .tools.issues import (
+    gh_get_issue,
+    gh_list_issues,
+    gh_list_labels,
+    gh_list_milestones,
+)
 from .tools.pr_reviews import gh_get_pr_review_state, gh_list_pr_reviews
 from .tools.pull_requests import (
     gh_get_pr,
