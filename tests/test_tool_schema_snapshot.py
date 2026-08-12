@@ -445,6 +445,7 @@ async def test_exact_tool_surface_snapshot() -> None:
         "ref",
         "expected_ref_sha",
         "resolved_ref_sha",
+        "matching_run_count",
         "run_id",
         "run_url",
         "run_status",
