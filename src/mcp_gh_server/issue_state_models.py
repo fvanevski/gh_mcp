@@ -23,8 +23,9 @@ class IssueStateTransitionResult(ExactWriteResult):
     reopened_at: str | None = Field(
         default=None,
         description=(
-            "Issue updated_at timestamp from authoritative readback when the final state "
-            "reason is reopened; GitHub issue objects expose no dedicated reopened_at field."
+            "GitHub updated_at timestamp associated with a verified reopen transition. "
+            "A confirmed mutation response is preferred; authoritative readback is the "
+            "fallback because GitHub issue objects expose no dedicated reopened_at field."
         ),
     )
     url: str
