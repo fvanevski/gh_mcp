@@ -61,6 +61,7 @@ from .tools.pull_requests import (
     gh_list_pr_files,
     gh_list_prs,
 )
+from .tools.release_exact import gh_create_release_exact
 from .tools.releases import gh_get_release, gh_list_releases
 from .tools.repositories import gh_get_file_contents, gh_get_repo, gh_list_repos
 from .tools.workflow_dispatch import gh_run_workflow_exact
@@ -207,6 +208,7 @@ __all__ = [
     "gh_create_milestone",
     "gh_create_pr",
     "gh_create_release",
+    "gh_create_release_exact",
     "gh_create_repo",
     "gh_edit_issue",
     "gh_edit_label",
