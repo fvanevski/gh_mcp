@@ -138,6 +138,22 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "tag_name", "name", "body", "draft", "prerelease", "target"},
         {"owner", "repo", "tag_name"},
     ),
+    "gh_create_release_exact": (
+        {
+            "owner",
+            "repo",
+            "tag_name",
+            "expected_target_sha",
+            "make_latest",
+            "name",
+            "body",
+            "draft",
+            "prerelease",
+            "expected_tag_absent",
+            "expected_release_absent",
+        },
+        {"owner", "repo", "tag_name", "expected_target_sha", "make_latest"},
+    ),
     "gh_list_workflows": (
         {"owner", "repo", "state", "per_page"},
         {"owner", "repo"},
@@ -371,7 +387,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 55
+    assert len(tools) == 56
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -428,6 +444,33 @@ async def test_exact_tool_surface_snapshot() -> None:
         "current_is_draft",
         "url",
     } == set(draft_state_output)
+
+    exact_release_schema = tools["gh_create_release_exact"].input_schema["properties"]
+    assert exact_release_schema["tag_name"]["maxLength"] == 1019
+    assert exact_release_schema["expected_target_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert exact_release_schema["make_latest"]["type"] == "boolean"
+    assert exact_release_schema["expected_tag_absent"]["default"] is True
+    assert exact_release_schema["expected_release_absent"]["default"] is True
+    exact_release_output = tools["gh_create_release_exact"].output_schema["properties"]
+    assert {
+        "precondition_checked",
+        "write_completed",
+        "readback_completed",
+        "state_matches_requested",
+        "warning",
+        "request_id",
+        "tag_name",
+        "expected_target_sha",
+        "resolved_target_sha",
+        "release_id",
+        "release_url",
+        "tag_commit_sha",
+        "release_name",
+        "is_draft",
+        "is_prerelease",
+        "make_latest",
+        "is_latest",
+    } == set(exact_release_output)
 
     exact_dispatch_schema = tools["gh_run_workflow_exact"].input_schema["properties"]
     assert exact_dispatch_schema["workflow_id"]["minimum"] == 1
