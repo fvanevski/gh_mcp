@@ -6,6 +6,7 @@ from typing import Any, get_type_hints
 
 from mcp_gh_server import server
 from mcp_gh_server.action_log_models import WorkflowJobLogs, WorkflowRunLogs
+from mcp_gh_server.artifact_content_models import ArtifactFileContent, ArtifactFilesPage
 from mcp_gh_server.compare_commits_models import CommitComparisonResult
 from mcp_gh_server.issue_state_models import IssueStateTransitionResult
 from mcp_gh_server.merge_requirements_models import PullRequestMergeRequirements
@@ -96,6 +97,8 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_get_run": WorkflowRun,
     "gh_list_run_artifacts": WorkflowArtifactsPage,
     "gh_get_artifact": WorkflowArtifact,
+    "gh_list_artifact_files": ArtifactFilesPage,
+    "gh_read_artifact_file": ArtifactFileContent,
     "gh_list_run_jobs": WorkflowJobsPage,
     "gh_get_failed_run_logs": WorkflowRunFailedLogs,
     "gh_get_job_logs": WorkflowJobLogs,
@@ -116,7 +119,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 58
+    assert len(EXPECTED_RETURN_MODELS) == 60
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)
