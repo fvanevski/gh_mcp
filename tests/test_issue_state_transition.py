@@ -366,9 +366,7 @@ async def test_wrong_reason_readback_is_not_verified_success() -> None:
 
 async def test_pull_request_target_is_rejected_before_mutation() -> None:
     pull_request = _snapshot(state="open", reason=None)
-    pull_request["pull_request"] = {
-        "url": "https://api.github.com/repos/octo/repo/pulls/18"
-    }
+    pull_request["pull_request"] = {"url": "https://api.github.com/repos/octo/repo/pulls/18"}
     client = IssueStateClient(read_results=[pull_request])
 
     with pytest.raises(RuntimeError, match="accepts issues only"):

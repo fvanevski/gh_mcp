@@ -124,9 +124,7 @@ def _validate_transition(
     if expected_state not in _VALID_STATES or new_state not in _VALID_STATES:
         raise ValueError("expected_state and new_state must be 'open' or 'closed'")
     if state_reason not in _VALID_REASONS:
-        raise ValueError(
-            "state_reason must be completed, not_planned, duplicate, or reopened"
-        )
+        raise ValueError("state_reason must be completed, not_planned, duplicate, or reopened")
     if expected_state == new_state:
         raise ValueError("expected_state and new_state must describe an actual state transition")
     if new_state == "closed" and state_reason not in _CLOSED_REASONS:
