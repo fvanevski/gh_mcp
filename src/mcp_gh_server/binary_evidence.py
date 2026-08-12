@@ -67,9 +67,7 @@ async def stream_governed_bytes(
     return (await client.governor.execute(policy, attempt)).metadata
 
 
-def _split_included_header(
-    buffered: bytearray,
-) -> tuple[int, dict[str, str], bytes] | None:
+def _split_included_header(buffered: bytearray) -> tuple[int, dict[str, str], bytes] | None:
     """Split one bounded ``gh api --include`` header block from raw body bytes."""
 
     boundaries = [
@@ -195,10 +193,7 @@ async def _stream_bytes_once(
     stderr = (await stderr_task).decode(errors="replace").strip()
     status_code = response_status or _status_from_stderr(stderr)
     metadata = (
-        _metadata_from_headers(
-            response_headers,
-            not_modified=response_status == 304,
-        )
+        _metadata_from_headers(response_headers, not_modified=response_status == 304)
         if include_headers
         else GitHubRequestMetadata()
     )
