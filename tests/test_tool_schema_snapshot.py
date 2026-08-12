@@ -31,6 +31,24 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "number", "expected_state", "new_state", "state_reason"},
         {"owner", "repo", "number", "expected_state", "new_state", "state_reason"},
     ),
+    "gh_set_pr_draft_state": (
+        {
+            "owner",
+            "repo",
+            "number",
+            "expected_head_sha",
+            "expected_is_draft",
+            "new_is_draft",
+        },
+        {
+            "owner",
+            "repo",
+            "number",
+            "expected_head_sha",
+            "expected_is_draft",
+            "new_is_draft",
+        },
+    ),
     "gh_list_prs": (
         {"owner", "repo", "state", "per_page"},
         {"owner", "repo"},
@@ -313,6 +331,7 @@ DESTRUCTIVE_WRITE_TOOLS = {
     "gh_run_workflow",
     "gh_edit_issue",
     "gh_set_issue_state",
+    "gh_set_pr_draft_state",
     "gh_upsert_label",
     "gh_edit_label",
     "gh_edit_pr",
@@ -347,7 +366,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 53
+    assert len(tools) == 54
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -383,6 +402,27 @@ async def test_exact_tool_surface_snapshot() -> None:
         "closed_at",
         "reopened_at",
     } <= set(issue_state_output)
+
+    draft_state_schema = tools["gh_set_pr_draft_state"].input_schema["properties"]
+    assert draft_state_schema["number"]["minimum"] == 1
+    assert draft_state_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert draft_state_schema["expected_is_draft"]["type"] == "boolean"
+    assert draft_state_schema["new_is_draft"]["type"] == "boolean"
+    draft_state_output = tools["gh_set_pr_draft_state"].output_schema["properties"]
+    assert {
+        "precondition_checked",
+        "write_completed",
+        "readback_completed",
+        "state_matches_requested",
+        "warning",
+        "request_id",
+        "number",
+        "previous_head_sha",
+        "current_head_sha",
+        "previous_is_draft",
+        "current_is_draft",
+        "url",
+    } == set(draft_state_output)
 
     reviews_schema = tools["gh_list_pr_reviews"].input_schema["properties"]
     assert reviews_schema["number"]["minimum"] == 1

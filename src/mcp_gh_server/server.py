@@ -51,6 +51,7 @@ from .tools.issues import (
     gh_list_labels,
     gh_list_milestones,
 )
+from .tools.pr_draft_state import gh_set_pr_draft_state
 from .tools.pr_reviews import gh_get_pr_review_state, gh_list_pr_reviews
 from .tools.pull_requests import (
     gh_get_pr,
@@ -246,6 +247,7 @@ __all__ = [
     "gh_search_repos",
     "gh_server_info",
     "gh_set_issue_state",
+    "gh_set_pr_draft_state",
     "gh_submit_pr_review",
     "gh_upsert_label",
     "gh_watch_run",
