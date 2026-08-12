@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, get_type_hints
 
 from mcp_gh_server import server
+from mcp_gh_server.action_log_models import WorkflowJobLogs, WorkflowRunLogs
 from mcp_gh_server.models import (
     BranchCreate,
     BranchCreateFromSha,
@@ -82,6 +83,8 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_get_artifact": WorkflowArtifact,
     "gh_list_run_jobs": WorkflowJobsPage,
     "gh_get_failed_run_logs": WorkflowRunFailedLogs,
+    "gh_get_job_logs": WorkflowJobLogs,
+    "gh_get_run_logs": WorkflowRunLogs,
     "gh_watch_run": WorkflowRunWatchResult,
     "gh_edit_issue": IssueEdit,
     "gh_list_labels": SearchResults,
@@ -98,7 +101,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 48
+    assert len(EXPECTED_RETURN_MODELS) == 50
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)

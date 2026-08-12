@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 import os
 import re
 import shlex
 import signal
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
@@ -29,6 +30,8 @@ from .serialization import to_json_value
 logger = logging.getLogger(__name__)
 
 _MAX_GITHUB_ERROR_DETAIL_CHARS = 4_000
+_STREAM_CHUNK_BYTES = 64 * 1024
+_STREAM_STDERR_RETAIN_BYTES = 64 * 1024
 _HTTP_STATUS_RE = re.compile(r"\bHTTP(?:/\S+)?\s+(\d{3})\b", re.IGNORECASE)
 _HTTP_ERROR_STATUS_RE = re.compile(r"\bHTTP\s+(\d{3})\b", re.IGNORECASE)
 _TRANSPORT_FAILURE_MARKERS = (
@@ -99,6 +102,7 @@ _API_FLAGS_WITH_VALUE = frozenset(
 _API_BOOLEAN_FLAGS = frozenset(
     {"-i", "--include", "--paginate", "--silent", "--slurp", "--verbose"}
 )
+_STREAM_FORBIDDEN_FLAGS = frozenset({"-i", "--include", "--paginate", "--slurp"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +169,123 @@ class GhClient:
             )
 
         return await self.governor.execute(policy, attempt)
+
+    async def stream_text(
+        self,
+        *args: str,
+        on_chunk: Callable[[str], None],
+        timeout: float | None = None,
+    ) -> GitHubRequestMetadata:
+        """Stream one governed read-only ``gh`` response into a synchronous text sink.
+
+        Streaming reads intentionally disable transparent retries because ``on_chunk`` may
+        already have consumed evidence from a failed attempt. The operation still enters
+        the shared governor for serialization and rate-limit state.
+        """
+
+        if _infer_request_kind(args) is not GitHubRequestKind.READ:
+            raise ValueError("stream_text accepts only commands classified as read-only")
+        if any(flag in _STREAM_FORBIDDEN_FLAGS for flag in args):
+            raise ValueError("stream_text does not support include/paginate/slurp output framing")
+
+        policy = GitHubRequestPolicy(kind=GitHubRequestKind.READ, retry_safe=False)
+
+        async def attempt() -> GitHubRequestResult[None]:
+            return await self._stream_text_once(
+                *args,
+                on_chunk=on_chunk,
+                timeout=timeout,
+                policy=policy,
+            )
+
+        return (await self.governor.execute(policy, attempt)).metadata
+
+    async def _stream_text_once(
+        self,
+        *args: str,
+        on_chunk: Callable[[str], None],
+        timeout: float | None,
+        policy: GitHubRequestPolicy,
+    ) -> GitHubRequestResult[None]:
+        """Execute one read command while incrementally decoding stdout."""
+
+        cmd = ["gh", *args]
+        rendered = _redacted_command(cmd)
+        logger.debug("Running streaming gh command: %s", rendered)
+        command_timeout = timeout if timeout is not None else self.settings.command_timeout_seconds
+        env = self._environment()
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            start_new_session=os.name == "posix",
+        )
+        stdout = process.stdout
+        raw_stderr = process.stderr
+        assert stdout is not None
+        assert raw_stderr is not None
+        stderr_task = asyncio.create_task(_drain_bounded(raw_stderr, _STREAM_STDERR_RETAIN_BYTES))
+
+        async def consume_stdout() -> None:
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            while True:
+                chunk = await stdout.read(_STREAM_CHUNK_BYTES)
+                if not chunk:
+                    break
+                text = decoder.decode(chunk)
+                if text:
+                    on_chunk(text)
+            final_text = decoder.decode(b"", final=True)
+            if final_text:
+                on_chunk(final_text)
+            await process.wait()
+
+        try:
+            await asyncio.wait_for(consume_stdout(), timeout=command_timeout)
+        except TimeoutError as exc:
+            await _terminate_process(process)
+            await stderr_task
+            raise GitHubRequestError(
+                f"gh command timed out after {command_timeout:g}s: {rendered}",
+                retryable=True,
+                ambiguous=policy.kind is GitHubRequestKind.WRITE,
+            ) from exc
+        except asyncio.CancelledError:
+            await _terminate_process(process)
+            await stderr_task
+            raise
+        except BaseException:
+            await _terminate_process(process)
+            await stderr_task
+            raise
+
+        stderr = (await stderr_task).decode(errors="replace").strip()
+        status_code = _status_from_stderr(stderr)
+        metadata = GitHubRequestMetadata()
+        if process.returncode != 0:
+            rate_limited = _is_rate_limited(status_code, "", stderr, metadata)
+            retryable = _is_retryable_failure(status_code, stderr)
+            message = (
+                f"gh command failed (exit {process.returncode}): {stderr or 'no stderr output'}"
+            )
+            if rate_limited:
+                message += (
+                    "; GitHub rate limit detected; retries are stopped and further requests "
+                    "remain blocked until the applicable reset, retry, or fallback cooldown"
+                )
+            raise GitHubRequestError(
+                message,
+                status_code=status_code,
+                retryable=retryable,
+                ambiguous=False,
+                rate_limited=rate_limited,
+                metadata=metadata,
+            )
+
+        return GitHubRequestResult(value=None, metadata=metadata)
 
     async def _run_once(
         self,
@@ -589,6 +710,23 @@ def _github_error_detail(stdout: str) -> str | None:
     if len(rendered) <= _MAX_GITHUB_ERROR_DETAIL_CHARS:
         return rendered
     return rendered[: _MAX_GITHUB_ERROR_DETAIL_CHARS - 1] + "…"
+
+
+async def _drain_bounded(
+    stream: asyncio.StreamReader,
+    retain_bytes: int,
+) -> bytes:
+    """Drain a stream completely while retaining at most its first bounded bytes."""
+
+    retained = bytearray()
+    while True:
+        chunk = await stream.read(_STREAM_CHUNK_BYTES)
+        if not chunk:
+            break
+        remaining = retain_bytes - len(retained)
+        if remaining > 0:
+            retained.extend(chunk[:remaining])
+    return bytes(retained)
 
 
 async def _terminate_process(process: asyncio.subprocess.Process) -> None:

@@ -158,6 +158,32 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "run_id", "attempt", "max_bytes"},
         {"owner", "repo", "run_id"},
     ),
+    "gh_get_job_logs": (
+        {
+            "owner",
+            "repo",
+            "job_id",
+            "attempt",
+            "max_bytes",
+            "tail_bytes",
+            "start_marker",
+            "end_marker",
+        },
+        {"owner", "repo", "job_id", "attempt"},
+    ),
+    "gh_get_run_logs": (
+        {
+            "owner",
+            "repo",
+            "run_id",
+            "attempt",
+            "max_bytes",
+            "tail_bytes",
+            "start_marker",
+            "end_marker",
+        },
+        {"owner", "repo", "run_id", "attempt"},
+    ),
     "gh_watch_run": (
         {"owner", "repo", "run_id", "interval", "exit_status", "timeout_seconds"},
         {"owner", "repo", "run_id"},
@@ -261,6 +287,8 @@ READ_ONLY_TOOLS = {
     "gh_watch_run",
     "gh_list_run_jobs",
     "gh_get_failed_run_logs",
+    "gh_get_job_logs",
+    "gh_get_run_logs",
     "gh_list_labels",
     "gh_list_milestones",
 }
@@ -304,7 +332,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 48
+    assert len(tools) == 50
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -350,6 +378,19 @@ async def test_exact_tool_surface_snapshot() -> None:
     artifact_output = tools["gh_get_artifact"].output_schema["properties"]
     assert artifact_output["workflow_head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
     assert artifact_output["expired"]["type"] == "boolean"
+
+    for name in ("gh_get_job_logs", "gh_get_run_logs"):
+        schema = tools[name].input_schema["properties"]
+        assert schema["attempt"]["minimum"] == 1
+        assert schema["max_bytes"]["anyOf"][0]["maximum"] == 1_000_000
+        assert schema["tail_bytes"]["anyOf"][0]["maximum"] == 1_000_000
+        assert schema["start_marker"]["anyOf"][0]["minLength"] == 1
+        output = tools[name].output_schema["properties"]
+        assert output["text"]["type"] == "string"
+        assert output["truncated"]["type"] == "boolean"
+        assert output["sha256"]["pattern"] == r"^[0-9a-f]{64}$"
+    assert tools["gh_get_job_logs"].input_schema["properties"]["job_id"]["minimum"] == 1
+    assert tools["gh_get_run_logs"].input_schema["properties"]["run_id"]["minimum"] == 1
 
     for name, description in EXPECTED_DESCRIPTIONS.items():
         assert tools[name].description == description

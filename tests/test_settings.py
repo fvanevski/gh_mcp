@@ -28,6 +28,10 @@ class TestSettingsValidation:
         assert settings.default_max_results == 30
         assert settings.hard_max_results == 100
 
+    def test_action_log_job_cap_must_align_to_github_page_size(self) -> None:
+        with pytest.raises(ValidationError, match="multiple of 100"):
+            Settings(max_action_log_jobs=150)
+
     def test_default_values(self) -> None:
         settings = Settings(
             _env_file=None,
@@ -49,6 +53,8 @@ class TestSettingsValidation:
         assert settings.max_pr_file_patch_bytes == 8_000
         assert settings.max_pr_commit_message_bytes == 4_000
         assert settings.max_failed_run_log_bytes == 500_000
+        assert settings.max_action_log_bytes == 500_000
+        assert settings.max_action_log_jobs == 100
         assert settings.transport == "stdio"
         assert settings.log_level == "INFO"
         assert settings.http_port == 8766

@@ -24,6 +24,7 @@ from .tooling import (
     app_lifespan,
     mcp,
 )
+from .tools.action_logs import gh_get_job_logs, gh_get_run_logs
 from .tools.actions import (
     gh_get_failed_run_logs,
     gh_get_run,
@@ -211,6 +212,7 @@ __all__ = [
     "gh_get_failed_run_logs",
     "gh_get_file_contents",
     "gh_get_issue",
+    "gh_get_job_logs",
     "gh_get_pr",
     "gh_get_pr_checks",
     "gh_get_pr_diff",
@@ -218,6 +220,7 @@ __all__ = [
     "gh_get_release",
     "gh_get_repo",
     "gh_get_run",
+    "gh_get_run_logs",
     "gh_get_workflow",
     "gh_info",
     "gh_list_issues",

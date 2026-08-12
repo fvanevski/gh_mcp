@@ -6,7 +6,7 @@ direct JSON output or a post-write readback.
 
 ## Tools
 
-### Read-only (31)
+### Read-only (33)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -39,6 +39,10 @@ direct JSON output or a post-write readback.
 - `gh_get_pr_checks`: return bounded CI check summaries pinned to an exact PR revision.
 - `gh_list_run_jobs`: list one bounded page of jobs and steps for an exact run attempt.
 - `gh_get_failed_run_logs`: return bounded failed-step logs for an exact run attempt.
+- `gh_get_job_logs`: return bounded full log evidence for one exact job and explicit
+  run attempt, with literal tail/marker selectors and complete-source SHA-256.
+- `gh_get_run_logs`: return bounded full log evidence for one exact run attempt, with
+  literal tail/marker selectors and complete-source SHA-256.
 - `gh_list_labels`: list labels in a repository.
 - `gh_list_milestones`: list milestones in a repository.
 - `gh_get_file_contents`: read a complete file at an exact branch, tag, or commit ref.
@@ -350,30 +354,37 @@ Use the focused CI tools instead of inferring a failure from run metadata:
 3. Use the check link or `gh_list_runs` to identify the positive integer run ID.
 4. Call `gh_list_run_jobs`, optionally with an exact attempt number, to retrieve one
    page of jobs and their step status/conclusion metadata.
-5. Call `gh_get_failed_run_logs` for the same run attempt. Inspect `truncated`,
-   `bytes_returned`, `total_bytes`, and `sha256` before claiming the returned text is
-   complete.
+5. For failed-step-only evidence, call `gh_get_failed_run_logs` for the same attempt.
+   For successful or complete job/run evidence, call `gh_get_job_logs` or
+   `gh_get_run_logs` with an explicit attempt and inspect the returned exact identity.
+6. Before claiming log evidence is complete, inspect `truncated`, `bytes_returned`,
+   `total_bytes`, `warning`, and `sha256`. Tail and marker selectors intentionally
+   produce incomplete evidence relative to the complete retrieved source log.
 
-All three tools are explicitly read-only, idempotent, and open-world. They expose no
-watch, rerun, cancel, delete, dispatch, browser, generic-command, approval, or
-elicitation option. Repository identifiers, PR/run IDs, attempts, pages, and output
-sizes are schema constrained. Every `gh` subprocess remains asynchronous and
+All five diagnostic tools are explicitly read-only, idempotent, and open-world. They
+expose no watch, rerun, cancel, delete, dispatch, browser, generic-command, approval,
+or elicitation option. Repository identifiers, PR/run/job IDs, attempts, pages, and
+output sizes are schema constrained. Every `gh` subprocess remains asynchronous and
 noninteractive with detached stdin.
 
 `gh_get_pr_checks` reads and verifies the PR SHA pair around the checks request so a
 force-push cannot silently mix revisions. Jobs and logs first resolve a concrete run
-attempt and head SHA, operate on that exact attempt, and verify it again before
-returning. Job pages contain at most 100 jobs. Failed logs are bounded by both the
-request and deployment setting:
+attempt and head SHA, operate on that exact attempt, and verify immutable identity
+again before returning. Job pages contain at most 100 jobs. Failed logs are bounded
+by both the request and their deployment setting; general job/run logs use a separate
+bounded-evidence cap:
 
 ```dotenv
 MCP_GH_MAX_FAILED_RUN_LOG_BYTES=500000
+MCP_GH_MAX_ACTION_LOG_BYTES=500000
 ```
 
-The deployment setting is capped at 1,000,000 UTF-8 bytes. Empty failed-log output is
-valid when GitHub reports no failed steps. Authentication, retention expiry, missing
-logs, or malformed output are returned as ordinary tool errors; the namespace remains
-available for subsequent reads.
+Both deployment settings are capped at 1,000,000 UTF-8 bytes. Empty log output is
+valid. Authentication, retention expiry, missing logs, or malformed output are
+returned as ordinary tool errors; the namespace remains available for subsequent
+reads. `gh_get_job_logs` and `gh_get_run_logs` use only literal tail/marker selectors;
+no regex or generic shell filtering is exposed. See `docs/gh_action_logs.md` for the
+complete selection, byte-accounting, and digest contract.
 
 ## Write-command policy
 
