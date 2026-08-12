@@ -501,6 +501,13 @@ async def gh_run_workflow_exact(
         }
         if inputs:
             payload["inputs"] = inputs
+
+        # Reserve before starting the mutation. If cancellation or another BaseException
+        # interrupts transport, a subsequent same-key call must remain fail-closed.
+        _WORKFLOW_DISPATCH_RESERVATIONS[key] = _WorkflowDispatchReservation(
+            run_id=None,
+            outcome_unknown=True,
+        )
         result = await run_api_json_write_with_metadata(
             app.client,
             "POST",
@@ -514,6 +521,15 @@ async def gh_run_workflow_exact(
                 "GitHub confirmed the workflow dispatch but did not return a valid "
                 f"return_run_details identity: {exc}. The created run is not guessed from "
                 "filtered discovery."
+            )
+            _WORKFLOW_DISPATCH_RESERVATIONS[key] = _WorkflowDispatchReservation(
+                run_id=None,
+                outcome_unknown=False,
+            )
+        else:
+            _WORKFLOW_DISPATCH_RESERVATIONS[key] = _WorkflowDispatchReservation(
+                run_id=dispatch_receipt.run_id,
+                outcome_unknown=False,
             )
         return result
 
@@ -555,7 +571,9 @@ async def gh_run_workflow_exact(
                 and readback_result.run.event == "workflow_dispatch"
             ),
         )
-        if execution.outcome.write_completed is not False:
+        if execution.outcome.write_completed is False:
+            _WORKFLOW_DISPATCH_RESERVATIONS.pop(key, None)
+        else:
             _WORKFLOW_DISPATCH_RESERVATIONS[key] = _WorkflowDispatchReservation(
                 run_id=dispatch_receipt.run_id if dispatch_receipt is not None else None,
                 outcome_unknown=execution.outcome.write_completed is None,
