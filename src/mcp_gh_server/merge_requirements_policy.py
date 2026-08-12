@@ -29,7 +29,7 @@ class MergePolicy:
     up_to_date_required: bool = False
     allowed_merge_methods: set[MergeMethod] = field(default_factory=lambda: set(_MERGE_METHODS))
     linear_history_required: bool = False
-    unmodeled_required_reviewers: bool = False
+    unmodeled_policy_requirements: set[str] = field(default_factory=set)
 
 
 def _read_bool(mapping: dict[str, Any], key: str, *, label: str) -> bool:
@@ -156,7 +156,7 @@ def _apply_classic_protection(policy: MergePolicy, protection: dict[str, Any]) -
 
 
 def _apply_ruleset_rules(policy: MergePolicy, rules: list[Any]) -> None:
-    """Layer all visible active rulesets using GitHub's most-restrictive semantics."""
+    """Layer modeled active rules and record every unmodeled rule fail-closed."""
 
     for raw_rule in rules:
         if not isinstance(raw_rule, dict):
@@ -195,6 +195,10 @@ def _apply_ruleset_rules(policy: MergePolicy, rules: list[Any]) -> None:
             continue
 
         if rule_type != "pull_request":
+            # The active-rules endpoint can add new rule types over time. Any rule this
+            # aggregate does not explicitly model is treated as material uncertainty,
+            # rather than silently interpreted as "no merge requirement".
+            policy.unmodeled_policy_requirements.add(f"ruleset:{rule_type}")
             continue
 
         parameters = raw_rule.get("parameters")
@@ -242,7 +246,7 @@ def _apply_ruleset_rules(policy: MergePolicy, rules: list[Any]) -> None:
         if not isinstance(required_reviewers, list):
             raise RuntimeError("GitHub returned malformed ruleset required reviewers")
         if required_reviewers:
-            policy.unmodeled_required_reviewers = True
+            policy.unmodeled_policy_requirements.add("pull_request.required_reviewers")
 
 
 def _visibility_warning(label: str, error: GitHubRequestError) -> str:
@@ -348,7 +352,7 @@ async def read_effective_merge_policy(
     repo: str,
     base_ref: str,
 ) -> tuple[MergePolicy | None, bool, list[str]]:
-    """Read and combine rulesets plus classic branch protection conservatively."""
+    """Read and combine only fully modeled rulesets plus classic protection."""
 
     rules, rules_complete, warnings = await _read_active_rules(app, owner, repo, base_ref)
     classic, classic_complete, classic_warnings = await _read_classic_protection(
@@ -365,10 +369,11 @@ async def read_effective_merge_policy(
     _apply_ruleset_rules(policy, rules)
     if classic is not None:
         _apply_classic_protection(policy, classic)
-    if policy.unmodeled_required_reviewers:
+    if policy.unmodeled_policy_requirements:
+        unmodeled = ", ".join(sorted(policy.unmodeled_policy_requirements))
         warnings.append(
-            "Active pull-request policy contains required reviewers that this aggregate "
-            "cannot completely represent; merge-policy evidence is incomplete."
+            "Active ruleset policy contains requirements this aggregate does not model "
+            f"({unmodeled}); merge-policy evidence is incomplete."
         )
         return None, False, warnings
     if policy.linear_history_required:

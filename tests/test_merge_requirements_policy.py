@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
 from mcp_gh_server.merge_requirements_policy import read_effective_merge_policy
 from mcp_gh_server.server import AppContext
 from mcp_gh_server.settings import Settings
@@ -62,7 +64,36 @@ async def test_required_reviewers_make_policy_evidence_incomplete() -> None:
     assert policy is None
     assert complete is False
     assert len(warnings) == 1
-    assert "required reviewers" in warnings[0]
+    assert "pull_request.required_reviewers" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "rule_type",
+    [
+        "required_deployments",
+        "merge_queue",
+        "workflows",
+        "code_scanning",
+        "future_merge_requirement",
+    ],
+)
+async def test_unmodeled_active_rule_types_make_policy_evidence_incomplete(
+    rule_type: str,
+) -> None:
+    client = FakeGhClient([[{"type": rule_type, "parameters": {}}], {"protected": False}])
+
+    policy, complete, warnings = await read_effective_merge_policy(
+        _app(client),
+        "octo",
+        "repo",
+        "main",
+    )
+
+    assert policy is None
+    assert complete is False
+    assert len(warnings) == 1
+    assert f"ruleset:{rule_type}" in warnings[0]
+    assert "merge-policy evidence is incomplete" in warnings[0]
 
 
 async def test_exact_active_rule_bound_is_not_reported_as_truncated() -> None:
