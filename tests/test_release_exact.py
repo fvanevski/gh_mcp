@@ -146,6 +146,7 @@ def _successful_reads(
     release_id: int = 17,
     prerelease: bool = True,
     latest_release_id: int = 99,
+    tag_sha: str | None = None,
 ) -> list[Any]:
     return [
         _commit(sha),
@@ -153,7 +154,7 @@ def _successful_reads(
         *_missing_release(),
         _commit(sha),
         _release(release_id, prerelease=prerelease),
-        _tag_ref(sha),
+        _tag_ref(tag_sha or sha),
         _release(latest_release_id, tag="v0.9.0", name="v0.9.0", body="Previous"),
     ]
 
@@ -288,8 +289,24 @@ async def test_release_404_is_not_absence_when_release_read_probe_is_forbidden()
     assert client.payloads == []
 
 
+async def test_release_specific_write_gate_denies_before_any_github_request() -> None:
+    client = ReleaseExactClient()
+
+    with pytest.raises(RuntimeError, match="MCP_GH_ALLOW_RELEASE_CREATION"):
+        await gh_create_release_exact(
+            "octo",
+            "repo",
+            "v1.0.0",
+            _sha(7),
+            False,
+            ctx=_context(client, release_creation_enabled=False),
+        )
+
+    assert client.calls == []
+
+
 async def test_successful_prerelease_uses_exact_sha_and_explicit_non_latest_readback() -> None:
-    expected = _sha(7)
+    expected = _sha(8)
     client = ReleaseExactClient(
         read_results=_successful_reads(expected),
         write_results=[
@@ -338,8 +355,34 @@ async def test_successful_prerelease_uses_exact_sha_and_explicit_non_latest_read
     ]
 
 
+async def test_successful_write_with_wrong_tag_target_reports_semantic_mismatch_without_replay() -> None:
+    expected = _sha(9)
+    client = ReleaseExactClient(
+        read_results=_successful_reads(expected, tag_sha=_sha(10)),
+        write_results=[GitHubRequestResult(value=_release(17, prerelease=True))],
+    )
+
+    result = await gh_create_release_exact(
+        "octo",
+        "repo",
+        "v1.0.0",
+        expected,
+        False,
+        ctx=_context(client),
+        prerelease=True,
+    )
+
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.tag_commit_sha == _sha(10)
+    assert result.warning is not None
+    assert "resulting state does not match the requested state" in result.warning
+    assert [kind for kind, _, _ in client.calls].count("write") == 1
+
+
 async def test_ambiguous_write_is_never_replayed_and_matching_readback_remains_unknown() -> None:
-    expected = _sha(8)
+    expected = _sha(11)
     client = ReleaseExactClient(
         read_results=_successful_reads(expected),
         write_results=[
@@ -383,7 +426,7 @@ async def test_latest_true_is_rejected_for_prerelease_before_any_github_request(
             "octo",
             "repo",
             "v1.0.0-rc1",
-            _sha(9),
+            _sha(12),
             True,
             ctx=_context(client),
             prerelease=True,
