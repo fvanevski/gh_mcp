@@ -51,6 +51,7 @@ from .tools.issues import (
     gh_list_labels,
     gh_list_milestones,
 )
+from .tools.merge_requirements import gh_get_merge_requirements
 from .tools.pr_draft_state import gh_set_pr_draft_state
 from .tools.pr_reviews import gh_get_pr_review_state, gh_list_pr_reviews
 from .tools.pull_requests import (
@@ -219,6 +220,7 @@ __all__ = [
     "gh_get_file_contents",
     "gh_get_issue",
     "gh_get_job_logs",
+    "gh_get_merge_requirements",
     "gh_get_pr",
     "gh_get_pr_checks",
     "gh_get_pr_diff",
