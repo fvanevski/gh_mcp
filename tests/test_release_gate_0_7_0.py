@@ -48,8 +48,7 @@ def test_release_versions_and_lockfile_agree() -> None:
     editable_packages = [
         package
         for package in lock["package"]
-        if package.get("name") == "mcp-gh-server"
-        and package.get("source") == {"editable": "."}
+        if package.get("name") == "mcp-gh-server" and package.get("source") == {"editable": "."}
     ]
 
     assert __version__ == EXPECTED_VERSION
@@ -70,7 +69,7 @@ async def test_release_tool_inventory_and_non_goals() -> None:
     assert len(tools) == EXPECTED_TOOL_COUNT
     assert len(read_only) == EXPECTED_READ_ONLY_COUNT
     assert len(tools) - len(read_only) == EXPECTED_WRITE_COUNT
-    assert EXPECTED_PHASE_2_TOOLS <= tools.keys()
+    assert tools.keys() >= EXPECTED_PHASE_2_TOOLS
     assert FORBIDDEN_PUBLIC_TOOLS.isdisjoint(tools)
 
 
