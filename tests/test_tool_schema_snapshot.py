@@ -27,6 +27,10 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "title", "body", "labels", "assignees"},
         {"owner", "repo", "title"},
     ),
+    "gh_set_issue_state": (
+        {"owner", "repo", "number", "expected_state", "new_state", "state_reason"},
+        {"owner", "repo", "number", "expected_state", "new_state", "state_reason"},
+    ),
     "gh_list_prs": (
         {"owner", "repo", "state", "per_page"},
         {"owner", "repo"},
@@ -298,6 +302,7 @@ DESTRUCTIVE_WRITE_TOOLS = {
     "gh_commit_files",
     "gh_run_workflow",
     "gh_edit_issue",
+    "gh_set_issue_state",
     "gh_upsert_label",
     "gh_edit_label",
     "gh_edit_pr",
@@ -332,7 +337,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 50
+    assert len(tools) == 51
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -343,6 +348,31 @@ async def test_exact_tool_surface_snapshot() -> None:
         assert tool.annotations.destructive_hint is (name in DESTRUCTIVE_WRITE_TOOLS)
         assert tool.annotations.idempotent_hint is (name in READ_ONLY_TOOLS)
         assert tool.annotations.open_world_hint is (name != "gh_server_info")
+
+    issue_state_schema = tools["gh_set_issue_state"].input_schema["properties"]
+    assert issue_state_schema["number"]["minimum"] == 1
+    assert issue_state_schema["expected_state"]["enum"] == ["open", "closed"]
+    assert issue_state_schema["new_state"]["enum"] == ["open", "closed"]
+    assert issue_state_schema["state_reason"]["enum"] == [
+        "completed",
+        "not_planned",
+        "duplicate",
+        "reopened",
+    ]
+    issue_state_output = tools["gh_set_issue_state"].output_schema["properties"]
+    assert {
+        "precondition_checked",
+        "write_completed",
+        "readback_completed",
+        "state_matches_requested",
+        "warning",
+        "request_id",
+        "previous_state",
+        "new_state",
+        "state_reason",
+        "closed_at",
+        "reopened_at",
+    } <= set(issue_state_output)
 
     runs_schema = tools["gh_list_runs"].input_schema["properties"]
     assert runs_schema["workflow_id"]["anyOf"][0]["minimum"] == 1
