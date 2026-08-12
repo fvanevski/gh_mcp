@@ -34,6 +34,11 @@ _STREAM_CHUNK_BYTES = 64 * 1024
 _STREAM_STDERR_RETAIN_BYTES = 64 * 1024
 _HTTP_STATUS_RE = re.compile(r"\bHTTP(?:/\S+)?\s+(\d{3})\b", re.IGNORECASE)
 _HTTP_ERROR_STATUS_RE = re.compile(r"\bHTTP\s+(\d{3})\b", re.IGNORECASE)
+_GRAPHQL_OPERATION_RE = re.compile(
+    r"^\s*(?:#[^\r\n]*(?:\r?\n|$)\s*)*(query|mutation|subscription)\b",
+    re.IGNORECASE,
+)
+_GRAPHQL_NON_QUERY_OPERATION_RE = re.compile(r"\b(?:mutation|subscription)\b", re.IGNORECASE)
 _TRANSPORT_FAILURE_MARKERS = (
     "connection reset",
     "connection refused",
@@ -446,17 +451,18 @@ def _request_policy(args: tuple[str, ...]) -> GitHubRequestPolicy:
 
 
 def _infer_request_kind(args: tuple[str, ...]) -> GitHubRequestKind:
-    """Classify known reads; unknown commands fail closed as non-retryable writes."""
+    """Classify proven reads; unknown or potentially mutating commands fail closed."""
 
     if not args:
         return GitHubRequestKind.WRITE
     command = args[0]
     if command == "api":
-        return (
-            GitHubRequestKind.READ
-            if _api_method(args) in {"GET", "HEAD"}
-            else GitHubRequestKind.WRITE
-        )
+        method = _api_method(args)
+        if method in {"GET", "HEAD"}:
+            return GitHubRequestKind.READ
+        if method == "POST" and _graphql_document_is_read_only_query(args):
+            return GitHubRequestKind.READ
+        return GitHubRequestKind.WRITE
     if command == "version":
         return GitHubRequestKind.READ
     if len(args) >= 2 and args[1] in _READ_SUBCOMMANDS.get(command, frozenset()):
@@ -487,6 +493,59 @@ def _api_endpoint_index(args: tuple[str, ...]) -> int | None:
             return None
         return index
     return None
+
+
+def _api_field_values(args: tuple[str, ...], field_name: str) -> list[str]:
+    """Return explicit gh-api field values without reading indirect input files."""
+
+    values: list[str] = []
+    index = 1
+    while index < len(args):
+        arg = args[index]
+        raw_field: str | None = None
+        if arg in {"-F", "--field", "-f", "--raw-field"}:
+            if index + 1 >= len(args):
+                return []
+            raw_field = args[index + 1]
+            index += 2
+        elif arg.startswith("--field=") or arg.startswith("--raw-field="):
+            raw_field = arg.split("=", 1)[1]
+            index += 1
+        elif arg.startswith("-F") and arg != "-F":
+            raw_field = arg[2:]
+            index += 1
+        elif arg.startswith("-f") and arg != "-f":
+            raw_field = arg[2:]
+            index += 1
+        else:
+            index += 1
+            continue
+
+        key, separator, value = raw_field.partition("=")
+        if separator and key == field_name:
+            values.append(value)
+    return values
+
+
+def _graphql_document_is_read_only_query(args: tuple[str, ...]) -> bool:
+    """Recognize only explicit GraphQL query documents; ambiguous forms fail closed."""
+
+    endpoint_index = _api_endpoint_index(args)
+    if endpoint_index is None or args[endpoint_index].casefold() != "graphql":
+        return False
+
+    query_values = _api_field_values(args, "query")
+    if len(query_values) != 1:
+        return False
+    document = query_values[0]
+    operation = _GRAPHQL_OPERATION_RE.match(document)
+    if operation is None or operation.group(1).casefold() != "query":
+        return False
+
+    # False negatives are intentional: if a query document contains a token that could
+    # denote a mutation/subscription operation, retain conservative write semantics.
+    remainder = document[operation.end() :]
+    return _GRAPHQL_NON_QUERY_OPERATION_RE.search(remainder) is None
 
 
 def _api_method(args: tuple[str, ...]) -> str:
