@@ -101,7 +101,8 @@ def _validate_transition(expected_is_draft: bool, new_is_draft: bool) -> None:
         "Destructive write: transition exactly one pull request between draft and ready-for-review "
         "only when its current head SHA and draft state match the supplied preconditions. The "
         "operation changes no unrelated pull-request metadata, is attempted once, and "
-        "authoritative readback verifies both unchanged head identity and the requested draft state."
+        "authoritative readback verifies both unchanged head identity and the requested "
+        "draft state."
     ),
     annotations=MUTATE_EXTERNAL,
 )
