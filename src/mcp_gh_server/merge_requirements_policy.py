@@ -30,6 +30,7 @@ class MergePolicy:
         default_factory=lambda: set(_MERGE_METHODS)
     )
     linear_history_required: bool = False
+    unmodeled_required_reviewers: bool = False
 
 
 def _read_bool(mapping: dict[str, Any], key: str, *, label: str) -> bool:
@@ -226,6 +227,11 @@ def _apply_ruleset_rules(policy: MergePolicy, rules: list[Any]) -> None:
             "required_review_thread_resolution",
             label="ruleset conversation-resolution requirement",
         )
+        required_reviewers = parameters.get("required_reviewers", [])
+        if not isinstance(required_reviewers, list):
+            raise RuntimeError("GitHub returned malformed ruleset required reviewers")
+        if required_reviewers:
+            policy.unmodeled_required_reviewers = True
 
 
 def _visibility_warning(label: str, error: GitHubRequestError) -> str:
@@ -348,6 +354,12 @@ async def read_effective_merge_policy(
     _apply_ruleset_rules(policy, rules)
     if classic is not None:
         _apply_classic_protection(policy, classic)
+    if policy.unmodeled_required_reviewers:
+        warnings.append(
+            "Active pull-request policy contains required reviewers that this aggregate "
+            "cannot completely represent; merge-policy evidence is incomplete."
+        )
+        return None, False, warnings
     if policy.linear_history_required:
         policy.allowed_merge_methods.discard("merge")
     return policy, True, warnings
