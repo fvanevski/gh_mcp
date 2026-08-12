@@ -153,7 +153,9 @@ async def test_compare_preserves_all_supported_statuses_and_merge_base(
     )
     client = FakeGhClient([payload])
 
-    result = await gh_compare_commits(base_sha=base_sha, head_sha=head_sha, owner="octo", repo="repo", ctx=_context(client))
+    result = await gh_compare_commits(
+        base_sha=base_sha, head_sha=head_sha, owner="octo", repo="repo", ctx=_context(client)
+    )
 
     assert result.base_sha == base_sha
     assert result.head_sha == head_sha

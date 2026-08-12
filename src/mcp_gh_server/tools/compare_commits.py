@@ -17,6 +17,7 @@ from ..compare_commits_models import (
     ComparisonStatus,
 )
 from ..evidence import bound_text_evidence
+from ..models import CompareCommitsInput
 from ..request_governor import GitHubRequestError
 from ..tooling import (
     OWNER_RE,
@@ -359,9 +360,15 @@ async def gh_compare_commits(
     """Compare two immutable commits while preserving bounded-evidence semantics."""
 
     logger.info("MCP tool invocation reached server: tool=gh_compare_commits")
-    validate_repository(owner, repo)
-    normalized_base = base_sha.casefold()
-    normalized_head = head_sha.casefold()
+    request = CompareCommitsInput(
+        owner=owner,
+        repo=repo,
+        base_sha=base_sha,
+        head_sha=head_sha,
+    )
+    validate_repository(request.owner, request.repo)
+    normalized_base = request.base_sha.casefold()
+    normalized_head = request.head_sha.casefold()
     app = app_from_context(ctx)
 
     commit_limit, commit_warnings = _resolve_limit(
