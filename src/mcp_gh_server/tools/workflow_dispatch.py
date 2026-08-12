@@ -44,6 +44,12 @@ class _WorkflowDispatchRun:
     event: str
 
 
+@dataclass(frozen=True, slots=True)
+class _WorkflowDispatchReadback:
+    matching_run_count: int
+    run: _WorkflowDispatchRun | None
+
+
 def _workflow_inputs(fields: list[str] | None) -> dict[str, str]:
     """Convert the established key=value field surface into one deterministic JSON object."""
 
@@ -127,8 +133,8 @@ async def _read_matching_dispatch(
     expected_ref_sha: str,
     *,
     ctx: Context[AppContext],
-) -> _WorkflowDispatchRun:
-    """Read exactly one matching dispatch run or leave the write outcome unverified."""
+) -> _WorkflowDispatchReadback:
+    """Read the exact workflow/head/event run set without converting absence into read failure."""
 
     runs = await gh_list_runs(
         owner,
@@ -141,13 +147,12 @@ async def _read_matching_dispatch(
         page=1,
     )
     if runs.total_count == 0:
+        return _WorkflowDispatchReadback(matching_run_count=0, run=None)
+    if runs.total_count > 1:
+        return _WorkflowDispatchReadback(matching_run_count=runs.total_count, run=None)
+    if len(runs.items) != 1:
         raise RuntimeError(
-            "workflow dispatch is not yet visible through exact workflow/head/event readback"
-        )
-    if runs.total_count != 1 or len(runs.items) != 1:
-        raise RuntimeError(
-            "workflow dispatch readback is ambiguous because multiple exact workflow/head/event "
-            "runs are visible"
+            "GitHub reported one exact workflow dispatch run but returned no unique readback item"
         )
 
     raw = runs.items[0]
@@ -169,12 +174,15 @@ async def _read_matching_dispatch(
     if not isinstance(event, str) or not event:
         raise RuntimeError("GitHub returned no workflow run event during dispatch readback")
 
-    return _WorkflowDispatchRun(
-        run_id=run_id,
-        url=url,
-        status=status,
-        head_sha=head_sha.casefold(),
-        event=event,
+    return _WorkflowDispatchReadback(
+        matching_run_count=1,
+        run=_WorkflowDispatchRun(
+            run_id=run_id,
+            url=url,
+            status=status,
+            head_sha=head_sha.casefold(),
+            event=event,
+        ),
     )
 
 
@@ -284,7 +292,7 @@ async def gh_run_workflow_exact(
             payload,
         )
 
-    async def readback() -> _WorkflowDispatchRun:
+    async def readback() -> _WorkflowDispatchReadback:
         return await _read_matching_dispatch(
             owner,
             repo,
@@ -300,18 +308,23 @@ async def gh_run_workflow_exact(
         precondition=precondition,
         write=write,
         readback=readback,
-        state_matches_requested=lambda run: (
-            run.head_sha == normalized_expected_sha and run.event == "workflow_dispatch"
+        state_matches_requested=lambda readback: (
+            readback.matching_run_count == 1
+            and readback.run is not None
+            and readback.run.head_sha == normalized_expected_sha
+            and readback.run.event == "workflow_dispatch"
         ),
     )
 
-    run = execution.readback_value
+    readback = execution.readback_value
+    run = readback.run if readback is not None else None
     outcome = execution.outcome
     return WorkflowDispatchExactResult(
         workflow_id=workflow_id,
         ref=ref,
         expected_ref_sha=normalized_expected_sha,
         resolved_ref_sha=resolved_ref_sha,
+        matching_run_count=readback.matching_run_count if readback is not None else None,
         run_id=run.run_id if run is not None else None,
         run_url=run.url if run is not None else None,
         run_status=run.status if run is not None else None,
