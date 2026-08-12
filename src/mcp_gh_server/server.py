@@ -44,6 +44,7 @@ from .tools.git import (
     gh_get_commit,
     gh_get_ref,
 )
+from .tools.issue_state import gh_set_issue_state
 from .tools.issues import (
     gh_get_issue,
     gh_list_issues,
@@ -241,6 +242,7 @@ __all__ = [
     "gh_search_issues",
     "gh_search_repos",
     "gh_server_info",
+    "gh_set_issue_state",
     "gh_submit_pr_review",
     "gh_upsert_label",
     "gh_watch_run",
