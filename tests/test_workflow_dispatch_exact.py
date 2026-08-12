@@ -139,6 +139,7 @@ def test_result_model_exposes_standard_exact_write_contract() -> None:
         "ref",
         "expected_ref_sha",
         "resolved_ref_sha",
+        "matching_run_count",
         "run_id",
         "run_url",
         "run_status",
@@ -249,6 +250,7 @@ async def test_successful_dispatch_checks_ref_twice_writes_once_and_reads_exact_
     assert result.ref == "heads/main"
     assert result.expected_ref_sha == sha
     assert result.resolved_ref_sha == sha
+    assert result.matching_run_count == 1
     assert result.run_id == 92
     assert result.run_url == "https://github.com/octo/repo/actions/runs/92"
     assert result.run_status == "queued"
@@ -316,12 +318,12 @@ async def test_known_dispatch_failure_is_not_replayed() -> None:
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is False
-    assert result.readback_completed is False
-    assert result.state_matches_requested is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.matching_run_count == 0
     assert result.request_id == "req-rejected"
     assert result.warning is not None
-    assert "mutation was not retried" not in result.warning
-    assert "Re-read authoritative state" in result.warning
+    assert "mutation was not retried" in result.warning
 
 
 async def test_delayed_readback_never_causes_second_dispatch() -> None:
@@ -352,10 +354,11 @@ async def test_delayed_readback_never_causes_second_dispatch() -> None:
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is True
-    assert result.readback_completed is False
-    assert result.state_matches_requested is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.matching_run_count == 0
     assert result.warning is not None
-    assert "Do not retry automatically" in result.warning
+    assert "Do not retry the mutation automatically" in result.warning
 
 
 async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_once() -> None:
@@ -388,12 +391,13 @@ async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_on
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is None
-    assert result.readback_completed is False
-    assert result.state_matches_requested is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.matching_run_count == 0
     assert result.request_id == "req-ambiguous"
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
-    assert "re-read authoritative state first" in result.warning
+    assert "Re-read authoritative state" in result.warning
 
 
 async def test_ambiguous_transport_stays_unknown_even_when_readback_matches() -> None:
@@ -429,6 +433,7 @@ async def test_ambiguous_transport_stays_unknown_even_when_readback_matches() ->
     assert result.write_completed is None
     assert result.readback_completed is True
     assert result.state_matches_requested is True
+    assert result.matching_run_count == 1
     assert result.run_id == 93
     assert result.warning is not None
     assert "Do not retry the mutation" in result.warning
@@ -458,9 +463,12 @@ async def test_multiple_exact_readback_runs_are_ambiguous_and_never_redispatched
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is True
-    assert result.readback_completed is False
-    assert result.state_matches_requested is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.matching_run_count == 2
     assert result.run_id is None
+    assert result.warning is not None
+    assert "Do not retry the mutation automatically" in result.warning
 
 
 async def test_workflow_dispatch_gate_blocks_before_any_github_call() -> None:
