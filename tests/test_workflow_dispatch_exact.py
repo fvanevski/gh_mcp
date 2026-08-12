@@ -358,7 +358,7 @@ async def test_delayed_readback_never_causes_second_dispatch() -> None:
     assert result.state_matches_requested is False
     assert result.matching_run_count == 0
     assert result.warning is not None
-    assert "Do not retry the mutation automatically" in result.warning
+    assert "Do not retry automatically" in result.warning
 
 
 async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_once() -> None:
@@ -397,7 +397,7 @@ async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_on
     assert result.request_id == "req-ambiguous"
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
-    assert "Re-read authoritative state" in result.warning
+    assert "re-read authoritative state" in result.warning
 
 
 async def test_ambiguous_transport_stays_unknown_even_when_readback_matches() -> None:
@@ -468,7 +468,7 @@ async def test_multiple_exact_readback_runs_are_ambiguous_and_never_redispatched
     assert result.matching_run_count == 2
     assert result.run_id is None
     assert result.warning is not None
-    assert "Do not retry the mutation automatically" in result.warning
+    assert "Do not retry automatically" in result.warning
 
 
 async def test_workflow_dispatch_gate_blocks_before_any_github_call() -> None:
