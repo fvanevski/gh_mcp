@@ -6,6 +6,7 @@ from typing import Any, get_type_hints
 
 from mcp_gh_server import server
 from mcp_gh_server.action_log_models import WorkflowJobLogs, WorkflowRunLogs
+from mcp_gh_server.compare_commits_models import CommitComparisonResult
 from mcp_gh_server.issue_state_models import IssueStateTransitionResult
 from mcp_gh_server.merge_requirements_models import PullRequestMergeRequirements
 from mcp_gh_server.models import (
@@ -80,6 +81,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_get_file_contents": RepositoryFile,
     "gh_get_ref": GitRefInfo,
     "gh_get_commit": GitCommitInfo,
+    "gh_compare_commits": CommitComparisonResult,
     "gh_commit_files": CommitFilesResult,
     "gh_create_repo": RepoCreate,
     "gh_list_releases": SearchResults,
@@ -114,7 +116,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 57
+    assert len(EXPECTED_RETURN_MODELS) == 58
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)
