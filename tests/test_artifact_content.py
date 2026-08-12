@@ -252,7 +252,7 @@ async def test_archive_rejects_duplicate_or_conflicting_normalized_entries(
     _install_archive(monkeypatch, archive)
     client = FakeGhClient([_artifact(size_in_bytes=len(archive))])
 
-    with pytest.raises(RuntimeError, match="duplicate|conflict"):
+    with pytest.raises(RuntimeError, match=r"duplicate|conflict"):
         await gh_list_artifact_files("octo", "repo", 77, ctx=_context(client))
 
 
@@ -356,7 +356,7 @@ async def test_read_rejects_non_utf8_binary_content(
 async def test_read_requires_exact_normalized_requested_path(path: str) -> None:
     client = FakeGhClient([])
 
-    with pytest.raises(ValueError, match="normalized|traversal|absolute"):
+    with pytest.raises(ValueError, match=r"normalized|traversal|absolute"):
         await gh_read_artifact_file(
             "octo",
             "repo",

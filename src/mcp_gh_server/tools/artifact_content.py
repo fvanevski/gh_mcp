@@ -271,7 +271,9 @@ def _read_utf8_file(
                     )
                 chunks.append(chunk)
     except zipfile.BadZipFile as exc:
-        raise RuntimeError("Artifact ZIP integrity validation failed while reading the file") from exc
+        raise RuntimeError(
+            "Artifact ZIP integrity validation failed while reading the file"
+        ) from exc
 
     if total != info.file_size:
         raise RuntimeError(
@@ -283,9 +285,7 @@ def _read_utf8_file(
     try:
         text = raw.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
-        raise RuntimeError(
-            f"Artifact file {info.filename!r} is not valid UTF-8 text/JSON"
-        ) from exc
+        raise RuntimeError(f"Artifact file {info.filename!r} is not valid UTF-8 text/JSON") from exc
     if "\x00" in text:
         raise RuntimeError(
             f"Artifact file {info.filename!r} contains NUL bytes and is not accepted as text/JSON"
@@ -371,9 +371,7 @@ async def gh_list_artifact_files(
             app.settings.hard_max_results,
             _GITHUB_ARTIFACT_FILES_PER_PAGE_MAX,
         )
-        requested_per_page = (
-            app.settings.default_max_results if per_page is None else per_page
-        )
+        requested_per_page = app.settings.default_max_results if per_page is None else per_page
         effective_per_page = min(requested_per_page, hard_per_page)
         start = (page - 1) * effective_per_page
         selected = list(inspection.files[start : start + effective_per_page])
@@ -470,8 +468,7 @@ async def gh_read_artifact_file(
         info = inspection.by_path.get(normalized_path)
         if info is None:
             raise RuntimeError(
-                f"Artifact {artifact.id} does not contain normalized file path "
-                f"{normalized_path!r}"
+                f"Artifact {artifact.id} does not contain normalized file path {normalized_path!r}"
             )
 
         text = _read_utf8_file(download.path, info)

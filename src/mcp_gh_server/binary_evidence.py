@@ -73,9 +73,7 @@ async def _stream_bytes_once(
 
     cmd = ["gh", *args]
     rendered = _redacted_command(cmd)
-    command_timeout = (
-        timeout if timeout is not None else client.settings.command_timeout_seconds
-    )
+    command_timeout = timeout if timeout is not None else client.settings.command_timeout_seconds
 
     process = await asyncio.create_subprocess_exec(
         *cmd,
@@ -89,9 +87,7 @@ async def _stream_bytes_once(
     raw_stderr = process.stderr
     assert stdout is not None
     assert raw_stderr is not None
-    stderr_task = asyncio.create_task(
-        _drain_bounded(raw_stderr, _STREAM_STDERR_RETAIN_BYTES)
-    )
+    stderr_task = asyncio.create_task(_drain_bounded(raw_stderr, _STREAM_STDERR_RETAIN_BYTES))
 
     async def consume_stdout() -> None:
         while True:
@@ -126,10 +122,7 @@ async def _stream_bytes_once(
     if process.returncode != 0:
         rate_limited = _is_rate_limited(status_code, "", stderr, metadata)
         retryable = _is_retryable_failure(status_code, stderr)
-        message = (
-            f"gh command failed (exit {process.returncode}): "
-            f"{stderr or 'no stderr output'}"
-        )
+        message = f"gh command failed (exit {process.returncode}): {stderr or 'no stderr output'}"
         if rate_limited:
             message += (
                 "; GitHub rate limit detected; retries are stopped and further requests "
