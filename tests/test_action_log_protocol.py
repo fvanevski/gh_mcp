@@ -1,4 +1,4 @@
-"""Protocol-level regression coverage for bounded Actions log tools."""
+"""Protocol-level regression coverage for streamed bounded Actions log tools."""
 
 from __future__ import annotations
 
@@ -23,45 +23,51 @@ import json, sys
 args = sys.argv[1:]
 head_sha = "a" * 40
 
+if args[:2] == ["run", "view"] or any(
+    "/actions/runs/123/logs" in arg or "/actions/runs/123/attempts/2/logs" in arg
+    for arg in args
+):
+    print("forbidden unbounded run-log route", file=sys.stderr)
+    raise SystemExit(91)
+
 if args[:2] == ["api", "repos/octo/repo/actions/jobs/456"]:
-    assert args[-2:] == ["-X", "GET"]
     print(json.dumps({
         "id": 456,
         "run_id": 123,
         "head_sha": head_sha,
+        "name": "tests",
         "status": "completed",
         "conclusion": "success",
         "html_url": "https://github.com/octo/repo/actions/runs/123/job/456",
     }))
-elif args[:2] == ["run", "view"] and "--json" in args:
-    fields = args[args.index("--json") + 1]
-    assert args[2] == "123"
-    assert args[args.index("--attempt") + 1] == "2"
-    if fields == "attempt,headSha,status,conclusion,url":
-        print(json.dumps({
-            "attempt": 2,
-            "headSha": head_sha,
+elif args[:2] == ["api", "repos/octo/repo/actions/runs/123/attempts/2"]:
+    print(json.dumps({
+        "id": 123,
+        "run_attempt": 2,
+        "head_sha": head_sha,
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/octo/repo/actions/runs/123",
+    }))
+elif args[:2] == ["api", "repos/octo/repo/actions/runs/123/attempts/2/jobs"]:
+    assert "-X" in args and args[args.index("-X") + 1] == "GET"
+    print(json.dumps({
+        "total_count": 1,
+        "jobs": [{
+            "id": 456,
+            "run_id": 123,
+            "head_sha": head_sha,
+            "name": "tests",
             "status": "completed",
             "conclusion": "success",
-            "url": "https://github.com/octo/repo/actions/runs/123",
-        }))
-    elif fields == "attempt,headSha,jobs":
-        print(json.dumps({
-            "attempt": 2,
-            "headSha": head_sha,
-            "jobs": [{"databaseId": 456, "name": "tests"}],
-        }))
-    else:
-        raise SystemExit(2)
-elif args[:2] == ["run", "view"] and "--log" in args:
-    assert args[2] == "123"
-    assert args[args.index("--attempt") + 1] == "2"
-    if "--job" in args:
-        assert args[args.index("--job") + 1] == "456"
-        print("job completed successfully")
-    else:
-        print("run completed successfully")
+        }],
+    }))
+elif args[:2] == ["api", "repos/octo/repo/actions/jobs/456/logs"]:
+    assert "--include" not in args and "-i" not in args
+    assert "--paginate" not in args and "--slurp" not in args
+    sys.stdout.write("job completed successfully")
 else:
+    print(f"unexpected fake gh args: {args!r}", file=sys.stderr)
     raise SystemExit(2)
 """
     )
@@ -69,7 +75,7 @@ else:
 
 
 @pytest.mark.asyncio
-async def test_streamable_http_returns_run_and_job_log_evidence(
+async def test_streamable_http_returns_run_and_job_log_evidence_without_run_archive(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
