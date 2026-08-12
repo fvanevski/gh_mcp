@@ -45,12 +45,7 @@ from .tools.git import (
     gh_get_ref,
 )
 from .tools.issue_state import gh_set_issue_state
-from .tools.issues import (
-    gh_get_issue,
-    gh_list_issues,
-    gh_list_labels,
-    gh_list_milestones,
-)
+from .tools.pr_reviews import gh_get_pr_review_state, gh_list_pr_reviews
 from .tools.pull_requests import (
     gh_get_pr,
     gh_get_pr_checks,
@@ -217,6 +212,7 @@ __all__ = [
     "gh_get_pr",
     "gh_get_pr_checks",
     "gh_get_pr_diff",
+    "gh_get_pr_review_state",
     "gh_get_ref",
     "gh_get_release",
     "gh_get_repo",
@@ -229,6 +225,7 @@ __all__ = [
     "gh_list_milestones",
     "gh_list_pr_commits",
     "gh_list_pr_files",
+    "gh_list_pr_reviews",
     "gh_list_prs",
     "gh_list_releases",
     "gh_list_repos",
