@@ -366,6 +366,29 @@ class GitCommitInput(BaseModel):
     )
 
 
+class CompareCommitsInput(BaseModel):
+    """Validated request for an exact two-commit comparison."""
+
+    owner: str = Field(
+        min_length=1,
+        max_length=39,
+        pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
+    )
+    repo: str = Field(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9_.-]{1,100}$",
+    )
+    base_sha: str = Field(
+        description="Exact 40-character hexadecimal base commit SHA.",
+        pattern=r"^[0-9A-Fa-f]{40}$",
+    )
+    head_sha: str = Field(
+        description="Exact 40-character hexadecimal head commit SHA.",
+        pattern=r"^[0-9A-Fa-f]{40}$",
+    )
+
+
 class GitCommitPerson(BaseModel):
     """Git commit author or committer identity reported by the Git database route."""
 

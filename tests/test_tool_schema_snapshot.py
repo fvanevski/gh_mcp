@@ -122,6 +122,10 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "commit_sha"},
         {"owner", "repo", "commit_sha"},
     ),
+    "gh_compare_commits": (
+        {"owner", "repo", "base_sha", "head_sha", "max_commits", "max_files"},
+        {"owner", "repo", "base_sha", "head_sha"},
+    ),
     "gh_commit_files": (
         {"owner", "repo", "branch", "expected_head_sha", "files", "commit_message"},
         {"owner", "repo", "branch", "expected_head_sha", "files", "commit_message"},
@@ -333,6 +337,7 @@ READ_ONLY_TOOLS = {
     "gh_get_file_contents",
     "gh_get_ref",
     "gh_get_commit",
+    "gh_compare_commits",
     "gh_list_releases",
     "gh_get_release",
     "gh_list_workflows",
@@ -392,7 +397,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 57
+    assert len(tools) == 58
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -403,6 +408,38 @@ async def test_exact_tool_surface_snapshot() -> None:
         assert tool.annotations.destructive_hint is (name in DESTRUCTIVE_WRITE_TOOLS)
         assert tool.annotations.idempotent_hint is (name in READ_ONLY_TOOLS)
         assert tool.annotations.open_world_hint is (name != "gh_server_info")
+
+    compare_schema = tools["gh_compare_commits"].input_schema["properties"]
+    assert compare_schema["base_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert compare_schema["head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert compare_schema["max_commits"]["anyOf"][0]["minimum"] == 1
+    assert compare_schema["max_files"]["anyOf"][0]["minimum"] == 1
+    compare_output = tools["gh_compare_commits"].output_schema["properties"]
+    assert {
+        "base_sha",
+        "head_sha",
+        "base_found",
+        "head_found",
+        "comparison_available",
+        "merge_base_sha",
+        "status",
+        "ahead_by",
+        "behind_by",
+        "total_commits",
+        "commits",
+        "commits_evidence",
+        "files",
+        "files_evidence",
+        "truncated",
+        "evidence_complete",
+        "sha256",
+        "warning",
+    } == set(compare_output)
+    assert compare_output["base_sha"]["pattern"] == r"^[0-9a-f]{40}$"
+    assert compare_output["head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
+    assert compare_output["truncated"]["type"] == "boolean"
+    assert compare_output["evidence_complete"]["type"] == "boolean"
+    assert compare_output["sha256"]["pattern"] == r"^[0-9a-f]{64}$"
 
     issue_state_schema = tools["gh_set_issue_state"].input_schema["properties"]
     assert issue_state_schema["number"]["minimum"] == 1
