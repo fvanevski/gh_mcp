@@ -35,6 +35,7 @@ from .tools.actions import (
     gh_watch_run,
 )
 from .tools.artifacts import gh_get_artifact, gh_list_run_artifacts
+from .tools.compare_commits import gh_compare_commits
 from .tools.diagnostics import gh_info, gh_server_info
 from .tools.discovery import gh_search_code, gh_search_issues, gh_search_repos
 from .tools.git import (
@@ -201,6 +202,7 @@ __all__ = [
     "AppContext",
     "app_lifespan",
     "gh_commit_files",
+    "gh_compare_commits",
     "gh_create_branch",
     "gh_create_branch_from_sha",
     "gh_create_comment",
