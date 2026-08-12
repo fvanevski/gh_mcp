@@ -7,10 +7,7 @@ from typing import Annotated, Any
 from mcp.server.mcpserver import Context
 from pydantic import Field
 
-from ..merge_requirements_models import (
-    MergeMethod,
-    PullRequestMergeRequirements,
-)
+from ..merge_requirements_models import MergeMethod, PullRequestMergeRequirements
 from ..merge_requirements_policy import (
     MergePolicy,
     read_effective_merge_policy,
@@ -28,9 +25,8 @@ from ..tooling import (
     validate_repository,
 )
 from .pr_reviews import gh_get_pr_review_state
-from .pull_requests import _extract_pr_shas, _get_pr_metadata
+from .pull_requests import _extract_pr_shas, _get_pr_metadata, gh_get_pr_checks
 
-_CHECKS_MAX = 1_000
 _MERGE_METHOD_ORDER: tuple[MergeMethod, ...] = ("merge", "squash", "rebase")
 
 
@@ -50,62 +46,6 @@ def _pr_snapshot(metadata: dict[str, Any]) -> tuple[str, str, str, bool | None, 
     if merge_state is not None and (not isinstance(merge_state, str) or not merge_state):
         raise RuntimeError("GitHub returned a malformed pull-request merge state")
     return base_ref, base_sha.casefold(), head_sha.casefold(), mergeable, merge_state
-
-
-async def _read_required_checks(
-    app: AppContext,
-    owner: str,
-    repo: str,
-    number: int,
-) -> tuple[list[PullRequestCheck], bool, list[str]]:
-    """Read GitHub's current required checks without watching or mutating state."""
-
-    try:
-        result = await app.client.run(
-            "pr",
-            "checks",
-            str(number),
-            "--repo",
-            f"{owner}/{repo}",
-            "--required",
-            "--json",
-            "bucket,completedAt,description,event,link,name,startedAt,state,workflow",
-            expected_returncode={0, 1, 8},
-        )
-    except GitHubRequestError as exc:
-        status = f"HTTP {exc.status_code}" if exc.status_code is not None else "unknown status"
-        return [], False, [f"Current required-check evidence is unavailable ({status})."]
-    if not isinstance(result, list):
-        raise RuntimeError("GitHub CLI did not return structured required-check evidence")
-
-    limit = max(1, min(app.settings.hard_max_results, _CHECKS_MAX))
-    checks: list[PullRequestCheck] = []
-    for item in result[:limit]:
-        if not isinstance(item, dict):
-            raise RuntimeError("GitHub CLI returned a malformed required check")
-        checks.append(
-            PullRequestCheck(
-                name=str(item.get("name", "")),
-                state=str(item.get("state", "UNKNOWN")),
-                bucket=item.get("bucket", "pending"),
-                workflow=item.get("workflow"),
-                event=item.get("event"),
-                description=item.get("description"),
-                started_at=item.get("startedAt"),
-                completed_at=item.get("completedAt"),
-                link=item.get("link"),
-            )
-        )
-    if len(result) > limit:
-        return (
-            checks,
-            False,
-            [
-                "Current required-check evidence exceeds the configured result bound; "
-                "check evidence is incomplete."
-            ],
-        )
-    return checks, True, []
 
 
 async def _read_up_to_date(
@@ -316,17 +256,37 @@ async def gh_get_merge_requirements(
     )
     warnings.extend(method_warnings)
 
+    checks_identity_matches = True
     if policy_complete and policy is not None and not policy.required_status_checks:
         current_checks: list[PullRequestCheck] = []
         checks_read_complete = True
     else:
-        current_checks, checks_read_complete, check_warnings = await _read_required_checks(
-            app,
-            owner,
-            repo,
-            number,
-        )
-        warnings.extend(check_warnings)
+        try:
+            check_state = await gh_get_pr_checks(
+                owner,
+                repo,
+                number,
+                ctx=ctx,
+                required_only=True,
+                max_checks=min(app.settings.hard_max_results, 1_000),
+            )
+        except GitHubRequestError as exc:
+            status = f"HTTP {exc.status_code}" if exc.status_code is not None else "unknown status"
+            current_checks = []
+            checks_read_complete = False
+            warnings.append(f"Current required-check evidence is unavailable ({status}).")
+        else:
+            current_checks = check_state.checks
+            checks_read_complete = not check_state.truncated
+            checks_identity_matches = (
+                check_state.base_sha.casefold(),
+                check_state.head_sha.casefold(),
+            ) == (base_sha, initial_head)
+            if check_state.truncated:
+                warnings.append(
+                    "Current required-check evidence exceeds the configured result bound; "
+                    "check evidence is incomplete."
+                )
 
     up_to_date, freshness_complete, freshness_warnings = await _read_up_to_date(
         app,
@@ -365,7 +325,7 @@ async def gh_get_merge_requirements(
         initial_head,
     )
     review_observed_movement = review_state is not None and not review_state.head_matches_expected
-    if identity_changed or review_observed_movement:
+    if identity_changed or review_observed_movement or not checks_identity_matches:
         return _invalid_result(
             number=number,
             base_ref=final_base_ref,
@@ -436,7 +396,9 @@ async def gh_get_merge_requirements(
         mergeable=mergeable,
         merge_state=merge_state,
         policy_evidence_complete=policy_fields_known,
-        checks_evidence_complete=policy_fields_known and checks_read_complete,
+        checks_evidence_complete=(
+            policy_fields_known and checks_read_complete and checks_identity_matches
+        ),
         review_evidence_complete=review_complete,
         up_to_date_evidence_complete=freshness_complete,
         required_status_checks=requirements,

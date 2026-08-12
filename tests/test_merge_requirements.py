@@ -180,7 +180,9 @@ async def test_merge_requirements_layers_policy_and_uses_current_valid_reviews()
             {"protected": True},
             _classic_protection(),
             _repo_methods(),
+            _pr(head_sha=head),
             _checks(),
+            _pr(head_sha=head),
             {"behind_by": 2},
             _pr(head_sha=head),
             [
@@ -346,7 +348,9 @@ async def test_merge_requirements_missing_rule_visibility_is_not_no_requirement(
             {"protected": True},
             _classic_protection(),
             _repo_methods(),
+            _pr(head_sha=head),
             [],
+            _pr(head_sha=head),
             {"behind_by": 0},
             _pr(head_sha=head),
             [],
@@ -418,6 +422,46 @@ async def test_merge_requirements_head_movement_discards_collected_evidence() ->
     assert "discarded" in result.warning
 
 
+async def test_merge_requirements_check_snapshot_movement_invalidates_aggregate() -> None:
+    expected = "b" * 40
+    moved = "d" * 40
+    client = FakeGhClient(
+        [
+            _pr(head_sha=expected),
+            [],
+            {"protected": True},
+            _classic_protection(),
+            _repo_methods(),
+            _pr(head_sha=moved),
+            _checks(),
+            _pr(head_sha=moved),
+            {"behind_by": 0},
+            _pr(head_sha=expected),
+            [],
+            _requested(),
+            _graphql(decision=None),
+            _pr(head_sha=expected),
+            _pr(head_sha=expected),
+        ]
+    )
+
+    result = await gh_get_merge_requirements(
+        "octo",
+        "repo",
+        21,
+        expected,
+        ctx=_context(client),
+    )
+
+    assert result.current_head_sha == expected
+    assert result.head_matches_expected is True
+    assert result.exact_head_evidence is False
+    assert result.checks_evidence_complete is False
+    assert result.current_required_checks == []
+    assert result.warning is not None
+    assert "discarded" in result.warning
+
+
 async def test_merge_requirements_bounded_ruleset_visibility_is_incomplete() -> None:
     head = "b" * 40
     settings = Settings(default_max_results=1, hard_max_results=1)
@@ -428,7 +472,9 @@ async def test_merge_requirements_bounded_ruleset_visibility_is_incomplete() -> 
             [_ruleset_rules()[1]],
             {"protected": False},
             _repo_methods(),
+            _pr(head_sha=head),
             [],
+            _pr(head_sha=head),
             {"behind_by": 0},
             _pr(head_sha=head),
             [],
