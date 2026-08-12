@@ -481,9 +481,7 @@ async def gh_get_job_logs(
     validate_repository(owner, repo)
     before = await _get_job_snapshot(app, owner, repo, job_id, attempt)
     if before.job.status != "completed":
-        raise RuntimeError(
-            f"Workflow job {job_id} is not completed; logs are not immutable yet"
-        )
+        raise RuntimeError(f"Workflow job {job_id} is not completed; logs are not immutable yet")
 
     accumulator = _new_accumulator(
         app,

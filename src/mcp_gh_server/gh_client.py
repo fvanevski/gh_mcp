@@ -186,9 +186,7 @@ class GhClient:
         if _infer_request_kind(args) is not GitHubRequestKind.READ:
             raise ValueError("stream_text accepts only commands classified as read-only")
         if any(flag in _STREAM_FORBIDDEN_FLAGS for flag in args):
-            raise ValueError(
-                "stream_text does not support include/paginate/slurp output framing"
-            )
+            raise ValueError("stream_text does not support include/paginate/slurp output framing")
 
         policy = GitHubRequestPolicy(kind=GitHubRequestKind.READ, retry_safe=False)
 
@@ -225,16 +223,16 @@ class GhClient:
             env=env,
             start_new_session=os.name == "posix",
         )
-        assert process.stdout is not None
-        assert process.stderr is not None
-        stderr_task = asyncio.create_task(
-            _drain_bounded(process.stderr, _STREAM_STDERR_RETAIN_BYTES)
-        )
+        stdout = process.stdout
+        raw_stderr = process.stderr
+        assert stdout is not None
+        assert raw_stderr is not None
+        stderr_task = asyncio.create_task(_drain_bounded(raw_stderr, _STREAM_STDERR_RETAIN_BYTES))
 
         async def consume_stdout() -> None:
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
             while True:
-                chunk = await process.stdout.read(_STREAM_CHUNK_BYTES)
+                chunk = await stdout.read(_STREAM_CHUNK_BYTES)
                 if not chunk:
                     break
                 text = decoder.decode(chunk)
@@ -271,8 +269,7 @@ class GhClient:
             rate_limited = _is_rate_limited(status_code, "", stderr, metadata)
             retryable = _is_retryable_failure(status_code, stderr)
             message = (
-                f"gh command failed (exit {process.returncode}): "
-                f"{stderr or 'no stderr output'}"
+                f"gh command failed (exit {process.returncode}): {stderr or 'no stderr output'}"
             )
             if rate_limited:
                 message += (

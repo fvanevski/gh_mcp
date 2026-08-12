@@ -45,7 +45,7 @@ os.write(1, b"\\xb1-tail\\n")
         on_chunk=chunks.append,
     )
 
-    assert "".join(chunks) == "prefix-α-tail\n"
+    assert "".join(chunks) == "prefix-\u03b1-tail\n"
     assert metadata.attempts == 1
 
 

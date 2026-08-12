@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
@@ -170,9 +171,7 @@ async def test_run_logs_stream_successful_complete_evidence_without_run_archive(
             {"timeout": None},
         )
     ]
-    flattened = " ".join(
-        " ".join(args) for args, _ in [*client.calls, *client.stream_calls]
-    )
+    flattened = " ".join(" ".join(args) for args, _ in [*client.calls, *client.stream_calls])
     assert "actions/runs/123/attempts/2/logs" not in flattened
     assert "run view" not in flattened
 
@@ -219,8 +218,8 @@ async def test_run_logs_max_bytes_truncation_keeps_complete_stream_digest() -> N
 
 
 async def test_run_logs_tail_selection_is_utf8_safe_and_reports_actual_suffix_bytes() -> None:
-    text = "prefix-αβ-tail"
-    client = FakeGhClient(_single_run_results(), streams=[["prefix-α", "β-tail"]])
+    text = "prefix-\u03b1\u03b2-tail"
+    client = FakeGhClient(_single_run_results(), streams=[["prefix-\u03b1", "\u03b2-tail"]])
 
     result = await gh_get_run_logs(
         "octo",
@@ -378,9 +377,7 @@ async def test_job_logs_verify_exact_attempt_membership_and_stream_job_endpoint(
         "-X",
         "GET",
     )
-    flattened = " ".join(
-        " ".join(args) for args, _ in [*client.calls, *client.stream_calls]
-    )
+    flattened = " ".join(" ".join(args) for args, _ in [*client.calls, *client.stream_calls])
     for forbidden in (
         "rerun",
         "cancel",
