@@ -10,11 +10,12 @@ GitHub GraphQL queries and mutations both use HTTP `POST` when a request body is
 
 - the `gh api` endpoint is exactly `graphql`;
 - the query document is supplied directly through one explicit `query=` field;
+- no `--input` body source is present;
 - the document begins with an explicit `query` operation, allowing leading GraphQL line comments;
 - the document contains no `mutation` or `subscription` operation token; and
 - the effective HTTP method is `POST`.
 
-All ambiguous forms fail closed as write-classified requests. This includes mutations, subscriptions, mixed query/mutation documents, anonymous query documents, indirect `query=@file` input, malformed or duplicate query fields, and non-POST method overrides. False negatives are acceptable because they retain conservative write semantics; false-positive read classification is not.
+All ambiguous forms fail closed as write-classified requests. This includes mutations, subscriptions, mixed query/mutation documents, anonymous query documents, indirect `query=@file` input, `--input` request bodies, malformed or duplicate query fields, and non-POST method overrides. False negatives are acceptable because they retain conservative write semantics; false-positive read classification is not.
 
 This distinction matters because the request governor gives proven reads bounded retry semantics, while writes are non-retryable, write-spaced, and may be reported as transport-ambiguous.
 

@@ -533,6 +533,8 @@ def _graphql_document_is_read_only_query(args: tuple[str, ...]) -> bool:
     endpoint_index = _api_endpoint_index(args)
     if endpoint_index is None or args[endpoint_index].casefold() != "graphql":
         return False
+    if any(arg == "--input" or arg.startswith("--input=") for arg in args):
+        return False
 
     query_values = _api_field_values(args, "query")
     if len(query_values) != 1:

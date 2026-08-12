@@ -82,10 +82,19 @@ def test_graphql_query_is_read_but_ambiguous_or_mutating_documents_fail_closed()
     mixed_args = _graphql_args(f"{_QUERY} {_MUTATION}")
     anonymous_args = _graphql_args("{ viewer { login } }")
     indirect_args = ("api", "graphql", "-F", "query=@query.graphql")
+    input_args = (*_graphql_args(_QUERY), "--input", "payload.json")
+    inline_input_args = (*_graphql_args(_QUERY), "--input=payload.json")
 
     assert _infer_request_kind(query_args) is GitHubRequestKind.READ
     assert _request_policy(query_args) == READ_REQUEST
-    for args in (mutation_args, mixed_args, anonymous_args, indirect_args):
+    for args in (
+        mutation_args,
+        mixed_args,
+        anonymous_args,
+        indirect_args,
+        input_args,
+        inline_input_args,
+    ):
         assert _infer_request_kind(args) is GitHubRequestKind.WRITE
         assert _request_policy(args) == WRITE_REQUEST
 
