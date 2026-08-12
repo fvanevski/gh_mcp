@@ -511,10 +511,7 @@ def _api_field_values(args: tuple[str, ...], field_name: str) -> list[str]:
         elif arg.startswith("--field=") or arg.startswith("--raw-field="):
             raw_field = arg.split("=", 1)[1]
             index += 1
-        elif arg.startswith("-F") and arg != "-F":
-            raw_field = arg[2:]
-            index += 1
-        elif arg.startswith("-f") and arg != "-f":
+        elif (arg.startswith("-F") and arg != "-F") or (arg.startswith("-f") and arg != "-f"):
             raw_field = arg[2:]
             index += 1
         else:
