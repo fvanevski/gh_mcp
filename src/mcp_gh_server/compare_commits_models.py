@@ -14,9 +14,11 @@ class ComparedCommit(BaseModel):
 
     sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     message: str
-    message_truncated: bool = False
-    message_bytes_returned: int = Field(default=0, ge=0)
+    message_truncated: bool
+    message_bytes_returned: int = Field(ge=0)
+    message_total_bytes: int = Field(ge=0)
     message_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    message_warning: str | None = None
     author_login: str | None = None
     author_name: str | None = None
     authored_at: str | None = None
@@ -24,6 +26,22 @@ class ComparedCommit(BaseModel):
     committer_name: str | None = None
     committed_at: str | None = None
     url: str
+
+    @model_validator(mode="after")
+    def validate_message_evidence(self) -> ComparedCommit:
+        actual_returned = len(self.message.encode("utf-8"))
+        if self.message_bytes_returned != actual_returned:
+            raise ValueError("message_bytes_returned must equal the UTF-8 byte length of message")
+        if self.message_bytes_returned > self.message_total_bytes:
+            raise ValueError("message_bytes_returned cannot exceed message_total_bytes")
+        expected_truncated = self.message_bytes_returned < self.message_total_bytes
+        if self.message_truncated != expected_truncated:
+            raise ValueError(
+                "message_truncated must reflect whether the returned message is incomplete"
+            )
+        if self.message_truncated and not self.message_warning:
+            raise ValueError("truncated commit-message evidence requires an explicit warning")
+        return self
 
 
 class ComparedFile(BaseModel):
@@ -53,8 +71,20 @@ class ComparisonCollectionEvidence(BaseModel):
 
     @model_validator(mode="after")
     def validate_completeness(self) -> ComparisonCollectionEvidence:
-        if self.total_count is not None and self.returned_count > self.total_count:
-            raise ValueError("returned_count cannot exceed total_count")
+        if self.total_count is not None:
+            if self.returned_count > self.total_count:
+                raise ValueError("returned_count cannot exceed total_count")
+            if self.returned_count < self.total_count:
+                if self.complete:
+                    raise ValueError(
+                        "collection with fewer returned items than total_count cannot be complete"
+                    )
+                if not self.truncated:
+                    raise ValueError(
+                        "collection with fewer returned items than total_count must be truncated"
+                    )
+        if self.complete and self.total_count is None:
+            raise ValueError("complete collection evidence requires a known total_count")
         if self.truncated and self.complete:
             raise ValueError("truncated collection evidence cannot be complete")
         if (self.truncated or not self.complete) and not self.warning:

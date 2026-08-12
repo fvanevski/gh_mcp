@@ -44,6 +44,8 @@ _COMPARE_JQ = """{
   total_commits: .total_commits,
   base_commit: {sha: .base_commit.sha},
   merge_base_commit: {sha: .merge_base_commit.sha},
+  commits_collection_present: ((.commits | type) == "array"),
+  files_collection_present: ((.files | type) == "array"),
   commits: [(.commits // [])[] | {
     sha: .sha,
     html_url: .html_url,
@@ -155,7 +157,9 @@ def _parse_commit(raw: object, *, message_max_bytes: int) -> ComparedCommit:
         message=message_evidence.content,
         message_truncated=message_evidence.truncated,
         message_bytes_returned=message_evidence.bytes_returned,
+        message_total_bytes=message_evidence.total_bytes,
         message_sha256=message_evidence.sha256,
+        message_warning=message_evidence.warning,
         author_login=_optional_string(author_account.get("login")),
         author_name=_optional_string(author_dict.get("name")),
         authored_at=_optional_string(author_dict.get("date")),
@@ -438,6 +442,11 @@ async def gh_compare_commits(
     behind_by = _nonnegative_int(payload.get("behind_by"), label="behind_by count")
     total_commits = _nonnegative_int(payload.get("total_commits"), label="total_commits count")
 
+    commits_collection_present = payload.get("commits_collection_present")
+    if commits_collection_present is False:
+        raise RuntimeError("GitHub comparison returned no authoritative commit collection")
+    if commits_collection_present not in {None, True}:
+        raise RuntimeError("GitHub comparison returned invalid commit-collection presence evidence")
     raw_commits = payload.get("commits")
     if not isinstance(raw_commits, list):
         raise RuntimeError("GitHub comparison returned no commit collection")
@@ -455,8 +464,8 @@ async def gh_compare_commits(
         )
     if commit_messages_truncated:
         commit_warnings.append(
-            "At least one returned commit message was byte-truncated; each message_sha256 "
-            "fingerprints its complete source message."
+            "At least one returned commit message was byte-truncated; message byte counts, "
+            "message_sha256, and message_warning preserve the complete-source evidence contract."
         )
     commits_evidence = _collection_evidence(
         commits,
@@ -466,6 +475,11 @@ async def gh_compare_commits(
         warnings=commit_warnings,
     )
 
+    files_collection_present = payload.get("files_collection_present")
+    if files_collection_present is False:
+        raise RuntimeError("GitHub comparison returned no authoritative changed-file collection")
+    if files_collection_present not in {None, True}:
+        raise RuntimeError("GitHub comparison returned invalid file-collection presence evidence")
     raw_files = payload.get("files")
     if not isinstance(raw_files, list):
         raise RuntimeError("GitHub comparison returned no changed-file collection")

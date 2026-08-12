@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from mcp_gh_server.compare_commits_models import ComparisonCollectionEvidence
 from mcp_gh_server.request_governor import GitHubRequestError
 from mcp_gh_server.server import AppContext, gh_compare_commits
 from mcp_gh_server.settings import Settings
@@ -174,7 +175,10 @@ async def test_compare_preserves_all_supported_statuses_and_merge_base(
         f"repos/octo/repo/compare/{base_sha}...{head_sha}",
     )
     assert "per_page=30" in client.calls[0][0]
-    assert "--jq" in client.calls[0][0]
+    jq_index = client.calls[0][0].index("--jq") + 1
+    jq_projection = client.calls[0][0][jq_index]
+    assert "commits_collection_present" in jq_projection
+    assert "files_collection_present" in jq_projection
 
 
 @pytest.mark.parametrize("bad_sha", ["a" * 39, "a" * 41, "g" * 40, "main", "deadbeef"])
@@ -258,7 +262,7 @@ async def test_file_saturation_cannot_be_reported_complete() -> None:
     assert "300-file upstream limit" in result.files_evidence.warning
 
 
-async def test_commit_message_byte_truncation_marks_commit_evidence_incomplete() -> None:
+async def test_commit_message_byte_truncation_preserves_full_bounded_text_contract() -> None:
     base_sha = "a" * 40
     head_sha = "b" * 40
     payload = _compare_payload(
@@ -277,13 +281,77 @@ async def test_commit_message_byte_truncation_marks_commit_evidence_incomplete()
         ctx=_context(client, settings),
     )
 
-    assert result.commits[0].message == "abcde"
-    assert result.commits[0].message_truncated is True
-    assert result.commits[0].message_bytes_returned == 5
-    assert len(result.commits[0].message_sha256) == 64
+    commit = result.commits[0]
+    assert commit.message == "abcde"
+    assert commit.message_truncated is True
+    assert commit.message_bytes_returned == 5
+    assert commit.message_total_bytes == 10
+    assert len(commit.message_sha256) == 64
+    assert commit.message_warning is not None
+    assert "5 of 10 UTF-8 bytes" in commit.message_warning
     assert result.commits_evidence.truncated is True
     assert result.commits_evidence.complete is False
     assert result.evidence_complete is False
+
+
+@pytest.mark.parametrize(
+    ("presence_field", "collection_field", "message"),
+    [
+        (
+            "commits_collection_present",
+            "commits",
+            "no authoritative commit collection",
+        ),
+        (
+            "files_collection_present",
+            "files",
+            "no authoritative changed-file collection",
+        ),
+    ],
+)
+async def test_missing_upstream_collection_presence_fails_closed(
+    presence_field: str,
+    collection_field: str,
+    message: str,
+) -> None:
+    base_sha = "a" * 40
+    head_sha = "b" * 40
+    payload = _compare_payload(base_sha, base_sha)
+    payload[presence_field] = False
+    payload[collection_field] = []
+    client = FakeGhClient([payload])
+
+    with pytest.raises(RuntimeError, match=message):
+        await gh_compare_commits(
+            owner="octo",
+            repo="repo",
+            base_sha=base_sha,
+            head_sha=head_sha,
+            ctx=_context(client),
+        )
+
+
+def test_collection_evidence_rejects_known_under_return_without_truncation() -> None:
+    with pytest.raises(ValidationError, match="must be truncated"):
+        ComparisonCollectionEvidence(
+            returned_count=1,
+            total_count=2,
+            complete=False,
+            truncated=False,
+            sha256="a" * 64,
+            warning="incomplete",
+        )
+
+
+def test_collection_evidence_rejects_complete_unknown_total() -> None:
+    with pytest.raises(ValidationError, match="known total_count"):
+        ComparisonCollectionEvidence(
+            returned_count=1,
+            total_count=None,
+            complete=True,
+            truncated=False,
+            sha256="a" * 64,
+        )
 
 
 async def test_digest_is_deterministic_for_identical_returned_evidence() -> None:
