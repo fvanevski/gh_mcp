@@ -227,8 +227,7 @@ def _allowed_methods(
     repository_methods: set[MergeMethod],
     repository_methods_complete: bool,
 ) -> tuple[list[MergeMethod], bool]:
-    complete = policy_complete and policy is not None and repository_methods_complete
-    if not complete:
+    if not policy_complete or policy is None or not repository_methods_complete:
         return [], False
     return (
         [
@@ -387,8 +386,22 @@ async def gh_get_merge_requirements(
         repository_methods,
         repository_methods_complete,
     )
-    policy_fields_known = policy_complete and policy is not None
-    requirements = list(policy.required_status_checks.values()) if policy_fields_known else []
+    if policy_complete and policy is not None:
+        policy_fields_known = True
+        requirements = list(policy.required_status_checks.values())
+        required_approvals = policy.required_approvals
+        code_owner_review_required = policy.code_owner_review_required
+        last_push_approval_required = policy.last_push_approval_required
+        conversation_resolution_required = policy.conversation_resolution_required
+        up_to_date_required = policy.up_to_date_required
+    else:
+        policy_fields_known = False
+        requirements = []
+        required_approvals = None
+        code_owner_review_required = None
+        last_push_approval_required = None
+        conversation_resolution_required = None
+        up_to_date_required = None
 
     if review_state is None:
         current_approvals = []
@@ -428,22 +441,16 @@ async def gh_get_merge_requirements(
         up_to_date_evidence_complete=freshness_complete,
         required_status_checks=requirements,
         current_required_checks=current_checks,
-        required_approvals=policy.required_approvals if policy_fields_known else None,
+        required_approvals=required_approvals,
         current_valid_approvals=current_approvals,
         current_valid_approval_count=approval_count,
         review_decision=review_decision,
         review_requirements_satisfied=review_satisfied,
-        code_owner_review_required=(
-            policy.code_owner_review_required if policy_fields_known else None
-        ),
-        last_push_approval_required=(
-            policy.last_push_approval_required if policy_fields_known else None
-        ),
-        conversation_resolution_required=(
-            policy.conversation_resolution_required if policy_fields_known else None
-        ),
+        code_owner_review_required=code_owner_review_required,
+        last_push_approval_required=last_push_approval_required,
+        conversation_resolution_required=conversation_resolution_required,
         unresolved_review_threads=unresolved_threads,
-        up_to_date_required=policy.up_to_date_required if policy_fields_known else None,
+        up_to_date_required=up_to_date_required,
         up_to_date=up_to_date,
         allowed_merge_methods=allowed_methods,
         allowed_merge_methods_complete=methods_complete,
