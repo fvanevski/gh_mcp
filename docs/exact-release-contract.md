@@ -29,11 +29,13 @@ The creation request sends the exact normalized SHA as `target_commitish` and se
 `make_latest` explicitly. Drafts and prereleases are rejected when `make_latest=true` before
 any GitHub request.
 
-There is exactly one mutation attempt. If GitHub returns the created release identifier, the
-mandatory release readback uses `GET /repos/{owner}/{repo}/releases/{release_id}`, which also
-works for drafts. If the write outcome is transport-ambiguous and no release identifier is
-available, readback falls back to the same draft-complete exact-tag scan used by the
-precondition. The mutation is never replayed automatically.
+There is exactly one mutation attempt. Mandatory release readback always uses the same
+draft-complete exact-tag scan as the precondition; it does not rely on the published-only
+tag endpoint or on the release-ID endpoint's public-release contract. When the successful
+creation response includes a release identifier, the all-state readback must return that same
+identifier. For transport-ambiguous writes where no identifier is available, the exact-tag
+all-state result remains semantic evidence while `write_completed` stays unknown. The mutation
+is never replayed automatically.
 
 Semantic success additionally requires:
 
@@ -50,8 +52,9 @@ write contract and must not be treated as verified success.
 
 `tests/test_release_exact.py` covers target mismatch/missing target, existing tag, existing
 published and draft releases, push-access and permission failures, pagination and bounded
-absence, successful prerelease and draft readback, tag-target mismatch, ambiguous published
-and draft mutations, write gating, and invalid latest+draft/prerelease combinations.
+absence, successful prerelease and draft readback, release-ID mismatch, tag-target mismatch,
+ambiguous published and draft mutations, write gating, and invalid latest+draft/prerelease
+combinations.
 
 ## References
 

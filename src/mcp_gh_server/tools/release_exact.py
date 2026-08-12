@@ -152,25 +152,6 @@ async def _read_release_by_tag_all_states(
     )
 
 
-async def _read_release_by_id(
-    owner: str,
-    repo: str,
-    release_id: int,
-    *,
-    ctx: Context[AppContext],
-) -> _ReleaseRecord:
-    """Read one exact release identifier, including draft releases."""
-
-    app = app_from_context(ctx)
-    raw = await app.client.run(
-        "api",
-        f"repos/{owner}/{repo}/releases/{release_id}",
-        "-X",
-        "GET",
-    )
-    return _parse_release(raw, resource=f"release id {release_id}")
-
-
 async def _read_latest_release_id(
     owner: str,
     repo: str,
@@ -386,14 +367,15 @@ async def gh_create_release_exact(
         return result
 
     async def readback() -> _ReleaseReadback:
-        release = (
-            await _read_release_by_id(owner, repo, created_release_id, ctx=ctx)
-            if created_release_id is not None
-            else await _read_release_by_tag_all_states(owner, repo, tag_name, ctx=ctx)
-        )
+        release = await _read_release_by_tag_all_states(owner, repo, tag_name, ctx=ctx)
         if release is None:
             raise RuntimeError(
                 f"created release {tag_name!r} is absent during authoritative readback"
+            )
+        if created_release_id is not None and release.release_id != created_release_id:
+            raise RuntimeError(
+                f"created release {tag_name!r} readback returned release id "
+                f"{release.release_id}, expected {created_release_id}"
             )
         tag_commit_sha = await _read_tag_commit_sha(owner, repo, tag_name, ctx=ctx)
         if tag_commit_sha is None:

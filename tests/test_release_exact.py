@@ -159,7 +159,8 @@ def _successful_reads(
         *_missing_ref(),
         *_missing_release(),
         _commit(sha),
-        _release(release_id, draft=draft, prerelease=prerelease),
+        _repo_permissions(),
+        [_release(release_id, draft=draft, prerelease=prerelease)],
         _tag_ref(tag_sha or sha),
         _release(latest_release_id, tag="v0.9.0", name="v0.9.0", body="Previous"),
     ]
@@ -496,15 +497,15 @@ async def test_successful_prerelease_uses_exact_sha_and_explicit_non_latest_read
             "body": "Release notes",
         }
     ]
-    assert (
-        "api",
-        "repos/octo/repo/releases/17",
-        "-X",
-        "GET",
-    ) in [args for kind, args, _ in client.calls if kind == "read"]
+    release_list_calls = [
+        args
+        for kind, args, _ in client.calls
+        if kind == "read" and args[:2] == ("api", "repos/octo/repo/releases")
+    ]
+    assert len(release_list_calls) == 2
 
 
-async def test_successful_draft_uses_release_id_for_mandatory_readback() -> None:
+async def test_successful_draft_uses_all_state_mandatory_readback() -> None:
     expected = _sha(13)
     client = ReleaseExactClient(
         read_results=_successful_reads(expected, draft=True, prerelease=False),
@@ -530,12 +531,37 @@ async def test_successful_draft_uses_release_id_for_mandatory_readback() -> None
     assert result.is_draft is True
     assert result.is_latest is False
     assert [kind for kind, _, _ in client.calls].count("write") == 1
-    assert (
-        "api",
-        "repos/octo/repo/releases/17",
-        "-X",
-        "GET",
-    ) in [args for kind, args, _ in client.calls if kind == "read"]
+    release_list_calls = [
+        args
+        for kind, args, _ in client.calls
+        if kind == "read" and args[:2] == ("api", "repos/octo/repo/releases")
+    ]
+    assert len(release_list_calls) == 2
+
+
+async def test_successful_write_with_different_release_id_fails_readback_closed() -> None:
+    expected = _sha(14)
+    client = ReleaseExactClient(
+        read_results=_successful_reads(expected, release_id=18, prerelease=True),
+        write_results=[GitHubRequestResult(value=_release(17, prerelease=True))],
+    )
+
+    result = await gh_create_release_exact(
+        "octo",
+        "repo",
+        "v1.0.0",
+        expected,
+        False,
+        ctx=_context(client),
+        prerelease=True,
+    )
+
+    assert result.write_completed is True
+    assert result.readback_completed is False
+    assert result.state_matches_requested is None
+    assert result.warning is not None
+    assert "structured readback failed" in result.warning
+    assert [kind for kind, _, _ in client.calls].count("write") == 1
 
 
 async def test_wrong_tag_target_is_semantic_mismatch_without_replay() -> None:
