@@ -164,8 +164,9 @@ async def test_close_supports_other_valid_closed_reasons(reason: str) -> None:
     assert client.payloads == [{"state": "closed", "state_reason": reason}]
 
 
-async def test_reopen_requires_reopened_reason_and_reports_readback_timestamp() -> None:
+async def test_reopen_prefers_confirmed_transition_timestamp_and_verifies_readback() -> None:
     reopened_at = "2026-08-11T20:03:00Z"
+    readback_updated_at = "2026-08-11T20:03:01Z"
     client = IssueStateClient(
         read_results=[
             _snapshot(
@@ -173,9 +174,13 @@ async def test_reopen_requires_reopened_reason_and_reports_readback_timestamp() 
                 reason="completed",
                 closed_at="2026-08-11T19:00:00Z",
             ),
-            _snapshot(state="open", reason="reopened", updated_at=reopened_at),
+            _snapshot(state="open", reason="reopened", updated_at=readback_updated_at),
         ],
-        write_results=[GitHubRequestResult(value={})],
+        write_results=[
+            GitHubRequestResult(
+                value=_snapshot(state="open", reason="reopened", updated_at=reopened_at)
+            )
+        ],
     )
 
     result = await gh_set_issue_state(
