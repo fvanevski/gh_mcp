@@ -14,6 +14,7 @@ class WorkflowDispatchExactResult(ExactWriteResult):
     ref: str = Field(pattern=r"^(?:heads|tags)/.+$")
     expected_ref_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     resolved_ref_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    matching_run_count: int | None = Field(default=None, ge=0)
     run_id: int | None = Field(default=None, ge=1)
     run_url: str | None = None
     run_status: str | None = None
