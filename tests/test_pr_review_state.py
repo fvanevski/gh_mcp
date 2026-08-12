@@ -180,12 +180,16 @@ async def test_review_state_classifies_current_and_stale_review_evidence() -> No
     assert result.requirements_satisfied is False
 
 
-async def test_review_state_reports_conservative_satisfied_state_only_for_clean_evidence() -> None:
+async def test_review_state_reports_conservative_satisfied_state_with_stale_history() -> None:
     head = "b" * 40
+    stale = "c" * 40
     client = FakeGhClient(
         [
             _pr(head_sha=head),
-            [_review(1, "APPROVED", head, reviewer="alice")],
+            [
+                _review(1, "APPROVED", stale, reviewer="bob"),
+                _review(2, "APPROVED", head, reviewer="alice"),
+            ],
             _requested(),
             _graphql(decision="APPROVED", threads=[]),
             _pr(head_sha=head),
@@ -201,8 +205,11 @@ async def test_review_state_reports_conservative_satisfied_state_only_for_clean_
     )
 
     assert result.exact_head_evidence is True
+    assert [review.id for review in result.stale_approvals] == [1]
+    assert [review.id for review in result.current_head_approvals] == [2]
     assert result.requirements_satisfied is True
     assert result.warning is None
+    assert any("comments(first: 1)" in arg for arg in client.calls[3][0])
 
 
 async def test_review_state_initial_head_mismatch_returns_no_aggregate_evidence() -> None:
