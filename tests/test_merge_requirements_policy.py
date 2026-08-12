@@ -27,11 +27,12 @@ def _app(client: FakeGhClient, settings: Settings | None = None) -> AppContext:
     )
 
 
-def _pull_request_rule() -> dict[str, Any]:
+def _pull_request_rule(*, dismiss_stale_reviews_on_push: bool = False) -> dict[str, Any]:
     return {
         "type": "pull_request",
         "parameters": {
             "allowed_merge_methods": ["squash"],
+            "dismiss_stale_reviews_on_push": dismiss_stale_reviews_on_push,
             "required_approving_review_count": 1,
             "require_code_owner_review": False,
             "require_last_push_approval": False,
@@ -107,4 +108,24 @@ async def test_strict_ruleset_without_checks_does_not_require_up_to_date_head() 
     assert complete is True
     assert policy is not None
     assert policy.up_to_date_required is False
+    assert warnings == []
+
+
+async def test_stale_review_dismissal_uses_most_restrictive_ruleset_value() -> None:
+    rules = [
+        _pull_request_rule(dismiss_stale_reviews_on_push=False),
+        _pull_request_rule(dismiss_stale_reviews_on_push=True),
+    ]
+    client = FakeGhClient([rules, {"protected": False}])
+
+    policy, complete, warnings = await read_effective_merge_policy(
+        _app(client),
+        "octo",
+        "repo",
+        "main",
+    )
+
+    assert complete is True
+    assert policy is not None
+    assert policy.dismiss_stale_reviews_on_push is True
     assert warnings == []

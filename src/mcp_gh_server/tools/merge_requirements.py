@@ -77,14 +77,22 @@ async def _read_up_to_date(
     return behind_by == 0, True, []
 
 
-def _current_valid_approvals(review_state: PullRequestReviewState) -> list[PullRequestReview]:
-    """Return latest decisive exact-head approval per identifiable reviewer."""
+def _current_valid_approvals(
+    review_state: PullRequestReviewState,
+    *,
+    dismiss_stale_reviews_on_push: bool,
+) -> list[PullRequestReview]:
+    """Return latest decisive approvals that remain valid under effective merge policy."""
 
-    latest: dict[str, PullRequestReview] = {}
     decisive = [
         *review_state.current_head_approvals,
         *review_state.current_head_change_requests,
     ]
+    if not dismiss_stale_reviews_on_push:
+        decisive.extend(review_state.stale_approvals)
+        decisive.extend(review_state.stale_change_requests)
+
+    latest: dict[str, PullRequestReview] = {}
     for review in decisive:
         if review.reviewer is None:
             continue
@@ -350,6 +358,7 @@ async def gh_get_merge_requirements(
         policy_fields_known = True
         requirements = list(policy.required_status_checks.values())
         required_approvals = policy.required_approvals
+        dismiss_stale_reviews_on_push: bool | None = policy.dismiss_stale_reviews_on_push
         code_owner_review_required = policy.code_owner_review_required
         last_push_approval_required = policy.last_push_approval_required
         conversation_resolution_required = policy.conversation_resolution_required
@@ -358,6 +367,7 @@ async def gh_get_merge_requirements(
         policy_fields_known = False
         requirements = []
         required_approvals = None
+        dismiss_stale_reviews_on_push = None
         code_owner_review_required = None
         last_push_approval_required = None
         conversation_resolution_required = None
@@ -370,8 +380,19 @@ async def gh_get_merge_requirements(
         review_decision = None
         review_complete = False
     else:
-        current_approvals = _current_valid_approvals(review_state)
-        approval_count = len(current_approvals) if review_state.exact_head_evidence else None
+        current_approvals = _current_valid_approvals(
+            review_state,
+            dismiss_stale_reviews_on_push=(
+                dismiss_stale_reviews_on_push
+                if dismiss_stale_reviews_on_push is not None
+                else True
+            ),
+        )
+        approval_count = (
+            len(current_approvals)
+            if review_state.exact_head_evidence and dismiss_stale_reviews_on_push is not None
+            else None
+        )
         unresolved_threads = review_state.unresolved_review_threads
         review_decision = review_state.review_decision
         review_complete = review_state.exact_head_evidence

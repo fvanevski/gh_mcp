@@ -22,6 +22,7 @@ class MergePolicy:
         default_factory=dict
     )
     required_approvals: int = 0
+    dismiss_stale_reviews_on_push: bool = False
     code_owner_review_required: bool = False
     last_push_approval_required: bool = False
     conversation_resolution_required: bool = False
@@ -125,6 +126,11 @@ def _apply_classic_protection(policy: MergePolicy, protection: dict[str, Any]) -
                 label="classic required approval count",
             ),
         )
+        policy.dismiss_stale_reviews_on_push |= _read_bool(
+            reviews,
+            "dismiss_stale_reviews",
+            label="classic stale-review dismissal requirement",
+        )
         policy.code_owner_review_required |= _read_bool(
             reviews,
             "require_code_owner_reviews",
@@ -213,6 +219,11 @@ def _apply_ruleset_rules(policy: MergePolicy, rules: list[Any]) -> None:
                 "required_approving_review_count",
                 label="ruleset required approval count",
             ),
+        )
+        policy.dismiss_stale_reviews_on_push |= _read_bool(
+            parameters,
+            "dismiss_stale_reviews_on_push",
+            label="ruleset stale-review dismissal requirement",
         )
         policy.code_owner_review_required |= _read_bool(
             parameters,

@@ -123,7 +123,7 @@ def _repo_methods(
     }
 
 
-def _classic_protection() -> dict[str, Any]:
+def _classic_protection(*, dismiss_stale_reviews: bool = False) -> dict[str, Any]:
     return {
         "required_status_checks": {
             "strict": True,
@@ -132,6 +132,7 @@ def _classic_protection() -> dict[str, Any]:
         },
         "required_pull_request_reviews": {
             "required_approving_review_count": 2,
+            "dismiss_stale_reviews": dismiss_stale_reviews,
             "require_code_owner_reviews": True,
             "require_last_push_approval": False,
         },
@@ -146,6 +147,7 @@ def _ruleset_rules() -> list[dict[str, Any]]:
             "type": "pull_request",
             "parameters": {
                 "allowed_merge_methods": ["merge", "squash"],
+                "dismiss_stale_reviews_on_push": True,
                 "required_approving_review_count": 3,
                 "require_code_owner_review": False,
                 "require_last_push_approval": True,
@@ -275,6 +277,58 @@ async def test_merge_requirements_layers_policy_and_uses_current_valid_reviews()
     assert any("query(" in arg for arg in graphql_calls[0])
 
 
+async def test_merge_requirements_counts_preserved_stale_approval_when_policy_allows_it() -> None:
+    head = "b" * 40
+    stale = "c" * 40
+    client = FakeGhClient(
+        [
+            _pr(head_sha=head),
+            [],
+            {"protected": True},
+            _classic_protection(dismiss_stale_reviews=False),
+            _repo_methods(),
+            _pr(head_sha=head),
+            _checks(),
+            _pr(head_sha=head),
+            {"behind_by": 0},
+            _pr(head_sha=head),
+            [
+                _review(
+                    1,
+                    "APPROVED",
+                    head,
+                    reviewer="alice",
+                    submitted_at="2026-08-12T10:00:00Z",
+                ),
+                _review(
+                    2,
+                    "APPROVED",
+                    stale,
+                    reviewer="bob",
+                    submitted_at="2026-08-12T10:01:00Z",
+                ),
+            ],
+            _requested(),
+            _graphql(decision="APPROVED"),
+            _pr(head_sha=head),
+            _pr(head_sha=head),
+        ]
+    )
+
+    result = await gh_get_merge_requirements(
+        "octo",
+        "repo",
+        21,
+        head,
+        ctx=_context(client),
+    )
+
+    assert result.required_approvals == 2
+    assert [review.reviewer for review in result.current_valid_approvals] == ["alice", "bob"]
+    assert result.current_valid_approval_count == 2
+    assert result.review_requirements_satisfied is True
+
+
 async def test_merge_requirements_head_mismatch_returns_identity_only() -> None:
     expected = "b" * 40
     current = "c" * 40
@@ -372,6 +426,7 @@ async def test_merge_requirements_missing_rule_visibility_is_not_no_requirement(
     assert result.policy_evidence_complete is False
     assert result.required_status_checks == []
     assert result.required_approvals is None
+    assert result.current_valid_approval_count is None
     assert result.code_owner_review_required is None
     assert result.last_push_approval_required is None
     assert result.conversation_resolution_required is None
