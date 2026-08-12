@@ -4,9 +4,11 @@ A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
 runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
+Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write.
+
 ## Tools
 
-### Read-only (33)
+### Read-only (35)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -23,6 +25,10 @@ direct JSON output or a post-write readback.
   head SHAs, with truncation metadata and a SHA-256 fingerprint.
 - `gh_list_pr_files`: list one bounded page of changed files and patch fragments.
 - `gh_list_pr_commits`: list one bounded page of commits in a pull request.
+- `gh_list_pr_reviews`: list one bounded page of formal reviews for an exact PR head,
+  preserving pagination and exact-head evidence.
+- `gh_get_pr_review_state`: aggregate exact-head review/request/thread evidence without
+  treating truncated evidence as complete.
 - `gh_get_repo`: get details of a specific repository.
 - `gh_list_repos`: list repositories for a user or organization.
 - `gh_list_releases`: list releases in a repository.
@@ -47,18 +53,24 @@ direct JSON output or a post-write readback.
 - `gh_list_milestones`: list milestones in a repository.
 - `gh_get_file_contents`: read a complete file at an exact branch, tag, or commit ref.
 - `gh_get_ref`: resolve one exact branch or tag Git ref, preserving direct
-         object identity and returning the peeled commit SHA for annotated tags.
+  object identity and returning the peeled commit SHA for annotated tags.
 - `gh_get_commit`: read one exact 40-character Git commit SHA with its immutable
   tree, ordered parents, author/committer, message, and GitHub verification evidence.
 
-### Write (17)
+### Write (21)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
 - `gh_create_repo`: create a new repository (write, disabled by default).
 - `gh_create_release`: create a new release (write, disabled by default).
+- `gh_create_release_exact`: create a release against one exact target commit with
+  fail-closed absence preconditions and authoritative readback (write, disabled by default).
 - `gh_run_workflow`: trigger a workflow dispatch event (write, disabled by default).
+- `gh_run_workflow_exact`: dispatch one workflow only when the requested ref resolves
+  to the expected exact SHA, with post-dispatch evidence (write, disabled by default).
 - `gh_edit_issue`: edit an existing issue (write, disabled by default).
+- `gh_set_issue_state`: change issue state only from the caller-declared expected state
+  and verify the resulting state by readback (write, disabled by default).
 - `gh_create_label`: create a new label (write, disabled by default).
 - `gh_upsert_label`: create or overwrite a label (destructive write, disabled by default).
 - `gh_edit_label`: edit an existing label (write, disabled by default).
@@ -69,12 +81,34 @@ direct JSON output or a post-write readback.
 - `gh_create_branch_from_sha`: create a branch at one exact 40-character commit SHA
   without moving an existing ref (additive write, disabled by default).
 - `gh_edit_pr`: edit an existing pull request (write, disabled by default).
+- `gh_set_pr_draft_state`: change PR draft state only for the expected exact head and
+  expected current draft state, with authoritative readback (write, disabled by default).
 - `gh_submit_pr_review`: submit a formal review pinned to an exact PR head SHA
   (additive write, disabled by default).
 - `gh_merge_pr`: merge an exact reviewed PR head with an explicit strategy
   (destructive write, separately disabled by default).
 - `gh_commit_files`: atomically create or replace files in one branch commit
   (destructive write, separately disabled by default).
+
+## 0.7.0 architecture and evidence contract
+
+`src/mcp_gh_server/server.py` is the composition root; public tool implementations live in
+cohesive domain modules under `src/mcp_gh_server/tools/`. GitHub request execution is
+centralized through the shared `GitHubRequestGovernor` rather than duplicated in individual
+tools.
+
+Writes remain default-off. Exact-state tools preserve expected state/SHA preconditions where
+applicable, perform one mutation attempt, and require authoritative readback before reporting
+verified success. Ambiguous or partial writes are not blindly retried.
+
+Evidence reads remain explicitly bounded. Callers must preserve truncation/completeness
+metadata, byte counts, digests, and warnings rather than presenting partial artifact or log
+evidence as complete.
+
+0.7.0 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public `gh api`,
+a generic shell/subprocess MCP tool, administrator bypasses, automatic repeated workflow
+rerun/dispatch, artifact/log deletion, or branch-protection/ruleset mutation. See
+`docs/release_gate_0_7_0.md` for the release acceptance mapping.
 
 ## Install
 
@@ -151,7 +185,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.6.3`, but availability in
+The action surface is version `0.7.0`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -237,7 +271,7 @@ MCP tool invocation reached server: tool=gh_get_pr
 ```
 
 After deploying the current release, delete and reinstall the Plus custom plugin and
-verify `gh_server_info` reports both versions as 0.6.3. An immediate namespace-disabled
+verify `gh_server_info` reports both versions as 0.7.0. An immediate namespace-disabled
 response with no `gh_get_pr` marker still proves rejection occurred in the host before
 the revised server operation. It does not indicate GitHub authentication, repository,
 PR, or readback failure and must not be retried as though a GitHub write partially ran.
