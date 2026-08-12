@@ -355,7 +355,8 @@ async def test_successful_prerelease_uses_exact_sha_and_explicit_non_latest_read
     ]
 
 
-async def test_successful_write_with_wrong_tag_target_reports_semantic_mismatch_without_replay() -> None:
+async def test_successful_write_with_wrong_tag_target_reports_semantic_mismatch_without_replay(
+) -> None:
     expected = _sha(9)
     client = ReleaseExactClient(
         read_results=_successful_reads(expected, tag_sha=_sha(10)),
