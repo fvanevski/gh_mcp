@@ -387,3 +387,52 @@ async def test_temp_archive_state_is_removed_after_success(
 
     assert result.content == "ok"
     assert list(tmp_path.iterdir()) == []
+
+
+async def test_archive_at_exact_download_hard_limit_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _zip_bytes([("evidence.txt", b"ok")])
+    monkeypatch.setattr(artifact_content, "_MAX_ARTIFACT_ARCHIVE_BYTES", len(archive))
+    _install_archive(monkeypatch, archive)
+    client = FakeGhClient([_artifact(size_in_bytes=len(archive))])
+
+    result = await gh_list_artifact_files("octo", "repo", 77, ctx=_context(client))
+
+    assert result.archive_bytes == len(archive)
+    assert [entry.path for entry in result.files] == ["evidence.txt"]
+
+
+async def test_archive_at_exact_uncompressed_hard_limit_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(artifact_content, "_MAX_ARTIFACT_UNCOMPRESSED_BYTES", 4)
+    archive = _zip_bytes([("evidence.txt", b"four")])
+    _install_archive(monkeypatch, archive)
+    client = FakeGhClient([_artifact(size_in_bytes=len(archive))])
+
+    result = await gh_list_artifact_files("octo", "repo", 77, ctx=_context(client))
+
+    assert result.files[0].size_in_bytes == 4
+
+
+async def test_file_at_exact_read_hard_limit_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(artifact_content, "_MAX_ARTIFACT_FILE_BYTES", 4)
+    archive = _zip_bytes([("evidence.txt", b"four")])
+    _install_archive(monkeypatch, archive)
+    client = FakeGhClient([_artifact(size_in_bytes=len(archive))])
+
+    result = await gh_read_artifact_file(
+        "octo",
+        "repo",
+        77,
+        "evidence.txt",
+        ctx=_context(client),
+    )
+
+    assert result.content == "four"
+    assert result.bytes_returned == 4
+    assert result.total_bytes == 4
+    assert result.truncated is False
