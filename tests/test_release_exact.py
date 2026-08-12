@@ -225,7 +225,7 @@ async def test_existing_tag_fails_closed_when_absence_is_required() -> None:
     expected = _sha(4)
     client = ReleaseExactClient(read_results=[_commit(expected), _tag_ref(expected)])
 
-    with pytest.raises(WritePreconditionMismatch, match="tag refs/tags/v1.0.0 absence"):
+    with pytest.raises(WritePreconditionMismatch, match=r"tag refs/tags/v1.0.0 absence"):
         await gh_create_release_exact(
             "octo",
             "repo",
@@ -249,7 +249,7 @@ async def test_existing_release_fails_closed_when_absence_is_required() -> None:
         ]
     )
 
-    with pytest.raises(WritePreconditionMismatch, match="release 'v1.0.0' absence"):
+    with pytest.raises(WritePreconditionMismatch, match=r"release 'v1.0.0' absence"):
         await gh_create_release_exact(
             "octo",
             "repo",
@@ -355,8 +355,9 @@ async def test_successful_prerelease_uses_exact_sha_and_explicit_non_latest_read
     ]
 
 
-async def test_successful_write_with_wrong_tag_target_reports_semantic_mismatch_without_replay(
-) -> None:
+async def test_successful_write_with_wrong_tag_target_reports_semantic_mismatch_without_replay() -> (  # noqa: E501
+    None
+):
     expected = _sha(9)
     client = ReleaseExactClient(
         read_results=_successful_reads(expected, tag_sha=_sha(10)),

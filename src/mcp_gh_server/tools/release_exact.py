@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context
@@ -293,7 +293,7 @@ async def gh_create_release_exact(
     async def precondition() -> WritePrecondition[str | None]:
         await require_write_precondition(
             read_target_sha,
-            normalized_target_sha,
+            cast(str | None, normalized_target_sha),
             label=f"release target commit {normalized_target_sha}",
         )
 
@@ -321,7 +321,7 @@ async def gh_create_release_exact(
 
         return await require_write_precondition(
             read_target_sha,
-            normalized_target_sha,
+            cast(str | None, normalized_target_sha),
             label=f"release target commit {normalized_target_sha}",
         )
 
