@@ -172,9 +172,7 @@ def _aggregate_pagination(
     warning = None
     if has_more:
         if total_count is None:
-            warning = (
-                f"{label} exceeds the aggregate limit of {limit}; additional evidence exists."
-            )
+            warning = f"{label} exceeds the aggregate limit of {limit}; additional evidence exists."
         else:
             warning = (
                 f"{label} was truncated: returned {returned_count} of {total_count} records "
@@ -580,9 +578,7 @@ async def gh_get_pr_review_state(
         label="Review evidence",
     )
 
-    requested_reviewers, requested_teams = await _read_requested_reviewers(
-        app, owner, repo, number
-    )
+    requested_reviewers, requested_teams = await _read_requested_reviewers(app, owner, repo, number)
     thread_limit = min(app.settings.hard_max_results, _GITHUB_THREADS_PER_PAGE_MAX)
     unresolved_threads, threads_evidence, review_decision = await _read_thread_state(
         app,
