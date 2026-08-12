@@ -95,7 +95,6 @@ def test_result_model_exposes_exact_write_outcome_contract() -> None:
     } == set(schema["properties"])
 
 
-@pytest.mark.asyncio
 async def test_close_completed_checks_state_writes_once_and_verifies_readback() -> None:
     closed_at = "2026-08-11T20:01:00Z"
     client = IssueStateClient(
@@ -137,7 +136,6 @@ async def test_close_completed_checks_state_writes_once_and_verifies_readback() 
 
 
 @pytest.mark.parametrize("reason", ["not_planned", "duplicate"])
-@pytest.mark.asyncio
 async def test_close_supports_other_valid_closed_reasons(reason: str) -> None:
     client = IssueStateClient(
         read_results=[
@@ -166,7 +164,6 @@ async def test_close_supports_other_valid_closed_reasons(reason: str) -> None:
     assert client.payloads == [{"state": "closed", "state_reason": reason}]
 
 
-@pytest.mark.asyncio
 async def test_reopen_requires_reopened_reason_and_reports_readback_timestamp() -> None:
     reopened_at = "2026-08-11T20:03:00Z"
     client = IssueStateClient(
@@ -200,7 +197,6 @@ async def test_reopen_requires_reopened_reason_and_reports_readback_timestamp() 
     assert result.state_matches_requested is True
 
 
-@pytest.mark.asyncio
 async def test_stale_expected_state_fails_before_mutation_or_readback() -> None:
     client = IssueStateClient(
         read_results=[
@@ -237,7 +233,6 @@ async def test_stale_expected_state_fails_before_mutation_or_readback() -> None:
         ("closed", "closed", "completed"),
     ],
 )
-@pytest.mark.asyncio
 async def test_invalid_state_reason_combinations_fail_without_github_calls(
     expected_state: str,
     new_state: str,
@@ -259,7 +254,6 @@ async def test_invalid_state_reason_combinations_fail_without_github_calls(
     assert client.calls == []
 
 
-@pytest.mark.asyncio
 async def test_known_mutation_failure_is_not_replayed_and_returns_failed_outcome() -> None:
     client = IssueStateClient(
         read_results=[
@@ -298,7 +292,6 @@ async def test_known_mutation_failure_is_not_replayed_and_returns_failed_outcome
     assert "was not retried" in result.warning
 
 
-@pytest.mark.asyncio
 async def test_readback_failure_preserves_completed_write_as_unverified() -> None:
     client = IssueStateClient(
         read_results=[
@@ -334,7 +327,6 @@ async def test_readback_failure_preserves_completed_write_as_unverified() -> Non
     assert "Do not retry automatically" in result.warning
 
 
-@pytest.mark.asyncio
 async def test_wrong_reason_readback_is_not_verified_success() -> None:
     client = IssueStateClient(
         read_results=[
@@ -367,7 +359,6 @@ async def test_wrong_reason_readback_is_not_verified_success() -> None:
     assert "does not match the requested state" in result.warning
 
 
-@pytest.mark.asyncio
 async def test_write_gate_blocks_transition_before_any_github_call() -> None:
     client = IssueStateClient()
 
