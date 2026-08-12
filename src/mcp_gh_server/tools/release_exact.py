@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
-from urllib.parse import quote
 
 from mcp.server.mcpserver import Context
 from pydantic import Field
@@ -31,6 +30,9 @@ from ..write_contracts import (
     run_api_json_write_with_metadata,
 )
 from .git import gh_get_commit, gh_get_ref
+
+_RELEASES_PER_PAGE = 100
+_MAX_RELEASE_LIST_PAGES = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,54 +88,87 @@ def _parse_release(raw: object, *, resource: str) -> _ReleaseRecord:
     )
 
 
-async def _confirm_release_read_access(
+async def _require_draft_release_visibility(
     owner: str,
     repo: str,
     *,
     ctx: Context[AppContext],
 ) -> None:
-    """Prove release-read access before classifying an exact release 404 as absence."""
+    """Prove push access before treating a release listing as draft-complete."""
 
     app = app_from_context(ctx)
-    result = await app.client.run(
+    raw = await app.client.run(
         "api",
-        f"repos/{owner}/{repo}/releases",
+        f"repos/{owner}/{repo}",
         "-X",
         "GET",
-        "-f",
-        "per_page=1",
     )
-    if not isinstance(result, list):
+    permissions = raw.get("permissions") if isinstance(raw, dict) else None
+    push = permissions.get("push") if isinstance(permissions, dict) else None
+    if push is not True:
         raise RuntimeError(
-            "GitHub returned an unexpected releases-read probe response; "
-            "release absence is unverified"
+            "GitHub repository permissions do not prove push access; "
+            "draft release visibility is unverified"
         )
 
 
-async def _read_release_by_tag(
+async def _read_release_by_tag_all_states(
     owner: str,
     repo: str,
     tag_name: str,
     *,
     ctx: Context[AppContext],
 ) -> _ReleaseRecord | None:
-    """Read one exact release by tag, with permission-safe absence classification."""
+    """Find one release by exact tag across published, prerelease, and draft states."""
 
+    await _require_draft_release_visibility(owner, repo, ctx=ctx)
     app = app_from_context(ctx)
-    tag_path = quote(tag_name, safe="")
-    try:
+    for page in range(1, _MAX_RELEASE_LIST_PAGES + 1):
         raw = await app.client.run(
             "api",
-            f"repos/{owner}/{repo}/releases/tags/{tag_path}",
+            f"repos/{owner}/{repo}/releases",
             "-X",
             "GET",
+            "-f",
+            f"per_page={_RELEASES_PER_PAGE}",
+            "-f",
+            f"page={page}",
         )
-    except GitHubRequestError as error:
-        if error.status_code != 404:
-            raise
-        await _confirm_release_read_access(owner, repo, ctx=ctx)
-        return None
-    return _parse_release(raw, resource=f"release {tag_name!r}")
+        if not isinstance(raw, list):
+            raise RuntimeError(
+                "GitHub returned an unexpected releases-list response; "
+                "release absence is unverified"
+            )
+        for item in raw:
+            release = _parse_release(item, resource=f"release-list item on page {page}")
+            if release.tag_name == tag_name:
+                return release
+        if len(raw) < _RELEASES_PER_PAGE:
+            return None
+
+    raise RuntimeError(
+        f"GitHub release listing exceeded {_MAX_RELEASE_LIST_PAGES * _RELEASES_PER_PAGE} "
+        "items; release absence is unverified"
+    )
+
+
+async def _read_release_by_id(
+    owner: str,
+    repo: str,
+    release_id: int,
+    *,
+    ctx: Context[AppContext],
+) -> _ReleaseRecord:
+    """Read one exact release identifier, including draft releases."""
+
+    app = app_from_context(ctx)
+    raw = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/releases/{release_id}",
+        "-X",
+        "GET",
+    )
+    return _parse_release(raw, resource=f"release id {release_id}")
 
 
 async def _read_latest_release_id(
@@ -155,7 +190,7 @@ async def _read_latest_release_id(
     except GitHubRequestError as error:
         if error.status_code != 404:
             raise
-        await _confirm_release_read_access(owner, repo, ctx=ctx)
+        await _require_draft_release_visibility(owner, repo, ctx=ctx)
         return None
     return _parse_release(raw, resource="latest release").release_id
 
@@ -198,10 +233,10 @@ async def _read_target_commit_sha(
     title="Create release at exact target",
     description=(
         "Additive write: create one GitHub release using an exact 40-character target commit "
-        "SHA. The tool verifies target identity, optionally requires the tag and release to be "
-        "absent, performs exactly one governed release-creation request, and then verifies the "
-        "created tag commit, release state, and explicit latest/non-latest state. It never "
-        "retries an ambiguous release mutation automatically."
+        "SHA. The tool verifies target identity, optionally requires the tag and every release "
+        "state (including drafts) to be absent, performs exactly one governed release-creation "
+        "request, and then verifies the created release, tag commit, and explicit latest/non-"
+        "latest state. It never retries an ambiguous release mutation automatically."
     ),
     annotations=ADD_EXTERNAL,
 )
@@ -244,7 +279,7 @@ async def gh_create_release_exact(
         Field(
             description=(
                 "Explicit latest-release policy. Pass false for release candidates, "
-                "prereleases, and any release that must not become Latest."
+                "prereleases, drafts, and any release that must not become Latest."
             )
         ),
     ],
@@ -270,6 +305,7 @@ async def gh_create_release_exact(
     require_write_enabled(app, owner, repo, action="release_create")
     normalized_target_sha = expected_target_sha.casefold()
     resolved_target_sha = normalized_target_sha
+    created_release_id: int | None = None
 
     async def read_target_sha() -> str | None:
         nonlocal resolved_target_sha
@@ -287,7 +323,7 @@ async def gh_create_release_exact(
         return await _read_tag_commit_sha(owner, repo, tag_name, ctx=ctx)
 
     async def read_release_id() -> int | None:
-        release = await _read_release_by_tag(owner, repo, tag_name, ctx=ctx)
+        release = await _read_release_by_tag_all_states(owner, repo, tag_name, ctx=ctx)
         return release.release_id if release is not None else None
 
     async def precondition() -> WritePrecondition[str | None]:
@@ -326,6 +362,7 @@ async def gh_create_release_exact(
         )
 
     async def write() -> GitHubRequestResult[Any]:
+        nonlocal created_release_id
         payload: dict[str, Any] = {
             "tag_name": tag_name,
             "target_commitish": normalized_target_sha,
@@ -337,15 +374,23 @@ async def gh_create_release_exact(
             payload["name"] = name
         if body is not None:
             payload["body"] = body
-        return await run_api_json_write_with_metadata(
+        result = await run_api_json_write_with_metadata(
             app.client,
             "POST",
             f"repos/{owner}/{repo}/releases",
             payload,
         )
+        raw_release_id = result.value.get("id") if isinstance(result.value, dict) else None
+        if isinstance(raw_release_id, int) and raw_release_id > 0:
+            created_release_id = raw_release_id
+        return result
 
     async def readback() -> _ReleaseReadback:
-        release = await _read_release_by_tag(owner, repo, tag_name, ctx=ctx)
+        release = (
+            await _read_release_by_id(owner, repo, created_release_id, ctx=ctx)
+            if created_release_id is not None
+            else await _read_release_by_tag_all_states(owner, repo, tag_name, ctx=ctx)
+        )
         if release is None:
             raise RuntimeError(
                 f"created release {tag_name!r} is absent during authoritative readback"

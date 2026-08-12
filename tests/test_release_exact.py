@@ -18,6 +18,7 @@ from mcp_gh_server.request_governor import (
 )
 from mcp_gh_server.server import AppContext
 from mcp_gh_server.settings import Settings
+from mcp_gh_server.tools import release_exact
 from mcp_gh_server.tools.release_exact import gh_create_release_exact
 from mcp_gh_server.write_contracts import WritePreconditionMismatch
 
@@ -132,18 +133,23 @@ def _release(
     }
 
 
+def _repo_permissions(*, push: bool = True) -> dict[str, Any]:
+    return {"permissions": {"admin": False, "push": push, "pull": True}}
+
+
 def _missing_ref() -> list[Any]:
     return [GitHubRequestError("missing ref", status_code=404), []]
 
 
 def _missing_release() -> list[Any]:
-    return [GitHubRequestError("missing release", status_code=404), []]
+    return [_repo_permissions(), []]
 
 
 def _successful_reads(
     sha: str,
     *,
     release_id: int = 17,
+    draft: bool = False,
     prerelease: bool = True,
     latest_release_id: int = 99,
     tag_sha: str | None = None,
@@ -153,9 +159,18 @@ def _successful_reads(
         *_missing_ref(),
         *_missing_release(),
         _commit(sha),
-        _release(release_id, prerelease=prerelease),
+        _release(release_id, draft=draft, prerelease=prerelease),
         _tag_ref(tag_sha or sha),
         _release(latest_release_id, tag="v0.9.0", name="v0.9.0", body="Previous"),
+    ]
+
+
+def _precondition_reads(sha: str) -> list[Any]:
+    return [
+        _commit(sha),
+        *_missing_ref(),
+        *_missing_release(),
+        _commit(sha),
     ]
 
 
@@ -239,13 +254,14 @@ async def test_existing_tag_fails_closed_when_absence_is_required() -> None:
     assert client.payloads == []
 
 
-async def test_existing_release_fails_closed_when_absence_is_required() -> None:
+async def test_existing_published_release_fails_closed_when_absence_is_required() -> None:
     expected = _sha(5)
     client = ReleaseExactClient(
         read_results=[
             _commit(expected),
             *_missing_ref(),
-            _release(17),
+            _repo_permissions(),
+            [_release(17)],
         ]
     )
 
@@ -259,17 +275,65 @@ async def test_existing_release_fails_closed_when_absence_is_required() -> None:
             ctx=_context(client),
         )
 
-    assert [kind for kind, _, _ in client.calls] == ["read", "read", "read", "read"]
+    assert [kind for kind, _, _ in client.calls].count("write") == 0
     assert client.payloads == []
 
 
-async def test_release_404_is_not_absence_when_release_read_probe_is_forbidden() -> None:
+async def test_existing_draft_release_fails_closed_when_absence_is_required() -> None:
     expected = _sha(6)
     client = ReleaseExactClient(
         read_results=[
             _commit(expected),
             *_missing_ref(),
-            GitHubRequestError("release hidden", status_code=404),
+            _repo_permissions(),
+            [_release(18, draft=True)],
+        ]
+    )
+
+    with pytest.raises(WritePreconditionMismatch, match=r"release 'v1.0.0' absence"):
+        await gh_create_release_exact(
+            "octo",
+            "repo",
+            "v1.0.0",
+            expected,
+            False,
+            ctx=_context(client),
+        )
+
+    assert [kind for kind, _, _ in client.calls].count("write") == 0
+    assert client.payloads == []
+
+
+async def test_release_absence_requires_push_access_for_draft_complete_listing() -> None:
+    expected = _sha(7)
+    client = ReleaseExactClient(
+        read_results=[
+            _commit(expected),
+            *_missing_ref(),
+            _repo_permissions(push=False),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="draft release visibility is unverified"):
+        await gh_create_release_exact(
+            "octo",
+            "repo",
+            "v1.0.0",
+            expected,
+            False,
+            ctx=_context(client),
+        )
+
+    assert [kind for kind, _, _ in client.calls].count("write") == 0
+    assert client.payloads == []
+
+
+async def test_release_permission_error_is_not_misclassified_as_absence() -> None:
+    expected = _sha(8)
+    client = ReleaseExactClient(
+        read_results=[
+            _commit(expected),
+            *_missing_ref(),
             GitHubRequestError("forbidden", status_code=403),
         ]
     )
@@ -285,7 +349,86 @@ async def test_release_404_is_not_absence_when_release_read_probe_is_forbidden()
         )
 
     assert error.value.status_code == 403
-    assert [kind for kind, _, _ in client.calls] == ["read", "read", "read", "read", "read"]
+    assert [kind for kind, _, _ in client.calls].count("write") == 0
+    assert client.payloads == []
+
+
+async def test_release_listing_pages_until_exact_tag_is_found() -> None:
+    expected = _sha(9)
+    first_page = [
+        _release(
+            1_000 + index,
+            tag=f"v0.{index}.0",
+            name=f"v0.{index}.0",
+            body=None,
+        )
+        for index in range(100)
+    ]
+    client = ReleaseExactClient(
+        read_results=[
+            _commit(expected),
+            *_missing_ref(),
+            _repo_permissions(),
+            first_page,
+            [_release(17, draft=True)],
+        ]
+    )
+
+    with pytest.raises(WritePreconditionMismatch, match=r"release 'v1.0.0' absence"):
+        await gh_create_release_exact(
+            "octo",
+            "repo",
+            "v1.0.0",
+            expected,
+            False,
+            ctx=_context(client),
+        )
+
+    release_list_calls = [
+        args
+        for kind, args, _ in client.calls
+        if kind == "read" and args[:2] == ("api", "repos/octo/repo/releases")
+    ]
+    assert len(release_list_calls) == 2
+    assert "page=1" in release_list_calls[0]
+    assert "page=2" in release_list_calls[1]
+    assert client.payloads == []
+
+
+async def test_release_listing_safety_bound_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _sha(10)
+    first_page = [
+        _release(
+            2_000 + index,
+            tag=f"v0.{index}.0",
+            name=f"v0.{index}.0",
+            body=None,
+        )
+        for index in range(100)
+    ]
+    monkeypatch.setattr(release_exact, "_MAX_RELEASE_LIST_PAGES", 1)
+    client = ReleaseExactClient(
+        read_results=[
+            _commit(expected),
+            *_missing_ref(),
+            _repo_permissions(),
+            first_page,
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="release absence is unverified"):
+        await gh_create_release_exact(
+            "octo",
+            "repo",
+            "v1.0.0",
+            expected,
+            False,
+            ctx=_context(client),
+        )
+
+    assert [kind for kind, _, _ in client.calls].count("write") == 0
     assert client.payloads == []
 
 
@@ -297,7 +440,7 @@ async def test_release_specific_write_gate_denies_before_any_github_request() ->
             "octo",
             "repo",
             "v1.0.0",
-            _sha(7),
+            _sha(11),
             False,
             ctx=_context(client, release_creation_enabled=False),
         )
@@ -306,7 +449,7 @@ async def test_release_specific_write_gate_denies_before_any_github_request() ->
 
 
 async def test_successful_prerelease_uses_exact_sha_and_explicit_non_latest_readback() -> None:
-    expected = _sha(8)
+    expected = _sha(12)
     client = ReleaseExactClient(
         read_results=_successful_reads(expected),
         write_results=[
@@ -353,14 +496,52 @@ async def test_successful_prerelease_uses_exact_sha_and_explicit_non_latest_read
             "body": "Release notes",
         }
     ]
+    assert (
+        "api",
+        "repos/octo/repo/releases/17",
+        "-X",
+        "GET",
+    ) in [args for kind, args, _ in client.calls if kind == "read"]
 
 
-async def test_successful_write_with_wrong_tag_target_reports_semantic_mismatch_without_replay() -> (  # noqa: E501
-    None
-):
-    expected = _sha(9)
+async def test_successful_draft_uses_release_id_for_mandatory_readback() -> None:
+    expected = _sha(13)
     client = ReleaseExactClient(
-        read_results=_successful_reads(expected, tag_sha=_sha(10)),
+        read_results=_successful_reads(expected, draft=True, prerelease=False),
+        write_results=[GitHubRequestResult(value=_release(17, draft=True))],
+    )
+
+    result = await gh_create_release_exact(
+        "octo",
+        "repo",
+        "v1.0.0",
+        expected,
+        False,
+        ctx=_context(client),
+        name="v1.0.0",
+        body="Release notes",
+        draft=True,
+    )
+
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
+    assert result.release_id == 17
+    assert result.is_draft is True
+    assert result.is_latest is False
+    assert [kind for kind, _, _ in client.calls].count("write") == 1
+    assert (
+        "api",
+        "repos/octo/repo/releases/17",
+        "-X",
+        "GET",
+    ) in [args for kind, args, _ in client.calls if kind == "read"]
+
+
+async def test_wrong_tag_target_is_semantic_mismatch_without_replay() -> None:
+    expected = _sha(14)
+    client = ReleaseExactClient(
+        read_results=_successful_reads(expected, tag_sha=_sha(15)),
         write_results=[GitHubRequestResult(value=_release(17, prerelease=True))],
     )
 
@@ -377,16 +558,22 @@ async def test_successful_write_with_wrong_tag_target_reports_semantic_mismatch_
     assert result.write_completed is True
     assert result.readback_completed is True
     assert result.state_matches_requested is False
-    assert result.tag_commit_sha == _sha(10)
+    assert result.tag_commit_sha == _sha(15)
     assert result.warning is not None
     assert "resulting state does not match the requested state" in result.warning
     assert [kind for kind, _, _ in client.calls].count("write") == 1
 
 
 async def test_ambiguous_write_is_never_replayed_and_matching_readback_remains_unknown() -> None:
-    expected = _sha(11)
+    expected = _sha(16)
     client = ReleaseExactClient(
-        read_results=_successful_reads(expected),
+        read_results=[
+            *_precondition_reads(expected),
+            _repo_permissions(),
+            [_release(17, prerelease=True)],
+            _tag_ref(expected),
+            _release(99, tag="v0.9.0", name="v0.9.0", body="Previous"),
+        ],
         write_results=[
             GitHubRequestError(
                 "connection dropped",
@@ -420,6 +607,46 @@ async def test_ambiguous_write_is_never_replayed_and_matching_readback_remains_u
     assert len(client.payloads) == 1
 
 
+async def test_ambiguous_draft_write_uses_all_state_readback_without_replay() -> None:
+    expected = _sha(17)
+    client = ReleaseExactClient(
+        read_results=[
+            *_precondition_reads(expected),
+            _repo_permissions(),
+            [_release(17, draft=True)],
+            _tag_ref(expected),
+            _release(99, tag="v0.9.0", name="v0.9.0", body="Previous"),
+        ],
+        write_results=[
+            GitHubRequestError(
+                "connection dropped",
+                ambiguous=True,
+                metadata=GitHubRequestMetadata(request_id="REQ-DRAFT-AMB"),
+            )
+        ],
+    )
+
+    result = await gh_create_release_exact(
+        "octo",
+        "repo",
+        "v1.0.0",
+        expected,
+        False,
+        ctx=_context(client),
+        name="v1.0.0",
+        body="Release notes",
+        draft=True,
+    )
+
+    assert result.write_completed is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
+    assert result.is_draft is True
+    assert result.request_id == "REQ-DRAFT-AMB"
+    assert [kind for kind, _, _ in client.calls].count("write") == 1
+    assert len(client.payloads) == 1
+
+
 async def test_latest_true_is_rejected_for_prerelease_before_any_github_request() -> None:
     client = ReleaseExactClient()
 
@@ -428,10 +655,27 @@ async def test_latest_true_is_rejected_for_prerelease_before_any_github_request(
             "octo",
             "repo",
             "v1.0.0-rc1",
-            _sha(12),
+            _sha(18),
             True,
             ctx=_context(client),
             prerelease=True,
+        )
+
+    assert client.calls == []
+
+
+async def test_latest_true_is_rejected_for_draft_before_any_github_request() -> None:
+    client = ReleaseExactClient()
+
+    with pytest.raises(ValueError, match="cannot be marked as latest"):
+        await gh_create_release_exact(
+            "octo",
+            "repo",
+            "v1.0.0",
+            _sha(19),
+            True,
+            ctx=_context(client),
+            draft=True,
         )
 
     assert client.calls == []
