@@ -481,3 +481,80 @@ def test_tail_and_markers_are_mutually_exclusive() -> None:
             tail_bytes=10,
             start_marker="start",
         )
+
+
+async def test_run_logs_paginates_complete_job_set_under_configured_cap() -> None:
+    first_page_jobs = [
+        _job(job_id=1_000 + index, name=f"skip-{index}", conclusion="skipped")
+        for index in range(100)
+    ]
+    final_job = _job(job_id=2_000, name="final")
+    page_one = _jobs(*first_page_jobs, total_count=101)
+    page_two = _jobs(final_job, total_count=101)
+    client = FakeGhClient(
+        [_run(), page_one, page_two, _run(), page_one, page_two],
+        streams=["final log"],
+    )
+
+    result = await gh_get_run_logs(
+        "octo",
+        "repo",
+        123,
+        2,
+        ctx=_context(client, max_jobs=200),
+    )
+
+    assert result.text == "final log"
+    page_args = [
+        args
+        for args, _ in client.calls
+        if args[:2] == ("api", "repos/octo/repo/actions/runs/123/attempts/2/jobs")
+    ]
+    assert [args[args.index("-f") + 1] for args in page_args] == [
+        "page=1",
+        "page=2",
+        "page=1",
+        "page=2",
+    ]
+    assert len(client.stream_calls) == 1
+
+
+async def test_run_logs_fail_closed_if_job_membership_changes_after_stream() -> None:
+    before_job = _job(job_id=456)
+    after_job = _job(job_id=457)
+    client = FakeGhClient(
+        [_run(), _jobs(before_job), _run(), _jobs(after_job)],
+        streams=["log"],
+    )
+
+    with pytest.raises(RuntimeError, match="job membership changed"):
+        await gh_get_run_logs("octo", "repo", 123, 2, ctx=_context(client))
+
+
+async def test_job_logs_fail_closed_if_job_identity_changes_after_stream() -> None:
+    client = FakeGhClient(
+        [
+            _job(),
+            _run(),
+            _jobs(_job()),
+            _job(job_id=999),
+        ],
+        streams=["log"],
+    )
+
+    with pytest.raises(RuntimeError, match="Workflow job identity mismatch"):
+        await gh_get_job_logs("octo", "repo", 456, 2, ctx=_context(client))
+
+
+def test_streaming_accumulator_missing_end_marker_fails_closed_across_chunks() -> None:
+    accumulator = ActionLogEvidenceAccumulator(
+        requested_max_bytes=64,
+        hard_max_bytes=64,
+        start_marker="<start>",
+        end_marker="<end>",
+    )
+    accumulator.add_text("before <sta")
+    accumulator.add_text("rt>selected but no end")
+
+    with pytest.raises(ValueError, match="end_marker was not found"):
+        accumulator.finish()

@@ -45,9 +45,10 @@ MCP_GH_MAX_ACTION_LOG_JOBS=100
 
 The default is 100 jobs. Values must be a multiple of 100 and may be configured from 100
 to 1000. If an attempt contains more jobs than the deployment cap, `gh_get_run_logs`
-fails closed before any job log is streamed; use `gh_get_job_logs` for a specific job or
-raise the deployment cap deliberately. The tool never silently omits jobs while claiming
-complete run evidence.
+fails closed before any job log is streamed. `gh_get_job_logs` also uses this cap while
+paging the exact attempt's job collection to prove membership; a target beyond the
+configured scan bound fails closed and requires an explicit deployment-cap increase.
+Neither tool silently omits membership evidence while claiming an exact result.
 
 ## Selection and memory bound
 
