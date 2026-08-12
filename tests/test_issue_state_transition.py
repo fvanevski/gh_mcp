@@ -364,6 +364,28 @@ async def test_wrong_reason_readback_is_not_verified_success() -> None:
     assert "does not match the requested state" in result.warning
 
 
+async def test_pull_request_target_is_rejected_before_mutation() -> None:
+    pull_request = _snapshot(state="open", reason=None)
+    pull_request["pull_request"] = {
+        "url": "https://api.github.com/repos/octo/repo/pulls/18"
+    }
+    client = IssueStateClient(read_results=[pull_request])
+
+    with pytest.raises(RuntimeError, match="accepts issues only"):
+        await gh_set_issue_state(
+            "octo",
+            "repo",
+            18,
+            "open",
+            "closed",
+            "completed",
+            ctx=_context(client),
+        )
+
+    assert [kind for kind, _, _ in client.calls] == ["read"]
+    assert client.payloads == []
+
+
 async def test_write_gate_blocks_transition_before_any_github_call() -> None:
     client = IssueStateClient()
 
