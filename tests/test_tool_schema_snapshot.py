@@ -48,6 +48,14 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "number", "page", "per_page"},
         {"owner", "repo", "number"},
     ),
+    "gh_list_pr_reviews": (
+        {"owner", "repo", "number", "page", "per_page"},
+        {"owner", "repo", "number"},
+    ),
+    "gh_get_pr_review_state": (
+        {"owner", "repo", "number", "expected_head_sha"},
+        {"owner", "repo", "number", "expected_head_sha"},
+    ),
     "gh_get_pr_checks": (
         {"owner", "repo", "number", "required_only", "max_checks"},
         {"owner", "repo", "number"},
@@ -274,6 +282,8 @@ READ_ONLY_TOOLS = {
     "gh_get_pr_diff",
     "gh_list_pr_files",
     "gh_list_pr_commits",
+    "gh_list_pr_reviews",
+    "gh_get_pr_review_state",
     "gh_get_pr_checks",
     "gh_get_repo",
     "gh_list_repos",
@@ -337,7 +347,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 51
+    assert len(tools) == 53
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -373,6 +383,42 @@ async def test_exact_tool_surface_snapshot() -> None:
         "closed_at",
         "reopened_at",
     } <= set(issue_state_output)
+
+    reviews_schema = tools["gh_list_pr_reviews"].input_schema["properties"]
+    assert reviews_schema["number"]["minimum"] == 1
+    assert reviews_schema["page"]["minimum"] == 1
+    assert reviews_schema["per_page"]["anyOf"][0]["maximum"] == 100
+    reviews_output = tools["gh_list_pr_reviews"].output_schema["properties"]
+    assert {
+        "number",
+        "base_sha",
+        "head_sha",
+        "page",
+        "per_page",
+        "returned_count",
+        "has_more",
+        "truncated",
+        "warning",
+        "reviews",
+    } <= set(reviews_output)
+
+    review_state_schema = tools["gh_get_pr_review_state"].input_schema["properties"]
+    assert review_state_schema["number"]["minimum"] == 1
+    assert review_state_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    review_state_output = tools["gh_get_pr_review_state"].output_schema["properties"]
+    assert review_state_output["head_matches_expected"]["type"] == "boolean"
+    assert review_state_output["exact_head_evidence"]["type"] == "boolean"
+    assert {
+        "current_head_approvals",
+        "current_head_change_requests",
+        "current_head_comments",
+        "stale_approvals",
+        "stale_change_requests",
+        "requested_reviewers",
+        "requested_teams",
+        "unresolved_review_threads",
+        "requirements_satisfied",
+    } <= set(review_state_output)
 
     runs_schema = tools["gh_list_runs"].input_schema["properties"]
     assert runs_schema["workflow_id"]["anyOf"][0]["minimum"] == 1
