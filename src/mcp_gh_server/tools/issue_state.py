@@ -51,6 +51,10 @@ def _parse_issue_state_snapshot(raw: object, *, expected_number: int) -> _IssueS
 
     if not isinstance(raw, dict):
         raise RuntimeError("GitHub returned a non-object issue state response")
+    if "pull_request" in raw:
+        raise RuntimeError(
+            "gh_set_issue_state accepts issues only; the requested number identifies a pull request"
+        )
 
     number = raw.get("number")
     state = raw.get("state")
@@ -135,9 +139,10 @@ def _validate_transition(
     title="Set issue state with exact precondition",
     description=(
         "Destructive write: close or reopen exactly one issue only when its current state "
-        "matches expected_state. Closing requires completed, not_planned, or duplicate; "
-        "reopening requires reopened. The mutation is attempted once, comments remain a "
-        "separate tool, and authoritative readback verifies the final state and reason."
+        "matches expected_state. Pull requests are rejected. Closing requires completed, "
+        "not_planned, or duplicate; reopening requires reopened. The mutation is attempted "
+        "once, comments remain a separate tool, and authoritative readback verifies the "
+        "final state and reason."
     ),
     annotations=MUTATE_EXTERNAL,
 )
