@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from mcp.server.mcpserver import Context
 from pydantic import Field
@@ -426,7 +426,7 @@ async def gh_compare_commits(
     status = payload.get("status")
     if status not in {"identical", "ahead", "behind", "diverged"}:
         raise RuntimeError("GitHub comparison returned an unsupported comparison status")
-    comparison_status: ComparisonStatus = status
+    comparison_status = cast(ComparisonStatus, status)
     ahead_by = _nonnegative_int(payload.get("ahead_by"), label="ahead_by count")
     behind_by = _nonnegative_int(payload.get("behind_by"), label="behind_by count")
     total_commits = _nonnegative_int(payload.get("total_commits"), label="total_commits count")
