@@ -169,7 +169,7 @@ def _apply_ruleset_rules(policy: MergePolicy, rules: list[Any]) -> None:
             parameters = raw_rule.get("parameters")
             if not isinstance(parameters, dict):
                 raise RuntimeError("GitHub returned malformed ruleset required-status parameters")
-            policy.up_to_date_required |= _read_bool(
+            strict = _read_bool(
                 parameters,
                 "strict_required_status_checks_policy",
                 label="ruleset required-status strictness",
@@ -177,6 +177,8 @@ def _apply_ruleset_rules(policy: MergePolicy, rules: list[Any]) -> None:
             checks = parameters.get("required_status_checks")
             if not isinstance(checks, list):
                 raise RuntimeError("GitHub returned malformed ruleset required status checks")
+            if strict and checks:
+                policy.up_to_date_required = True
             for item in checks:
                 if not isinstance(item, dict):
                     raise RuntimeError("GitHub returned a malformed ruleset required check")
@@ -275,7 +277,7 @@ async def _read_active_rules(
             "-X",
             "GET",
             "-f",
-            "page=2",
+            f"page={limit + 1}",
             "-f",
             "per_page=1",
         )
