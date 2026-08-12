@@ -74,6 +74,10 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "number", "expected_head_sha"},
         {"owner", "repo", "number", "expected_head_sha"},
     ),
+    "gh_get_merge_requirements": (
+        {"owner", "repo", "number", "expected_head_sha"},
+        {"owner", "repo", "number", "expected_head_sha"},
+    ),
     "gh_get_pr_checks": (
         {"owner", "repo", "number", "required_only", "max_checks"},
         {"owner", "repo", "number"},
@@ -322,6 +326,7 @@ READ_ONLY_TOOLS = {
     "gh_list_pr_commits",
     "gh_list_pr_reviews",
     "gh_get_pr_review_state",
+    "gh_get_merge_requirements",
     "gh_get_pr_checks",
     "gh_get_repo",
     "gh_list_repos",
@@ -387,7 +392,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 56
+    assert len(tools) == 57
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -530,6 +535,39 @@ async def test_exact_tool_surface_snapshot() -> None:
         "unresolved_review_threads",
         "requirements_satisfied",
     } <= set(review_state_output)
+
+    merge_requirements_schema = tools["gh_get_merge_requirements"].input_schema["properties"]
+    assert merge_requirements_schema["number"]["minimum"] == 1
+    assert merge_requirements_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    merge_requirements_output = tools["gh_get_merge_requirements"].output_schema["properties"]
+    assert {
+        "base_ref",
+        "base_sha",
+        "expected_head_sha",
+        "current_head_sha",
+        "head_matches_expected",
+        "exact_head_evidence",
+        "mergeable",
+        "merge_state",
+        "policy_evidence_complete",
+        "checks_evidence_complete",
+        "review_evidence_complete",
+        "up_to_date_evidence_complete",
+        "required_status_checks",
+        "current_required_checks",
+        "required_approvals",
+        "current_valid_approvals",
+        "current_valid_approval_count",
+        "code_owner_review_required",
+        "last_push_approval_required",
+        "conversation_resolution_required",
+        "unresolved_review_threads",
+        "up_to_date_required",
+        "up_to_date",
+        "allowed_merge_methods",
+        "allowed_merge_methods_complete",
+        "warning",
+    } <= set(merge_requirements_output)
 
     runs_schema = tools["gh_list_runs"].input_schema["properties"]
     assert runs_schema["workflow_id"]["anyOf"][0]["minimum"] == 1
