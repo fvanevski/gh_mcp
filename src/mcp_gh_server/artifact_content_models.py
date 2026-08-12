@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -32,7 +34,7 @@ class ArtifactFilesPage(ArtifactArchiveEvidence):
 
     total_count: int = Field(ge=0)
     page: int = Field(ge=1)
-    per_page: int = Field(ge=1)
+    per_page: int = Field(ge=1, le=100)
     has_more: bool
     truncated: bool
     warning: str | None = None
@@ -43,7 +45,7 @@ class ArtifactFileContent(ArtifactArchiveEvidence):
     """Bounded UTF-8 contents for one exact normalized artifact file."""
 
     path: str = Field(min_length=1)
-    encoding: str = Field(pattern=r"^utf-8$")
+    encoding: Literal["utf-8"] = "utf-8"
     content: str
     bytes_returned: int = Field(ge=0)
     total_bytes: int = Field(ge=0)
