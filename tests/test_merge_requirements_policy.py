@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 from typing import Any
 
 from mcp_gh_server.merge_requirements_policy import read_effective_merge_policy
