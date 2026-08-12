@@ -20,6 +20,7 @@ from ..tooling import (
     REPO_RE,
     AppContext,
     app_from_context,
+    logger,
     mcp,
     require_write_enabled,
 )
@@ -81,6 +82,15 @@ def _parse_issue_state_snapshot(raw: object, *, expected_number: int) -> _IssueS
         updated_at=updated_at,
         url=url,
     )
+
+
+def _write_updated_at(raw: object) -> str | None:
+    """Extract the transition update timestamp from a confirmed REST mutation response."""
+
+    if not isinstance(raw, dict):
+        return None
+    updated_at = raw.get("updated_at")
+    return updated_at if isinstance(updated_at, str) else None
 
 
 async def _read_issue_state(
@@ -172,6 +182,7 @@ async def gh_set_issue_state(
 ) -> IssueStateTransitionResult:
     """Perform one guarded issue state transition and verify authoritative readback."""
 
+    logger.info("MCP tool invocation reached server: tool=gh_set_issue_state")
     if number < 1:
         raise ValueError("issue number must be positive")
     app = app_from_context(ctx)
@@ -218,13 +229,10 @@ async def gh_set_issue_state(
         raise RuntimeError("issue state precondition completed without an authoritative snapshot")
 
     current = execution.readback_value
-    reopened_at = (
-        current.updated_at
-        if current is not None
-        and current.state == "open"
-        and current.state_reason == "reopened"
-        else None
-    )
+    reopened_at = None
+    if current is not None and current.state == "open" and current.state_reason == "reopened":
+        reopened_at = _write_updated_at(execution.write_value) or current.updated_at
+
     outcome = execution.outcome
     return IssueStateTransitionResult(
         number=number,
