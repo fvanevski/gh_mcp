@@ -383,9 +383,7 @@ async def _require_no_local_reservation(
         ctx=ctx,
     )
     state = (
-        "transport outcome is unknown"
-        if reservation.outcome_unknown
-        else "run identity is unknown"
+        "transport outcome is unknown" if reservation.outcome_unknown else "run identity is unknown"
     )
     raise WorkflowDispatchUncertainError(
         f"a prior local workflow dispatch for workflow {workflow_id} at head {expected_ref_sha} "
@@ -583,11 +581,7 @@ async def gh_run_workflow_exact(
     run = readback_result.run if readback_result is not None else None
     outcome = execution.outcome
     warning = combine_warnings(outcome.warning, receipt_warning)
-    if (
-        run is not None
-        and dispatch_receipt is not None
-        and run.head_sha != normalized_expected_sha
-    ):
+    if run is not None and dispatch_receipt is not None and run.head_sha != normalized_expected_sha:
         warning = combine_warnings(
             warning,
             "GitHub created the returned workflow run at a different head SHA than the exact-ref "

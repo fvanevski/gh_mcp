@@ -15,8 +15,8 @@ from mcp_gh_server.request_governor import GitHubRequestError, GitHubRequestResu
 from mcp_gh_server.server import AppContext
 from mcp_gh_server.settings import Settings
 from mcp_gh_server.tools.workflow_dispatch import (
-    WorkflowDispatchUncertainError,
     _WORKFLOW_DISPATCH_RESERVATIONS,
+    WorkflowDispatchUncertainError,
     gh_run_workflow_exact,
 )
 
