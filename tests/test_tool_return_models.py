@@ -6,6 +6,7 @@ from typing import Any, get_type_hints
 
 from mcp_gh_server import server
 from mcp_gh_server.action_log_models import WorkflowJobLogs, WorkflowRunLogs
+from mcp_gh_server.issue_state_models import IssueStateTransitionResult
 from mcp_gh_server.models import (
     BranchCreate,
     BranchCreateFromSha,
@@ -55,6 +56,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_list_issues": SearchResults,
     "gh_get_issue": IssueInfo,
     "gh_create_issue": IssueCreate,
+    "gh_set_issue_state": IssueStateTransitionResult,
     "gh_list_prs": SearchResults,
     "gh_get_pr": PullRequestInfo,
     "gh_get_pr_diff": PullRequestDiff,
@@ -101,7 +103,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 50
+    assert len(EXPECTED_RETURN_MODELS) == 51
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)

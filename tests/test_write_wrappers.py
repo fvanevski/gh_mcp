@@ -93,7 +93,7 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     assert result.server_version == "0.6.3"
     assert result.tool_schema_version == "0.6.3"
     assert result.transport == "stdio"
-    assert result.tool_count == 50
+    assert result.tool_count == 51
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert result.pr_merge_enabled is True
