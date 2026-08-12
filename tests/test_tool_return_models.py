@@ -48,6 +48,7 @@ from mcp_gh_server.models import (
 )
 from mcp_gh_server.pr_draft_state_models import PullRequestDraftStateTransitionResult
 from mcp_gh_server.pr_review_models import PullRequestReviewsPage, PullRequestReviewState
+from mcp_gh_server.workflow_dispatch_models import WorkflowDispatchExactResult
 
 EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_server_info": ServerInfo,
@@ -84,6 +85,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_list_workflows": SearchResults,
     "gh_get_workflow": WorkflowInfo,
     "gh_run_workflow": WorkflowRunCreate,
+    "gh_run_workflow_exact": WorkflowDispatchExactResult,
     "gh_list_runs": WorkflowRunsPage,
     "gh_get_run": WorkflowRun,
     "gh_list_run_artifacts": WorkflowArtifactsPage,
@@ -108,7 +110,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 54
+    assert len(EXPECTED_RETURN_MODELS) == 55
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)

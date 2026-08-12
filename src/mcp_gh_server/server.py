@@ -63,6 +63,7 @@ from .tools.pull_requests import (
 )
 from .tools.releases import gh_get_release, gh_list_releases
 from .tools.repositories import gh_get_file_contents, gh_get_repo, gh_list_repos
+from .tools.workflow_dispatch import gh_run_workflow_exact
 
 # Importing tools.git registers that domain's original tools;
 # every public write below is then rebound to the shared compatibility contract.
@@ -242,6 +243,7 @@ __all__ = [
     "gh_list_workflows",
     "gh_merge_pr",
     "gh_run_workflow",
+    "gh_run_workflow_exact",
     "gh_search_code",
     "gh_search_issues",
     "gh_search_repos",

@@ -150,6 +150,10 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "workflow_id", "ref", "fields"},
         {"owner", "repo", "workflow_id"},
     ),
+    "gh_run_workflow_exact": (
+        {"owner", "repo", "workflow_id", "ref", "expected_ref_sha", "fields"},
+        {"owner", "repo", "workflow_id", "ref", "expected_ref_sha"},
+    ),
     "gh_list_runs": (
         {
             "owner",
@@ -329,6 +333,7 @@ DESTRUCTIVE_WRITE_TOOLS = {
     "gh_merge_pr",
     "gh_commit_files",
     "gh_run_workflow",
+    "gh_run_workflow_exact",
     "gh_edit_issue",
     "gh_set_issue_state",
     "gh_set_pr_draft_state",
@@ -366,7 +371,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 54
+    assert len(tools) == 55
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -423,6 +428,29 @@ async def test_exact_tool_surface_snapshot() -> None:
         "current_is_draft",
         "url",
     } == set(draft_state_output)
+
+    exact_dispatch_schema = tools["gh_run_workflow_exact"].input_schema["properties"]
+    assert exact_dispatch_schema["workflow_id"]["minimum"] == 1
+    assert exact_dispatch_schema["ref"]["pattern"] == r"^(?:heads|tags)/.+$"
+    assert exact_dispatch_schema["expected_ref_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    exact_dispatch_output = tools["gh_run_workflow_exact"].output_schema["properties"]
+    assert {
+        "precondition_checked",
+        "write_completed",
+        "readback_completed",
+        "state_matches_requested",
+        "warning",
+        "request_id",
+        "workflow_id",
+        "ref",
+        "expected_ref_sha",
+        "resolved_ref_sha",
+        "matching_run_count",
+        "run_id",
+        "run_url",
+        "run_status",
+        "run_head_sha",
+    } == set(exact_dispatch_output)
 
     reviews_schema = tools["gh_list_pr_reviews"].input_schema["properties"]
     assert reviews_schema["number"]["minimum"] == 1
