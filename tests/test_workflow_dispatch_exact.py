@@ -53,6 +53,9 @@ class WorkflowDispatchClient:
             return result
         return GitHubRequestResult(value=result)
 
+    def clamp_max_results(self, requested: int | None) -> int:
+        return requested if requested is not None else 30
+
 
 def _context(
     client: WorkflowDispatchClient,
