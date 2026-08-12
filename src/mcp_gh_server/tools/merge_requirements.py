@@ -259,9 +259,11 @@ async def gh_get_merge_requirements(
         repo,
         base_ref,
     )
-    repository_methods, repository_methods_complete, method_warnings = (
-        await read_repository_merge_methods(app, owner, repo)
-    )
+    (
+        repository_methods,
+        repository_methods_complete,
+        method_warnings,
+    ) = await read_repository_merge_methods(app, owner, repo)
     warnings.extend(method_warnings)
 
     checks_identity_matches = True
@@ -383,9 +385,7 @@ async def gh_get_merge_requirements(
         current_approvals = _current_valid_approvals(
             review_state,
             dismiss_stale_reviews_on_push=(
-                dismiss_stale_reviews_on_push
-                if dismiss_stale_reviews_on_push is not None
-                else True
+                dismiss_stale_reviews_on_push if dismiss_stale_reviews_on_push is not None else True
             ),
         )
         approval_count = (

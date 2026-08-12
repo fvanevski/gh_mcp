@@ -47,7 +47,7 @@ class TestModels:
             server_version="0.7.0",
             tool_schema_version="0.7.0",
             transport="streamable-http",
-            tool_count=56,
+            tool_count=57,
             write_commands_enabled=False,
             content_commits_enabled=False,
             pr_merge_enabled=False,
@@ -55,7 +55,7 @@ class TestModels:
         assert info.server_name == "mcp-gh-server"
         assert info.server_version == "0.7.0"
         assert info.tool_schema_version == "0.7.0"
-        assert info.tool_count == 56
+        assert info.tool_count == 57
 
     def test_issue_info(self) -> None:
         issue = IssueInfo(

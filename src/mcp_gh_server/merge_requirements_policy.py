@@ -27,9 +27,7 @@ class MergePolicy:
     last_push_approval_required: bool = False
     conversation_resolution_required: bool = False
     up_to_date_required: bool = False
-    allowed_merge_methods: set[MergeMethod] = field(
-        default_factory=lambda: set(_MERGE_METHODS)
-    )
+    allowed_merge_methods: set[MergeMethod] = field(default_factory=lambda: set(_MERGE_METHODS))
     linear_history_required: bool = False
     unmodeled_required_reviewers: bool = False
 

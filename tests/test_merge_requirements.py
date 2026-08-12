@@ -268,13 +268,12 @@ async def test_merge_requirements_layers_policy_and_uses_current_valid_reviews()
 
     for args, _kwargs in client.calls:
         if args[:1] == ("api",) and len(args) > 1 and args[1] != "graphql":
-            if "-X" in args:
-                assert args[args.index("-X") + 1] == "GET"
+            assert args[args.index("-X") + 1] == "GET" if "-X" in args else None
         assert "--admin" not in args
         assert "--delete-branch" not in args
     graphql_calls = [args for args, _ in client.calls if args[:2] == ("api", "graphql")]
     assert len(graphql_calls) == 1
-    assert any("query(" in arg for arg in graphql_calls[0])
+    assert any(arg.startswith("query=query ") for arg in graphql_calls[0])
 
 
 async def test_merge_requirements_counts_preserved_stale_approval_when_policy_allows_it() -> None:
