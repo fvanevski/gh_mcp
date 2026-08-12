@@ -232,9 +232,7 @@ async def test_successful_dispatch_checks_ref_twice_writes_once_and_reads_exact_
         "read",
     ]
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
-    assert client.payloads == [
-        {"ref": "main", "inputs": {"environment": "prod", "force": "false"}}
-    ]
+    assert client.payloads == [{"ref": "main", "inputs": {"environment": "prod", "force": "false"}}]
     write_args = next(args for kind, args, _ in client.calls if kind == "write")
     assert write_args[:4] == (
         "api",

@@ -170,7 +170,9 @@ async def _read_matching_dispatch(
     if not isinstance(status, str) or not status:
         raise RuntimeError("GitHub returned no workflow run status during dispatch readback")
     if not isinstance(head_sha, str) or not OBJECT_SHA_RE.fullmatch(head_sha):
-        raise RuntimeError("GitHub returned no exact workflow run head SHA during dispatch readback")
+        raise RuntimeError(
+            "GitHub returned no exact workflow run head SHA during dispatch readback"
+        )
     if not isinstance(event, str) or not event:
         raise RuntimeError("GitHub returned no workflow run event during dispatch readback")
 
@@ -302,9 +304,7 @@ async def gh_run_workflow_exact(
         )
 
     execution = await execute_write_readback(
-        resource=(
-            f"Workflow {workflow_id} dispatch at refs/{ref} ({normalized_expected_sha})"
-        ),
+        resource=(f"Workflow {workflow_id} dispatch at refs/{ref} ({normalized_expected_sha})"),
         precondition=precondition,
         write=write,
         readback=readback,
@@ -316,15 +316,17 @@ async def gh_run_workflow_exact(
         ),
     )
 
-    readback = execution.readback_value
-    run = readback.run if readback is not None else None
+    readback_result = execution.readback_value
+    run = readback_result.run if readback_result is not None else None
     outcome = execution.outcome
     return WorkflowDispatchExactResult(
         workflow_id=workflow_id,
         ref=ref,
         expected_ref_sha=normalized_expected_sha,
         resolved_ref_sha=resolved_ref_sha,
-        matching_run_count=readback.matching_run_count if readback is not None else None,
+        matching_run_count=(
+            readback_result.matching_run_count if readback_result is not None else None
+        ),
         run_id=run.run_id if run is not None else None,
         run_url=run.url if run is not None else None,
         run_status=run.status if run is not None else None,
