@@ -18,12 +18,9 @@ class GitHubPrimaryRateLimitState(BaseModel):
 
 
 class GitHubRateLimitResponseHeaders(BaseModel):
-    """Rate-limit metadata reported in the current GitHub response headers."""
+    """Rate-limit metadata already captured from the current GitHub response headers."""
 
-    resource: str | None = None
-    limit: int | None = Field(default=None, ge=0)
     remaining: int | None = Field(default=None, ge=0)
-    used: int | None = Field(default=None, ge=0)
     reset_epoch: int | None = Field(default=None, ge=0)
     retry_after_seconds: float | None = Field(default=None, ge=0)
 
