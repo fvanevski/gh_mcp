@@ -142,10 +142,7 @@ def _github_rate_observation(
         observed_at_epoch=observed_at_epoch,
         request_id=metadata.request_id if request_performed else None,
         headers=GitHubRateLimitResponseHeaders(
-            resource=metadata.rate_limit_resource if request_performed else None,
-            limit=metadata.rate_limit_limit if request_performed else None,
             remaining=metadata.rate_limit_remaining if request_performed else None,
-            used=metadata.rate_limit_used if request_performed else None,
             reset_epoch=metadata.rate_limit_reset_epoch if request_performed else None,
             retry_after_seconds=metadata.retry_after_seconds if request_performed else None,
         ),
