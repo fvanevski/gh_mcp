@@ -68,7 +68,8 @@ from .write_tool_schema import (
     gh_upsert_label,
 )
 
-# Read-tool override — preserve the historical gh_list_milestones description.
+# Read-tool compatibility override. Public writes deliberately do not use
+# compatibility description overrides; their host-facing metadata is canonical.
 mcp.remove_tool("gh_list_milestones")
 mcp.add_tool(
     gh_list_milestones,
@@ -79,29 +80,9 @@ mcp.add_tool(
     annotations=READ_EXTERNAL,
 )
 
-# Rebind every public write tool to its schema-hardened facade wrapper.
-# The three preserved descriptions are kept for host-review continuity;
-# all others use the canonical metadata from write_tool_schema.
-_PRESERVED_WRITE_DESCRIPTIONS: dict[str, str] = {
-    "gh_create_issue": (
-        "Create a new issue in a repository.\n\n"
-        "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval."
-    ),
-    "gh_edit_issue": (
-        "Edit an existing issue in a repository.\n\n"
-        "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval."
-    ),
-    "gh_create_milestone": (
-        "Create a new milestone in a repository via the GitHub API.\n\n"
-        "due_on: due date in ISO format (e.g. '2026-12-31').\n"
-        "state: open or closed (default: open).\n\n"
-        "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval."
-    ),
-}
-
+# Rebind every public write to the schema facade. The facade owns host-facing
+# schema/metadata only; the wrappers delegate execution to the existing write
+# implementations without changing mutation, gate, or readback semantics.
 for _facade in PUBLIC_WRITE_TOOLS:
     _name = _facade.__name__
     _metadata = WRITE_TOOL_METADATA[_name]
@@ -109,7 +90,7 @@ for _facade in PUBLIC_WRITE_TOOLS:
     mcp.add_tool(
         _facade,
         title=_metadata.title,
-        description=_PRESERVED_WRITE_DESCRIPTIONS.get(_name, _metadata.description),
+        description=_metadata.description,
         annotations=_metadata.annotations,
     )
 

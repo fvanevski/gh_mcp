@@ -1,9 +1,14 @@
-"""Canonical host-legible schemas for the public write-tool surface."""
+"""Canonical host-legible facade for the public write-tool surface.
+
+This module owns public input schemas, titles, descriptions, and MCP annotations.
+Each wrapper delegates execution unchanged to the existing write implementation.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Awaitable, Callable, Literal
+from typing import Annotated, Literal
 
 from mcp.server.mcpserver import Context
 from mcp_types import ToolAnnotations
@@ -58,7 +63,14 @@ from .models import (
 )
 from .pr_draft_state_models import PullRequestDraftStateTransitionResult
 from .release_exact_models import ReleaseExactResult
-from .tooling import ADD_EXTERNAL, MUTATE_EXTERNAL, OBJECT_SHA_RE, OWNER_RE, REPO_RE, AppContext
+from .tooling import (
+    ADD_EXTERNAL,
+    AppContext,
+    MUTATE_EXTERNAL,
+    OBJECT_SHA_RE,
+    OWNER_RE,
+    REPO_RE,
+)
 from .tools.issue_state import gh_set_issue_state as _gh_set_issue_state
 from .tools.pr_draft_state import gh_set_pr_draft_state as _gh_set_pr_draft_state
 from .tools.release_exact import gh_create_release_exact as _gh_create_release_exact
@@ -83,7 +95,10 @@ Repository = Annotated[
         pattern=REPO_RE.pattern,
     ),
 ]
-PositiveNumber = Annotated[int, Field(description="Positive GitHub object number.", ge=1)]
+PositiveNumber = Annotated[
+    int,
+    Field(description="Positive GitHub object number.", ge=1),
+]
 ExactObjectSha = Annotated[
     str,
     Field(
@@ -129,7 +144,11 @@ RepositoryCreateName = Annotated[
     Field(
         min_length=1,
         max_length=140,
-        description="Repository name as REPO or OWNER/REPO.",
+        pattern=(
+            r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/)?"
+            r"[A-Za-z0-9_.-]{1,100}$"
+        ),
+        description="Canonical repository name as REPO or OWNER/REPO.",
     ),
 ]
 CommitMessage = Annotated[str, Field(min_length=1, max_length=65_536)]
@@ -153,15 +172,24 @@ class PublicCommitFile(CommitFile):
     )
 
 
-PublicCommitFiles = Annotated[list[PublicCommitFile], Field(min_length=1, max_length=1000)]
+PublicCommitFiles = Annotated[
+    list[PublicCommitFile],
+    Field(min_length=1, max_length=1000),
+]
 
 
 async def gh_create_issue(
     owner: Owner,
     repo: Repository,
     title: Annotated[Title, Field(description="Issue title.")],
-    body: Annotated[Body | None, Field(description="Optional Markdown issue body.")] = None,
-    labels: Annotated[Labels | None, Field(description="Optional labels to apply.")] = None,
+    body: Annotated[
+        Body | None,
+        Field(description="Optional Markdown issue body."),
+    ] = None,
+    labels: Annotated[
+        Labels | None,
+        Field(description="Optional labels to apply."),
+    ] = None,
     assignees: Annotated[
         Assignees | None,
         Field(description="Optional GitHub user logins to assign."),
@@ -169,7 +197,15 @@ async def gh_create_issue(
     *,
     ctx: Context[AppContext],
 ) -> IssueCreate:
-    return await _gh_create_issue(owner, repo, title, body, labels, assignees, ctx=ctx)
+    return await _gh_create_issue(
+        owner,
+        repo,
+        title,
+        body,
+        labels,
+        assignees,
+        ctx=ctx,
+    )
 
 
 async def gh_edit_issue(
@@ -178,16 +214,34 @@ async def gh_edit_issue(
     number: Annotated[PositiveNumber, Field(description="Issue number to edit.")],
     *,
     ctx: Context[AppContext],
-    title: Annotated[Title | None, Field(description="Replacement issue title.")] = None,
-    body: Annotated[Body | None, Field(description="Replacement Markdown issue body.")] = None,
-    labels_add: Annotated[Labels | None, Field(description="Labels to add.")] = None,
-    labels_remove: Annotated[Labels | None, Field(description="Labels to remove.")] = None,
-    assignees_add: Annotated[Assignees | None, Field(description="Assignee logins to add.")] = None,
+    title: Annotated[
+        Title | None,
+        Field(description="Replacement issue title."),
+    ] = None,
+    body: Annotated[
+        Body | None,
+        Field(description="Replacement Markdown issue body."),
+    ] = None,
+    labels_add: Annotated[
+        Labels | None,
+        Field(description="Labels to add."),
+    ] = None,
+    labels_remove: Annotated[
+        Labels | None,
+        Field(description="Labels to remove."),
+    ] = None,
+    assignees_add: Annotated[
+        Assignees | None,
+        Field(description="Assignee logins to add."),
+    ] = None,
     assignees_remove: Annotated[
         Assignees | None,
         Field(description="Assignee logins to remove."),
     ] = None,
-    milestone: Annotated[PositiveNumber | None, Field(description="Milestone number to set.")] = None,
+    milestone: Annotated[
+        PositiveNumber | None,
+        Field(description="Milestone number to set."),
+    ] = None,
     remove_milestone: bool = False,
 ) -> IssueEdit:
     return await _gh_edit_issue(
@@ -210,37 +264,80 @@ async def gh_set_issue_state(
     owner: Owner,
     repo: Repository,
     number: Annotated[PositiveNumber, Field(description="Issue number to transition.")],
-    expected_state: Annotated[IssueState, Field(description="Exact current issue state required before mutation.")],
-    new_state: Annotated[IssueState, Field(description="Requested state after the transition.")],
-    state_reason: Annotated[IssueStateReason, Field(description="Reason compatible with the requested issue state.")],
+    expected_state: Annotated[
+        IssueState,
+        Field(description="Exact current issue state required before mutation."),
+    ],
+    new_state: Annotated[
+        IssueState,
+        Field(description="Requested state after the transition."),
+    ],
+    state_reason: Annotated[
+        IssueStateReason,
+        Field(description="Reason compatible with the requested issue state."),
+    ],
     *,
     ctx: Context[AppContext],
 ) -> IssueStateTransitionResult:
-    return await _gh_set_issue_state(owner, repo, number, expected_state, new_state, state_reason, ctx=ctx)
+    return await _gh_set_issue_state(
+        owner,
+        repo,
+        number,
+        expected_state,
+        new_state,
+        state_reason,
+        ctx=ctx,
+    )
 
 
 async def gh_create_label(
     owner: Owner,
     repo: Repository,
     name: Annotated[LabelName, Field(description="New label name.")],
-    color: Annotated[LabelColor, Field(description="Six-character hexadecimal label color.")],
+    color: Annotated[
+        LabelColor,
+        Field(description="Six-character hexadecimal label color."),
+    ],
     *,
     ctx: Context[AppContext],
-    description: Annotated[Description | None, Field(description="Optional label description.")] = None,
+    description: Annotated[
+        Description | None,
+        Field(description="Optional label description."),
+    ] = None,
 ) -> LabelCreate:
-    return await _gh_create_label(owner, repo, name, color, ctx=ctx, description=description)
+    return await _gh_create_label(
+        owner,
+        repo,
+        name,
+        color,
+        ctx=ctx,
+        description=description,
+    )
 
 
 async def gh_upsert_label(
     owner: Owner,
     repo: Repository,
     name: Annotated[LabelName, Field(description="Label name to create or overwrite.")],
-    color: Annotated[LabelColor, Field(description="Six-character hexadecimal label color.")],
+    color: Annotated[
+        LabelColor,
+        Field(description="Six-character hexadecimal label color."),
+    ],
     *,
     ctx: Context[AppContext],
-    description: Annotated[Description | None, Field(description="Optional label description.")] = None,
+    description: Annotated[
+        Description | None,
+        Field(description="Optional label description."),
+    ] = None,
 ) -> LabelCreate:
-    return await _gh_upsert_label(owner, repo, name, color, ctx=ctx, description=description)
+    return await _gh_upsert_label(
+        owner,
+        repo,
+        name,
+        color,
+        ctx=ctx,
+        description=description,
+    )
 
 
 async def gh_edit_label(
@@ -249,11 +346,28 @@ async def gh_edit_label(
     name: Annotated[LabelName, Field(description="Existing label name.")],
     *,
     ctx: Context[AppContext],
-    new_name: Annotated[LabelName | None, Field(description="Replacement label name.")] = None,
-    color: Annotated[LabelColor | None, Field(description="Replacement six-character hexadecimal label color.")] = None,
-    description: Annotated[Description | None, Field(description="Replacement label description.")] = None,
+    new_name: Annotated[
+        LabelName | None,
+        Field(description="Replacement label name."),
+    ] = None,
+    color: Annotated[
+        LabelColor | None,
+        Field(description="Replacement six-character hexadecimal label color."),
+    ] = None,
+    description: Annotated[
+        Description | None,
+        Field(description="Replacement label description."),
+    ] = None,
 ) -> LabelEdit:
-    return await _gh_edit_label(owner, repo, name, ctx=ctx, new_name=new_name, color=color, description=description)
+    return await _gh_edit_label(
+        owner,
+        repo,
+        name,
+        ctx=ctx,
+        new_name=new_name,
+        color=color,
+        description=description,
+    )
 
 
 async def gh_create_milestone(
@@ -262,22 +376,48 @@ async def gh_create_milestone(
     title: Annotated[Title, Field(description="Milestone title.")],
     *,
     ctx: Context[AppContext],
-    description: Annotated[Description | None, Field(description="Optional milestone description.")] = None,
-    due_on: Annotated[DueOn | None, Field(description="Optional ISO-8601 milestone due date/time.")] = None,
-    state: Annotated[Literal["open", "closed"], Field(description="Initial milestone state.")] = "open",
+    description: Annotated[
+        Description | None,
+        Field(description="Optional milestone description."),
+    ] = None,
+    due_on: Annotated[
+        DueOn | None,
+        Field(description="Optional ISO-8601 milestone due date/time."),
+    ] = None,
+    state: Annotated[
+        Literal["open", "closed"],
+        Field(description="Initial milestone state."),
+    ] = "open",
 ) -> MilestoneCreate:
-    return await _gh_create_milestone(owner, repo, title, ctx=ctx, description=description, due_on=due_on, state=state)
+    return await _gh_create_milestone(
+        owner,
+        repo,
+        title,
+        ctx=ctx,
+        description=description,
+        due_on=due_on,
+        state=state,
+    )
 
 
 async def gh_create_comment(
     owner: Owner,
     repo: Repository,
-    issue_number: Annotated[PositiveNumber, Field(description="Issue or pull request number to comment on.")],
+    issue_number: Annotated[
+        PositiveNumber,
+        Field(description="Issue or pull request number to comment on."),
+    ],
     body: Annotated[Body, Field(description="Markdown comment body.")],
     *,
     ctx: Context[AppContext],
 ) -> CommentCreate:
-    return await _gh_create_comment(owner, repo, issue_number, body, ctx=ctx)
+    return await _gh_create_comment(
+        owner,
+        repo,
+        issue_number,
+        body,
+        ctx=ctx,
+    )
 
 
 async def gh_create_pr(
@@ -285,16 +425,40 @@ async def gh_create_pr(
     repo: Repository,
     title: Annotated[Title, Field(description="Pull request title.")],
     body: Annotated[Body, Field(description="Markdown pull request body.")],
-    head: Annotated[BranchName, Field(description="Head branch or owner:branch selector.")],
+    head: Annotated[
+        BranchName,
+        Field(description="Head branch or owner:branch selector."),
+    ],
     base: Annotated[BranchName, Field(description="Base branch name.")],
     *,
     ctx: Context[AppContext],
     draft: bool = False,
-    labels: Annotated[Labels | None, Field(description="Optional labels to apply.")] = None,
-    assignees: Annotated[Assignees | None, Field(description="Optional GitHub user logins to assign.")] = None,
-    review_users: Annotated[Reviewers | None, Field(description="Optional GitHub user logins to request for review.")] = None,
+    labels: Annotated[
+        Labels | None,
+        Field(description="Optional labels to apply."),
+    ] = None,
+    assignees: Annotated[
+        Assignees | None,
+        Field(description="Optional GitHub user logins to assign."),
+    ] = None,
+    review_users: Annotated[
+        Reviewers | None,
+        Field(description="Optional GitHub user logins to request for review."),
+    ] = None,
 ) -> PullRequestCreate:
-    return await _gh_create_pr(owner, repo, title, body, head, base, ctx=ctx, draft=draft, labels=labels, assignees=assignees, review_users=review_users)
+    return await _gh_create_pr(
+        owner,
+        repo,
+        title,
+        body,
+        head,
+        base,
+        ctx=ctx,
+        draft=draft,
+        labels=labels,
+        assignees=assignees,
+        review_users=review_users,
+    )
 
 
 async def gh_edit_pr(
@@ -303,80 +467,201 @@ async def gh_edit_pr(
     number: Annotated[PositiveNumber, Field(description="Pull request number to edit.")],
     *,
     ctx: Context[AppContext],
-    title: Annotated[Title | None, Field(description="Replacement pull request title.")] = None,
-    body: Annotated[Body | None, Field(description="Replacement Markdown pull request body.")] = None,
-    labels_add: Annotated[Labels | None, Field(description="Labels to add.")] = None,
-    labels_remove: Annotated[Labels | None, Field(description="Labels to remove.")] = None,
-    assignees_add: Annotated[Assignees | None, Field(description="Assignee logins to add.")] = None,
-    assignees_remove: Annotated[Assignees | None, Field(description="Assignee logins to remove.")] = None,
-    base: Annotated[BranchName | None, Field(description="Replacement base branch name.")] = None,
+    title: Annotated[
+        Title | None,
+        Field(description="Replacement pull request title."),
+    ] = None,
+    body: Annotated[
+        Body | None,
+        Field(description="Replacement Markdown pull request body."),
+    ] = None,
+    labels_add: Annotated[
+        Labels | None,
+        Field(description="Labels to add."),
+    ] = None,
+    labels_remove: Annotated[
+        Labels | None,
+        Field(description="Labels to remove."),
+    ] = None,
+    assignees_add: Annotated[
+        Assignees | None,
+        Field(description="Assignee logins to add."),
+    ] = None,
+    assignees_remove: Annotated[
+        Assignees | None,
+        Field(description="Assignee logins to remove."),
+    ] = None,
+    base: Annotated[
+        BranchName | None,
+        Field(description="Replacement base branch name."),
+    ] = None,
 ) -> PullRequestEdit:
-    return await _gh_edit_pr(owner, repo, number, ctx=ctx, title=title, body=body, labels_add=labels_add, labels_remove=labels_remove, assignees_add=assignees_add, assignees_remove=assignees_remove, base=base)
+    return await _gh_edit_pr(
+        owner,
+        repo,
+        number,
+        ctx=ctx,
+        title=title,
+        body=body,
+        labels_add=labels_add,
+        labels_remove=labels_remove,
+        assignees_add=assignees_add,
+        assignees_remove=assignees_remove,
+        base=base,
+    )
 
 
 async def gh_set_pr_draft_state(
     owner: Owner,
     repo: Repository,
-    number: Annotated[PositiveNumber, Field(description="Pull request number to transition.")],
-    expected_head_sha: Annotated[ExactObjectSha, Field(description="Exact current pull-request head SHA required before mutation.")],
-    expected_is_draft: Annotated[bool, Field(description="Exact current draft state required before mutation.")],
-    new_is_draft: Annotated[bool, Field(description="Requested draft state after mutation.")],
+    number: Annotated[
+        PositiveNumber,
+        Field(description="Pull request number to transition."),
+    ],
+    expected_head_sha: Annotated[
+        ExactObjectSha,
+        Field(description="Exact current pull-request head SHA required before mutation."),
+    ],
+    expected_is_draft: Annotated[
+        bool,
+        Field(description="Exact current draft state required before mutation."),
+    ],
+    new_is_draft: Annotated[
+        bool,
+        Field(description="Requested draft state after mutation."),
+    ],
     *,
     ctx: Context[AppContext],
 ) -> PullRequestDraftStateTransitionResult:
-    return await _gh_set_pr_draft_state(owner, repo, number, expected_head_sha, expected_is_draft, new_is_draft, ctx=ctx)
+    return await _gh_set_pr_draft_state(
+        owner,
+        repo,
+        number,
+        expected_head_sha,
+        expected_is_draft,
+        new_is_draft,
+        ctx=ctx,
+    )
 
 
 async def gh_submit_pr_review(
     owner: Owner,
     repo: Repository,
     number: Annotated[PositiveNumber, Field(description="Pull request number to review.")],
-    expected_head_sha: Annotated[ExactObjectSha, Field(description="Exact pull-request head SHA that was reviewed.")],
-    action: Annotated[Literal["approve", "request_changes", "comment"], Field(description="Formal GitHub review disposition.")],
+    expected_head_sha: Annotated[
+        ExactObjectSha,
+        Field(description="Exact pull-request head SHA that was reviewed."),
+    ],
+    action: Annotated[
+        Literal["approve", "request_changes", "comment"],
+        Field(description="Formal GitHub review disposition."),
+    ],
     *,
     ctx: Context[AppContext],
-    body: Annotated[Body, Field(description="Review body; required for request_changes and comment and optional for approve.")] = "",
+    body: Annotated[
+        Body,
+        Field(
+            description=(
+                "Review body; required for request_changes and comment and optional for approve."
+            )
+        ),
+    ] = "",
 ) -> PullRequestReviewSubmission:
-    return await _gh_submit_pr_review(owner, repo, number, expected_head_sha, action, ctx=ctx, body=body)
+    return await _gh_submit_pr_review(
+        owner,
+        repo,
+        number,
+        expected_head_sha,
+        action,
+        ctx=ctx,
+        body=body,
+    )
 
 
 async def gh_merge_pr(
     owner: Owner,
     repo: Repository,
     number: Annotated[PositiveNumber, Field(description="Pull request number to merge.")],
-    expected_head_sha: Annotated[ExactObjectSha, Field(description="Exact pull-request head SHA authorized for merge.")],
-    method: Annotated[Literal["merge", "squash", "rebase"], Field(description="Repository-supported merge strategy.")],
+    expected_head_sha: Annotated[
+        ExactObjectSha,
+        Field(description="Exact pull-request head SHA authorized for merge."),
+    ],
+    method: Annotated[
+        Literal["merge", "squash", "rebase"],
+        Field(description="Repository-supported merge strategy."),
+    ],
     *,
     ctx: Context[AppContext],
-    subject: Annotated[str | None, Field(max_length=256, description="Optional merge commit subject.")] = None,
+    subject: Annotated[
+        str | None,
+        Field(max_length=256, description="Optional merge commit subject."),
+    ] = None,
     body: Annotated[Body, Field(description="Optional merge commit body.")] = "",
 ) -> PullRequestMerge:
-    return await _gh_merge_pr(owner, repo, number, expected_head_sha, method, ctx=ctx, subject=subject, body=body)
+    return await _gh_merge_pr(
+        owner,
+        repo,
+        number,
+        expected_head_sha,
+        method,
+        ctx=ctx,
+        subject=subject,
+        body=body,
+    )
 
 
 async def gh_create_repo(
     name: RepositoryCreateName,
     *,
     ctx: Context[AppContext],
-    description: Annotated[Description | None, Field(description="Optional repository description.")] = None,
+    description: Annotated[
+        Description | None,
+        Field(description="Optional repository description."),
+    ] = None,
     private: bool = False,
     auto_init: bool = False,
 ) -> RepoCreate:
-    return await _gh_create_repo(name, ctx=ctx, description=description, private=private, auto_init=auto_init)
+    return await _gh_create_repo(
+        name,
+        ctx=ctx,
+        description=description,
+        private=private,
+        auto_init=auto_init,
+    )
 
 
 async def gh_commit_files(
     owner: Owner,
     repo: Repository,
-    branch: Annotated[BranchName, Field(description="Existing branch to advance conditionally.")],
-    expected_head_sha: Annotated[ExactObjectSha, Field(description="Exact branch head SHA required before the write.")],
-    files: Annotated[PublicCommitFiles, Field(description="Complete UTF-8 file replacements for the atomic commit.")],
-    commit_message: Annotated[CommitMessage, Field(description="Git commit message.")],
+    branch: Annotated[
+        BranchName,
+        Field(description="Existing branch to advance conditionally."),
+    ],
+    expected_head_sha: Annotated[
+        ExactObjectSha,
+        Field(description="Exact branch head SHA required before the write."),
+    ],
+    files: Annotated[
+        PublicCommitFiles,
+        Field(description="Complete UTF-8 file replacements for the atomic commit."),
+    ],
+    commit_message: Annotated[
+        CommitMessage,
+        Field(description="Git commit message."),
+    ],
     *,
     ctx: Context[AppContext],
 ) -> CommitFilesResult:
     normalized_files = [CommitFile.model_validate(file.model_dump()) for file in files]
-    return await _gh_commit_files(owner, repo, branch, expected_head_sha, normalized_files, commit_message, ctx=ctx)
+    return await _gh_commit_files(
+        owner,
+        repo,
+        branch,
+        expected_head_sha,
+        normalized_files,
+        commit_message,
+        ctx=ctx,
+    )
 
 
 async def gh_create_release(
@@ -385,79 +670,188 @@ async def gh_create_release(
     tag_name: Annotated[TagName, Field(description="Git tag name for the release.")],
     *,
     ctx: Context[AppContext],
-    name: Annotated[ReleaseName | None, Field(description="Optional release display name.")] = None,
-    body: Annotated[Body | None, Field(description="Optional Markdown release notes.")] = None,
+    name: Annotated[
+        ReleaseName | None,
+        Field(description="Optional release display name."),
+    ] = None,
+    body: Annotated[
+        Body | None,
+        Field(description="Optional Markdown release notes."),
+    ] = None,
     draft: bool = False,
     prerelease: bool = False,
-    target: Annotated[MovingTarget | None, Field(description="Optional branch, tag, or commit-ish target.")] = None,
+    target: Annotated[
+        MovingTarget | None,
+        Field(description="Optional branch, tag, or commit-ish target."),
+    ] = None,
 ) -> ReleaseCreate:
-    return await _gh_create_release(owner, repo, tag_name, ctx=ctx, name=name, body=body, draft=draft, prerelease=prerelease, target=target)
+    return await _gh_create_release(
+        owner,
+        repo,
+        tag_name,
+        ctx=ctx,
+        name=name,
+        body=body,
+        draft=draft,
+        prerelease=prerelease,
+        target=target,
+    )
 
 
 async def gh_create_release_exact(
     owner: Owner,
     repo: Repository,
     tag_name: Annotated[TagName, Field(description="Exact Git tag name to create.")],
-    expected_target_sha: Annotated[ExactObjectSha, Field(description="Exact target commit SHA for the release tag.")],
-    make_latest: Annotated[bool, Field(description="Explicit latest-release policy for the created release.")],
+    expected_target_sha: Annotated[
+        ExactObjectSha,
+        Field(description="Exact target commit SHA for the release tag."),
+    ],
+    make_latest: Annotated[
+        bool,
+        Field(description="Explicit latest-release policy for the created release."),
+    ],
     *,
     ctx: Context[AppContext],
-    name: Annotated[ReleaseName | None, Field(description="Optional release display name.")] = None,
-    body: Annotated[Body | None, Field(description="Optional Markdown release notes.")] = None,
+    name: Annotated[
+        ReleaseName | None,
+        Field(description="Optional release display name."),
+    ] = None,
+    body: Annotated[
+        Body | None,
+        Field(description="Optional Markdown release notes."),
+    ] = None,
     draft: bool = False,
     prerelease: bool = False,
     expected_tag_absent: bool = True,
     expected_release_absent: bool = True,
 ) -> ReleaseExactResult:
-    return await _gh_create_release_exact(owner, repo, tag_name, expected_target_sha, make_latest, ctx=ctx, name=name, body=body, draft=draft, prerelease=prerelease, expected_tag_absent=expected_tag_absent, expected_release_absent=expected_release_absent)
+    return await _gh_create_release_exact(
+        owner,
+        repo,
+        tag_name,
+        expected_target_sha,
+        make_latest,
+        ctx=ctx,
+        name=name,
+        body=body,
+        draft=draft,
+        prerelease=prerelease,
+        expected_tag_absent=expected_tag_absent,
+        expected_release_absent=expected_release_absent,
+    )
 
 
 async def gh_run_workflow(
     owner: Owner,
     repo: Repository,
-    workflow_id: Annotated[PositiveNumber, Field(description="Positive workflow identifier.")],
-    ref: Annotated[BranchName, Field(description="Branch or tag name to dispatch; defaults to main.")] = "main",
+    workflow_id: Annotated[
+        PositiveNumber,
+        Field(description="Positive workflow identifier."),
+    ],
+    ref: Annotated[
+        BranchName,
+        Field(description="Branch or tag name to dispatch; defaults to main."),
+    ] = "main",
     *,
     ctx: Context[AppContext],
-    fields: Annotated[WorkflowFields | None, Field(description="Optional workflow_dispatch inputs as key=value entries.")] = None,
+    fields: Annotated[
+        WorkflowFields | None,
+        Field(description="Optional workflow_dispatch inputs as key=value entries."),
+    ] = None,
 ) -> WorkflowRunCreate:
-    return await _gh_run_workflow(owner, repo, workflow_id, ref, ctx=ctx, fields=fields)
+    return await _gh_run_workflow(
+        owner,
+        repo,
+        workflow_id,
+        ref,
+        ctx=ctx,
+        fields=fields,
+    )
 
 
 async def gh_run_workflow_exact(
     owner: Owner,
     repo: Repository,
-    workflow_id: Annotated[PositiveNumber, Field(description="Exact positive workflow identifier.")],
-    ref: Annotated[RefName, Field(description="Exact ref path relative to refs/, as heads/<branch> or tags/<tag>.")],
-    expected_ref_sha: Annotated[ExactObjectSha, Field(description="Exact commit SHA the ref must resolve to before dispatch.")],
+    workflow_id: Annotated[
+        PositiveNumber,
+        Field(description="Exact positive workflow identifier."),
+    ],
+    ref: Annotated[
+        RefName,
+        Field(description=("Exact ref path relative to refs/, as heads/<branch> or tags/<tag>.")),
+    ],
+    expected_ref_sha: Annotated[
+        ExactObjectSha,
+        Field(description="Exact commit SHA the ref must resolve to before dispatch."),
+    ],
     *,
     ctx: Context[AppContext],
-    fields: Annotated[WorkflowFields | None, Field(description="Optional workflow_dispatch inputs as key=value entries.")] = None,
+    fields: Annotated[
+        WorkflowFields | None,
+        Field(description="Optional workflow_dispatch inputs as key=value entries."),
+    ] = None,
 ) -> WorkflowDispatchExactResult:
-    return await _gh_run_workflow_exact(owner, repo, workflow_id, ref, expected_ref_sha, ctx=ctx, fields=fields)
+    return await _gh_run_workflow_exact(
+        owner,
+        repo,
+        workflow_id,
+        ref,
+        expected_ref_sha,
+        ctx=ctx,
+        fields=fields,
+    )
 
 
 async def gh_create_branch(
     owner: Owner,
     repo: Repository,
-    issue_number: Annotated[PositiveNumber, Field(description="Positive issue number used by GitHub issue develop.")],
-    name: Annotated[BranchName, Field(description="New development branch name.")],
+    issue_number: Annotated[
+        PositiveNumber,
+        Field(description="Positive issue number used by GitHub issue develop."),
+    ],
+    name: Annotated[
+        BranchName,
+        Field(description="New development branch name."),
+    ],
     *,
     ctx: Context[AppContext],
-    base: Annotated[BranchName | None, Field(description="Existing branch-name base; full commit SHAs are rejected by the implementation.")] = None,
+    base: Annotated[
+        BranchName | None,
+        Field(
+            description=(
+                "Existing branch-name base; full commit SHAs are rejected by the implementation."
+            )
+        ),
+    ] = None,
 ) -> BranchCreate:
-    return await _gh_create_branch(owner, repo, issue_number, name, ctx=ctx, base=base)
+    return await _gh_create_branch(
+        owner,
+        repo,
+        issue_number,
+        name,
+        ctx=ctx,
+        base=base,
+    )
 
 
 async def gh_create_branch_from_sha(
     owner: Owner,
     repo: Repository,
     name: Annotated[BranchName, Field(description="New branch name.")],
-    base_sha: Annotated[ExactObjectSha, Field(description="Exact commit SHA at which to create the new branch.")],
+    base_sha: Annotated[
+        ExactObjectSha,
+        Field(description="Exact commit SHA at which to create the new branch."),
+    ],
     *,
     ctx: Context[AppContext],
 ) -> BranchCreateFromSha:
-    return await _gh_create_branch_from_sha(owner, repo, name, base_sha, ctx=ctx)
+    return await _gh_create_branch_from_sha(
+        owner,
+        repo,
+        name,
+        base_sha,
+        ctx=ctx,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,27 +862,234 @@ class WriteToolMetadata:
 
 
 WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
-    "gh_create_issue": WriteToolMetadata("Create issue", "Additive write: create exactly one issue in the target repository. The ordinary write gate and repository policy must allow the target. Optional labels and assignees are bounded; authoritative readback verifies the created issue when a stable identity is returned. This tool does not edit, close, comment on, or delete an existing issue.", ADD_EXTERNAL),
-    "gh_edit_issue": WriteToolMetadata("Edit issue metadata", "Destructive write: edit metadata on exactly one existing issue after ordinary write authorization. The request may change title, body, labels, assignees, or milestone; authoritative readback checks requested fields. It does not close or reopen the issue, post comments, delete the issue, or bypass repository policy.", MUTATE_EXTERNAL),
-    "gh_set_issue_state": WriteToolMetadata("Set issue state with exact precondition", "Destructive write: close or reopen exactly one issue only when its current state matches expected_state. Pull requests are rejected. Closing requires completed, not_planned, or duplicate; reopening requires reopened. The mutation is attempted once, comments remain a separate tool, and authoritative readback verifies the final state and reason.", MUTATE_EXTERNAL),
-    "gh_create_label": WriteToolMetadata("Create label", "Additive write: create exactly one new repository label after ordinary write authorization. Name, color, and description are explicitly bounded and read back. The operation does not overwrite an existing label, edit issues, or delete labels.", ADD_EXTERNAL),
-    "gh_upsert_label": WriteToolMetadata("Upsert label", "Destructive write: create one label or overwrite that label's color and description after ordinary write authorization. Readback verifies the requested label state. The operation does not delete labels or change issue assignments.", MUTATE_EXTERNAL),
-    "gh_edit_label": WriteToolMetadata("Edit label", "Destructive write: edit exactly one existing label's name, color, or description after ordinary write authorization, then verify the resulting label. It does not delete labels or mutate issue content.", MUTATE_EXTERNAL),
-    "gh_create_milestone": WriteToolMetadata("Create milestone", "Additive write: create exactly one repository milestone with bounded title, description, due date, and explicit open/closed state after ordinary write authorization. Authoritative readback verifies the created milestone. It does not assign issues to the milestone or edit existing milestones.", ADD_EXTERNAL),
-    "gh_create_comment": WriteToolMetadata("Create issue or pull request comment", "Additive write: post exactly one bounded Markdown conversation comment on the specified issue or pull request after ordinary write authorization. This legacy surface has no structured comment-id readback, so it does not claim verified semantic success. It is not a formal pull-request review and cannot merge.", ADD_EXTERNAL),
-    "gh_create_pr": WriteToolMetadata("Create pull request", "Additive write: create exactly one pull request from the specified bounded head and base selectors after ordinary write authorization. Optional labels, assignees, and review requests are bounded and read back when created. It does not approve, merge, or change another pull request.", ADD_EXTERNAL),
-    "gh_edit_pr": WriteToolMetadata("Edit pull request metadata", "Destructive write: edit metadata on exactly one pull request after ordinary write authorization. The request may change title, body, labels, assignees, or base and uses authoritative readback for requested fields. Draft-state transition, formal review, merge, branch deletion, and administrator bypass are separate or unavailable.", MUTATE_EXTERNAL),
-    "gh_set_pr_draft_state": WriteToolMetadata("Set pull request draft state at exact head", "Destructive write: transition exactly one pull request between draft and ready-for-review only when its current head SHA and draft state match the supplied preconditions. The operation changes no unrelated pull-request metadata, is attempted once, and authoritative readback verifies both unchanged head identity and the requested draft state.", MUTATE_EXTERNAL),
-    "gh_submit_pr_review": WriteToolMetadata("Submit pull request review at exact head", "Additive write: submit one formal APPROVED, CHANGES_REQUESTED, or COMMENTED GitHub review only for the supplied exact pull-request head SHA. The ordinary write gate applies and authoritative readback verifies the created review when identity is available. This is not an issue comment and never merges the pull request.", ADD_EXTERNAL),
-    "gh_merge_pr": WriteToolMetadata("Merge pull request at exact head", "Destructive write: merge exactly one pull request using the explicit merge strategy only while its head matches expected_head_sha. Ordinary write authorization and the separate PR-merge fine gate are required. The tool cannot use administrator bypass, delete the branch, force a changed revision, or blindly retry an ambiguous merge.", MUTATE_EXTERNAL),
-    "gh_create_repo": WriteToolMetadata("Create repository", "Additive write: create exactly one repository named REPO or OWNER/REPO after the ordinary write policy and separate repository-creation fine gate allow it. The request may set description, visibility, and initial README only. It cannot delete, rename, transfer, or otherwise administer an existing repository.", ADD_EXTERNAL),
-    "gh_commit_files": WriteToolMetadata("Commit repository files atomically", "Destructive write: create or replace bounded UTF-8 file contents in one Git commit and conditionally advance exactly one existing branch only when its head matches expected_head_sha. Ordinary write authorization and the content-commit fine gate are required. The operation cannot delete files, force-update the ref, or blindly retry an ambiguous branch update.", MUTATE_EXTERNAL),
-    "gh_create_release": WriteToolMetadata("Create release", "Additive write: create exactly one GitHub release for the supplied tag and optional branch/tag/commit-ish target after ordinary write authorization and the release-creation fine gate. This compatibility surface does not provide an exact target precondition; use gh_create_release_exact for immutable target identity. It cannot upload assets, delete releases, or retry an ambiguous mutation automatically.", ADD_EXTERNAL),
-    "gh_create_release_exact": WriteToolMetadata("Create release at exact target", "Additive write: create one GitHub release using an exact 40-character target commit SHA. The tool verifies target identity, optionally requires the tag and every release state including drafts to be absent, performs exactly one governed creation request, and verifies release, tag commit, and explicit latest state. It never retries an ambiguous release mutation automatically.", ADD_EXTERNAL),
-    "gh_run_workflow": WriteToolMetadata("Dispatch workflow", "Destructive write: issue exactly one workflow_dispatch request for the specified workflow and bounded branch/tag ref after ordinary write authorization and the workflow-dispatch fine gate. Inputs are bounded key=value entries. This compatibility surface has no exact ref-SHA precondition; use gh_run_workflow_exact when immutable identity is required. It cannot rerun, cancel, or automatically repeat a dispatch.", MUTATE_EXTERNAL),
-    "gh_run_workflow_exact": WriteToolMetadata("Dispatch workflow at exact ref", "Destructive write: under one server-local critical section, verify an exact canonical branch/tag ref against expected_ref_sha, reject same-name branch/tag ambiguity, and reject an existing workflow_dispatch run for the workflow/head before one dispatch. Returned run details and authoritative readback bind the result to an exact run ID; the tool never redispatches automatically.", MUTATE_EXTERNAL),
-    "gh_create_branch": WriteToolMetadata("Create issue development branch", "Additive write: create exactly one issue development branch using a bounded branch-name base after ordinary write authorization. The base parameter rejects full commit SHAs; use gh_create_branch_from_sha for an immutable base. This compatibility surface does not claim exact semantic readback identity and cannot move or delete refs.", ADD_EXTERNAL),
-    "gh_create_branch_from_sha": WriteToolMetadata("Create branch from exact commit", "Additive write: create exactly one new branch at an exact 40-character commit SHA after ordinary write authorization. A branch already at the requested SHA is a safe no-write result; a conflicting existing branch is left unchanged. The operation never force-updates, moves, overwrites, or deletes an existing ref.", ADD_EXTERNAL),
+    "gh_create_issue": WriteToolMetadata(
+        "Create issue",
+        (
+            "Additive write: create exactly one issue in the target repository. "
+            "The ordinary write gate and repository policy must allow the target. "
+            "Optional labels and assignees are bounded; authoritative readback verifies "
+            "the created issue when a stable identity is returned. This tool does not "
+            "edit, close, comment on, or delete an existing issue."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_edit_issue": WriteToolMetadata(
+        "Edit issue metadata",
+        (
+            "Destructive write: edit metadata on exactly one existing issue after "
+            "ordinary write authorization. The request may change title, body, labels, "
+            "assignees, or milestone; authoritative readback checks requested fields. "
+            "It does not close or reopen the issue, post comments, delete the issue, or "
+            "bypass repository policy."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_set_issue_state": WriteToolMetadata(
+        "Set issue state with exact precondition",
+        (
+            "Destructive write: close or reopen exactly one issue only when its current "
+            "state matches expected_state. Pull requests are rejected. Closing requires "
+            "completed, not_planned, or duplicate; reopening requires reopened. The "
+            "mutation is attempted once, comments remain a separate tool, and "
+            "authoritative readback verifies the final state and reason."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_create_label": WriteToolMetadata(
+        "Create label",
+        (
+            "Additive write: create exactly one new repository label after ordinary "
+            "write authorization. Name, color, and description are explicitly bounded "
+            "and read back. The operation does not overwrite an existing label, edit "
+            "issues, or delete labels."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_upsert_label": WriteToolMetadata(
+        "Upsert label",
+        (
+            "Destructive write: create one label or overwrite that label's color and "
+            "description after ordinary write authorization. Readback verifies the "
+            "requested label state. The operation does not delete labels or change "
+            "issue assignments."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_edit_label": WriteToolMetadata(
+        "Edit label",
+        (
+            "Destructive write: edit exactly one existing label's name, color, or "
+            "description after ordinary write authorization, then verify the resulting "
+            "label. It does not delete labels or mutate issue content."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_create_milestone": WriteToolMetadata(
+        "Create milestone",
+        (
+            "Additive write: create exactly one repository milestone with bounded title, "
+            "description, due date, and explicit open/closed state after ordinary write "
+            "authorization. Authoritative readback verifies the created milestone. It "
+            "does not assign issues to the milestone or edit existing milestones."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_create_comment": WriteToolMetadata(
+        "Create issue or pull request comment",
+        (
+            "Additive write: post exactly one bounded Markdown conversation comment on "
+            "the specified issue or pull request after ordinary write authorization. "
+            "This legacy surface has no structured comment-id readback, so it does not "
+            "claim verified semantic success. It is not a formal pull-request review "
+            "and cannot merge."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_create_pr": WriteToolMetadata(
+        "Create pull request",
+        (
+            "Additive write: create exactly one pull request from the specified bounded "
+            "head and base selectors after ordinary write authorization. Optional labels, "
+            "assignees, and review requests are bounded and read back when created. It "
+            "does not approve, merge, or change another pull request."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_edit_pr": WriteToolMetadata(
+        "Edit pull request metadata",
+        (
+            "Destructive write: edit metadata on exactly one pull request after ordinary "
+            "write authorization. The request may change title, body, labels, assignees, "
+            "or base and uses authoritative readback for requested fields. Draft-state "
+            "transition, formal review, merge, branch deletion, and administrator bypass "
+            "are separate or unavailable."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_set_pr_draft_state": WriteToolMetadata(
+        "Set pull request draft state at exact head",
+        (
+            "Destructive write: transition exactly one pull request between draft and "
+            "ready-for-review only when its current head SHA and draft state match the "
+            "supplied preconditions. The operation changes no unrelated pull-request "
+            "metadata, is attempted once, and authoritative readback verifies both "
+            "unchanged head identity and the requested draft state."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_submit_pr_review": WriteToolMetadata(
+        "Submit pull request review at exact head",
+        (
+            "Additive write: submit one formal APPROVED, CHANGES_REQUESTED, or COMMENTED "
+            "GitHub review only for the supplied exact pull-request head SHA. The ordinary "
+            "write gate applies and authoritative readback verifies the created review "
+            "when identity is available. This is not an issue comment and never merges "
+            "the pull request."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_merge_pr": WriteToolMetadata(
+        "Merge pull request at exact head",
+        (
+            "Destructive write: merge exactly one pull request using the explicit merge "
+            "strategy only while its head matches expected_head_sha. Ordinary write "
+            "authorization and the separate PR-merge fine gate are required. The tool "
+            "cannot use administrator bypass, delete the branch, force a changed "
+            "revision, or blindly retry an ambiguous merge."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_create_repo": WriteToolMetadata(
+        "Create repository",
+        (
+            "Additive write: create exactly one repository named REPO or OWNER/REPO after "
+            "the ordinary write policy and separate repository-creation fine gate allow "
+            "it. The request may set description, visibility, and initial README only. "
+            "It cannot delete, rename, transfer, or otherwise administer an existing "
+            "repository."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_commit_files": WriteToolMetadata(
+        "Commit repository files atomically",
+        (
+            "Destructive write: create or replace bounded UTF-8 file contents in one Git "
+            "commit and conditionally advance exactly one existing branch only when its "
+            "head matches expected_head_sha. Ordinary write authorization and the "
+            "content-commit fine gate are required. The operation cannot delete files, "
+            "force-update the ref, or blindly retry an ambiguous branch update."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_create_release": WriteToolMetadata(
+        "Create release",
+        (
+            "Additive write: create exactly one GitHub release for the supplied tag and "
+            "optional branch/tag/commit-ish target after ordinary write authorization and "
+            "the release-creation fine gate. This compatibility surface does not provide "
+            "an exact target precondition; use gh_create_release_exact for immutable "
+            "target identity. It cannot upload assets, delete releases, or retry an "
+            "ambiguous mutation automatically."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_create_release_exact": WriteToolMetadata(
+        "Create release at exact target",
+        (
+            "Additive write: create one GitHub release using an exact 40-character target "
+            "commit SHA. The tool verifies target identity, optionally requires the tag "
+            "and every release state including drafts to be absent, performs exactly one "
+            "governed creation request, and verifies release, tag commit, and explicit "
+            "latest state. It never retries an ambiguous release mutation automatically."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_run_workflow": WriteToolMetadata(
+        "Dispatch workflow",
+        (
+            "Destructive write: issue exactly one workflow_dispatch request for the "
+            "specified workflow and bounded branch/tag ref after ordinary write "
+            "authorization and the workflow-dispatch fine gate. Inputs are bounded "
+            "key=value entries. This compatibility surface has no exact ref-SHA "
+            "precondition; use gh_run_workflow_exact when immutable identity is required. "
+            "It cannot rerun, cancel, or automatically repeat a dispatch."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_run_workflow_exact": WriteToolMetadata(
+        "Dispatch workflow at exact ref",
+        (
+            "Destructive write: under one server-local critical section, verify an exact "
+            "canonical branch/tag ref against expected_ref_sha, reject same-name "
+            "branch/tag ambiguity, and reject an existing workflow_dispatch run for the "
+            "workflow/head before one dispatch. Returned run details and authoritative "
+            "readback bind the result to an exact run ID; the tool never redispatches "
+            "automatically."
+        ),
+        MUTATE_EXTERNAL,
+    ),
+    "gh_create_branch": WriteToolMetadata(
+        "Create issue development branch",
+        (
+            "Additive write: create exactly one issue development branch using a bounded "
+            "branch-name base after ordinary write authorization. The base parameter "
+            "rejects full commit SHAs; use gh_create_branch_from_sha for an immutable "
+            "base. This compatibility surface does not claim exact semantic readback "
+            "identity and cannot move or delete refs."
+        ),
+        ADD_EXTERNAL,
+    ),
+    "gh_create_branch_from_sha": WriteToolMetadata(
+        "Create branch from exact commit",
+        (
+            "Additive write: create exactly one new branch at an exact 40-character "
+            "commit SHA after ordinary write authorization. A branch already at the "
+            "requested SHA is a safe no-write result; a conflicting existing branch is "
+            "left unchanged. The operation never force-updates, moves, overwrites, or "
+            "deletes an existing ref."
+        ),
+        ADD_EXTERNAL,
+    ),
 }
 
 PublicWriteTool = Callable[..., Awaitable[object]]

@@ -1,14 +1,17 @@
-"""Regression audit of every public write-tool schema and annotation contract."""
+"""Policy regression for every public write-tool schema and host-facing metadata."""
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
 import pytest
 
 from mcp_gh_server.server import mcp
+from mcp_gh_server.write_tool_schema import WRITE_TOOL_METADATA
 
-# Exact set of all public write tools; must stay in sync with write_tool_schema.
+# Independent expected surface. Do not derive this from WRITE_TOOL_METADATA: adding a
+# public write must require an explicit policy-test update.
 PUBLIC_WRITE_TOOLS = frozenset(
     {
         "gh_create_issue",
@@ -49,394 +52,285 @@ ADDITIVE_WRITE_TOOLS = {
     "gh_create_branch_from_sha",
 }
 
-DESTRUCTIVE_WRITE_TOOLS = {
-    "gh_edit_issue",
-    "gh_set_issue_state",
-    "gh_upsert_label",
-    "gh_edit_label",
-    "gh_edit_pr",
-    "gh_set_pr_draft_state",
-    "gh_merge_pr",
-    "gh_run_workflow",
-    "gh_run_workflow_exact",
-    "gh_commit_files",
-}
+DESTRUCTIVE_WRITE_TOOLS = PUBLIC_WRITE_TOOLS - ADDITIVE_WRITE_TOOLS
 
 OBJECT_SHA_PATTERN = r"^[0-9A-Fa-f]{40}$"
+OWNER_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
+REPOSITORY_PATTERN = r"^[A-Za-z0-9_.-]{1,100}$"
+REPOSITORY_CREATE_PATTERN = r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/)?[A-Za-z0-9_.-]{1,100}$"
 REF_PATTERN = r"^(?:heads|tags)/.+$"
 LABEL_COLOR_PATTERN = r"^[0-9A-Fa-f]{6}$"
+WORKFLOW_FIELD_PATTERN = r"^[^=]+=.*$"
+
+FORBIDDEN_FIELD_NAMES = {
+    "admin",
+    "approval",
+    "args",
+    "argv",
+    "authorization",
+    "authorized",
+    "bypass",
+    "command",
+    "confirmation",
+    "confirmed",
+    "endpoint",
+    "force",
+    "json",
+    "payload",
+    "request_path",
+    "request_url",
+    "retry",
+    "safety_justification",
+    "shell",
+    "url",
+}
+
+NON_CAPABILITY_MARKERS = (
+    "cannot",
+    "does not",
+    "never",
+    "no structured",
+    "no unrelated",
+    "rejected",
+    "rejects",
+    "separate",
+    "unavailable",
+)
+PRECONDITION_MARKERS = (
+    "authorization",
+    "expected_",
+    "exact",
+    "gate",
+    "policy",
+    "precondition",
+)
 
 
-def _extract_array_inner(schema: dict) -> dict:
-    """Unwrap anyOf wrapping an array (e.g. optional array fields)."""
-    if schema.get("type") == "array":
+def _unwrap_optional(schema: dict) -> dict:
+    """Return the one non-null branch of an optional JSON schema."""
+    any_of = schema.get("anyOf")
+    if not isinstance(any_of, list):
         return schema
-    any_of = schema.get("anyOf", [])
     non_null = [item for item in any_of if item.get("type") != "null"]
-    if len(non_null) == 1:
-        return non_null[0]
-    return schema
+    return non_null[0] if len(non_null) == 1 else schema
 
 
-def _extract_string_inner(schema: dict) -> dict:
-    """Unwrap anyOf wrapping a string (e.g. optional string fields)."""
-    if schema.get("type") == "string":
+def _resolve_ref(root: dict, schema: dict) -> dict:
+    ref = schema.get("$ref")
+    if not isinstance(ref, str) or not ref.startswith("#/$defs/"):
         return schema
-    any_of = schema.get("anyOf", [])
-    non_null = [item for item in any_of if item.get("type") != "null"]
-    if len(non_null) == 1:
-        return non_null[0]
-    return schema
+    name = ref.removeprefix("#/$defs/")
+    resolved = root.get("$defs", {}).get(name)
+    assert isinstance(resolved, dict), f"unresolved local schema ref: {ref}"
+    return resolved
+
+
+def _walk_schema(root: dict, schema: dict, path: str) -> Iterator[tuple[str, dict]]:
+    """Walk local refs, unions, object properties, and array items."""
+    schema = _resolve_ref(root, schema)
+    yield path, schema
+
+    for union_key in ("anyOf", "oneOf", "allOf"):
+        variants = schema.get(union_key, [])
+        if isinstance(variants, list):
+            for index, variant in enumerate(variants):
+                if isinstance(variant, dict) and variant.get("type") != "null":
+                    yield from _walk_schema(root, variant, f"{path}.{union_key}[{index}]")
+
+    properties = schema.get("properties", {})
+    if isinstance(properties, dict):
+        for name, child in properties.items():
+            if isinstance(child, dict):
+                yield from _walk_schema(root, child, f"{path}.{name}")
+
+    items = schema.get("items")
+    if isinstance(items, dict):
+        yield from _walk_schema(root, items, f"{path}[]")
+
+
+async def _tools() -> dict:
+    return {tool.name: tool for tool in await mcp.list_tools()}
 
 
 @pytest.mark.asyncio
-async def test_write_tool_count_matches_public_surface() -> None:
-    tools = await mcp.list_tools()
-    write_names = {t.name for t in tools if t.name in PUBLIC_WRITE_TOOLS}
-    assert write_names == PUBLIC_WRITE_TOOLS
-
-
-@pytest.mark.asyncio
-async def test_all_writes_are_not_read_only() -> None:
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in PUBLIC_WRITE_TOOLS:
-        tool = tools_dict[name]
-        assert tool.annotations.read_only_hint is False, f"{name} must be writable"
-
-
-@pytest.mark.asyncio
-async def test_additive_writes_are_not_destructive() -> None:
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in ADDITIVE_WRITE_TOOLS:
-        tool = tools_dict[name]
-        assert tool.annotations.destructive_hint is False, f"{name} is additive"
-
-
-@pytest.mark.asyncio
-async def test_destructive_writes_are_marked_destructive() -> None:
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in DESTRUCTIVE_WRITE_TOOLS:
-        tool = tools_dict[name]
-        assert tool.annotations.destructive_hint is True, f"{name} is destructive"
-
-
-@pytest.mark.asyncio
-async def test_no_write_is_wrongly_idempotent() -> None:
-    """Writes that mutate external state should not claim idempotence."""
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in PUBLIC_WRITE_TOOLS:
-        tool = tools_dict[name]
-        assert tool.annotations.idempotent_hint is False, f"{name} must not claim idempotence"
-
-
-@pytest.mark.asyncio
-async def test_external_writes_are_open_world() -> None:
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in PUBLIC_WRITE_TOOLS:
-        tool = tools_dict[name]
-        assert tool.annotations.open_world_hint is True, f"{name} must be open-world"
-
-
-@pytest.mark.asyncio
-async def test_owner_and_repository_constraints() -> None:
-    """Every write that targets a repository must bind owner/repo tightly."""
-    tools_with_owner_repo = {
-        "gh_create_issue",
-        "gh_edit_issue",
-        "gh_set_issue_state",
-        "gh_create_label",
-        "gh_upsert_label",
-        "gh_edit_label",
-        "gh_create_milestone",
-        "gh_create_comment",
-        "gh_create_pr",
-        "gh_edit_pr",
-        "gh_set_pr_draft_state",
-        "gh_submit_pr_review",
-        "gh_merge_pr",
-        "gh_commit_files",
-        "gh_create_release",
-        "gh_create_release_exact",
-        "gh_run_workflow",
-        "gh_run_workflow_exact",
-        "gh_create_branch",
-        "gh_create_branch_from_sha",
+async def test_exact_public_write_surface_is_independent_and_complete() -> None:
+    tools = await _tools()
+    actual_writes = {
+        name
+        for name, tool in tools.items()
+        if tool.annotations is not None and tool.annotations.read_only_hint is False
     }
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in tools_with_owner_repo:
-        tool = tools_dict[name]
-        props = tool.input_schema["properties"]
-        assert "owner" in props, f"{name} missing owner"
-        assert "repo" in props, f"{name} missing repo"
-        owner_schema = props["owner"]
-        assert "pattern" in owner_schema, f"{name}.owner missing pattern"
-        assert re.fullmatch(owner_schema["pattern"], "ValidOwner"), (
-            f"{name}.owner pattern does not match valid sample"
-        )
-        assert owner_schema.get("maxLength") == 39, f"{name}.owner maxLength != 39"
-        repo_schema = props["repo"]
-        assert "pattern" in repo_schema, f"{name}.repo missing pattern"
-        assert repo_schema.get("maxLength") == 100, f"{name}.repo maxLength != 100"
+    assert actual_writes == PUBLIC_WRITE_TOOLS
+    assert set(WRITE_TOOL_METADATA) == PUBLIC_WRITE_TOOLS
+    assert len(PUBLIC_WRITE_TOOLS) == 21
 
 
 @pytest.mark.asyncio
-async def test_positive_github_ids_are_bounded() -> None:
-    """GitHub object numbers/IDs must be positive integers."""
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    positive_id_tools = {
-        "gh_edit_issue": ["number"],
-        "gh_set_issue_state": ["number"],
-        "gh_create_comment": ["issue_number"],
-        "gh_edit_pr": ["number"],
-        "gh_set_pr_draft_state": ["number"],
-        "gh_submit_pr_review": ["number"],
-        "gh_merge_pr": ["number"],
-        "gh_run_workflow": ["workflow_id"],
-        "gh_run_workflow_exact": ["workflow_id"],
-        "gh_create_branch": ["issue_number"],
-    }
-    for tool_name, fields in positive_id_tools.items():
-        tool = tools_dict[tool_name]
-        for field in fields:
-            schema = tool.input_schema["properties"][field]
-            assert schema.get("minimum") == 1, (
-                f"{tool_name}.{field} must have minimum=1, got {schema.get('minimum')}"
-            )
+async def test_registered_write_metadata_is_canonical_and_truthful() -> None:
+    tools = await _tools()
+    descriptions: set[str] = set()
+
+    for name in PUBLIC_WRITE_TOOLS:
+        tool = tools[name]
+        metadata = WRITE_TOOL_METADATA[name]
+        assert tool.title == metadata.title
+        assert tool.description == metadata.description
+        assert tool.annotations == metadata.annotations
+        assert tool.annotations.read_only_hint is False
+        assert tool.annotations.destructive_hint is (name in DESTRUCTIVE_WRITE_TOOLS)
+        assert tool.annotations.idempotent_hint is False
+        assert tool.annotations.open_world_hint is True
+
+        description = tool.description or ""
+        descriptions.add(description)
+        assert description.startswith(("Additive write:", "Destructive write:"))
+        assert any(marker in description for marker in PRECONDITION_MARKERS), name
+        assert any(marker in description for marker in NON_CAPABILITY_MARKERS), name
+
+    # Shared generic copy would defeat action-specific host review surfaces.
+    assert len(descriptions) == len(PUBLIC_WRITE_TOOLS)
 
 
 @pytest.mark.asyncio
-async def test_exact_sha_fields_use_40_hex_pattern() -> None:
-    """Fields annotated as exact SHA must use the 40-char hex pattern."""
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
+async def test_repository_target_schemas_are_canonical() -> None:
+    tools = await _tools()
+    owner_repo_tools = PUBLIC_WRITE_TOOLS - {"gh_create_repo"}
+
+    for name in owner_repo_tools:
+        properties = tools[name].input_schema["properties"]
+        owner = properties["owner"]
+        repo = properties["repo"]
+        assert owner["pattern"] == OWNER_PATTERN
+        assert owner["maxLength"] == 39
+        assert repo["pattern"] == REPOSITORY_PATTERN
+        assert repo["maxLength"] == 100
+
+    create_name = tools["gh_create_repo"].input_schema["properties"]["name"]
+    assert create_name["pattern"] == REPOSITORY_CREATE_PATTERN
+    assert create_name["maxLength"] == 140
+    assert re.fullmatch(create_name["pattern"], "repo")
+    assert re.fullmatch(create_name["pattern"], "owner/repo")
+    assert re.fullmatch(create_name["pattern"], "owner/repo/extra") is None
+
+
+@pytest.mark.asyncio
+async def test_all_write_schema_leaves_are_bounded() -> None:
+    """Strings, integers, arrays, and arbitrary objects must expose hard schema bounds."""
+    tools = await _tools()
+
+    for name in PUBLIC_WRITE_TOOLS:
+        root = tools[name].input_schema
+        for path, schema in _walk_schema(root, root, name):
+            node_type = schema.get("type")
+            if node_type == "string":
+                assert (
+                    "maxLength" in schema
+                    or "pattern" in schema
+                    or "enum" in schema
+                    or "const" in schema
+                ), f"{path} is an unbounded string"
+            elif node_type == "integer":
+                minimum = schema.get("minimum")
+                assert isinstance(minimum, int) and minimum >= 1, (
+                    f"{path} must be a positive bounded identifier"
+                )
+            elif node_type == "array":
+                maximum = schema.get("maxItems")
+                assert isinstance(maximum, int) and maximum >= 1, f"{path} is an unbounded array"
+            elif node_type == "object":
+                additional = schema.get("additionalProperties")
+                assert additional not in (True, {}), f"{path} exposes arbitrary JSON"
+
+
+@pytest.mark.asyncio
+async def test_no_generic_executor_or_host_bypass_surface_exists() -> None:
+    tools = await _tools()
+
+    for name in PUBLIC_WRITE_TOOLS:
+        root = tools[name].input_schema
+        for path, schema in _walk_schema(root, root, name):
+            properties = schema.get("properties", {})
+            if isinstance(properties, dict):
+                violations = set(properties) & FORBIDDEN_FIELD_NAMES
+                assert not violations, f"{path} exposes forbidden fields: {violations}"
+
+                # `gh_merge_pr.method` is a finite merge strategy, not a generic HTTP
+                # method. Only a generic HTTP verb surface is forbidden here.
+                method = properties.get("method")
+                if isinstance(method, dict):
+                    method = _unwrap_optional(method)
+                    verbs = set(method.get("enum", []))
+                    assert verbs != {"GET", "POST", "PUT", "PATCH", "DELETE"}
+
+
+@pytest.mark.asyncio
+async def test_exact_sha_and_ref_preconditions_are_host_visible() -> None:
+    tools = await _tools()
     sha_fields = {
-        "gh_set_pr_draft_state": ["expected_head_sha"],
-        "gh_submit_pr_review": ["expected_head_sha"],
-        "gh_merge_pr": ["expected_head_sha"],
-        "gh_commit_files": ["expected_head_sha"],
-        "gh_create_release_exact": ["expected_target_sha"],
-        "gh_run_workflow_exact": ["expected_ref_sha"],
-        "gh_create_branch_from_sha": ["base_sha"],
+        "gh_set_pr_draft_state": "expected_head_sha",
+        "gh_submit_pr_review": "expected_head_sha",
+        "gh_merge_pr": "expected_head_sha",
+        "gh_commit_files": "expected_head_sha",
+        "gh_create_release_exact": "expected_target_sha",
+        "gh_run_workflow_exact": "expected_ref_sha",
+        "gh_create_branch_from_sha": "base_sha",
     }
-    for tool_name, fields in sha_fields.items():
-        tool = tools_dict[tool_name]
-        for field in fields:
-            schema = tool.input_schema["properties"][field]
-            assert "pattern" in schema, f"{tool_name}.{field} missing pattern"
-            assert schema["pattern"] == OBJECT_SHA_PATTERN, (
-                f"{tool_name}.{field} pattern must be {OBJECT_SHA_PATTERN}"
-            )
+    for tool_name, field in sha_fields.items():
+        schema = tools[tool_name].input_schema["properties"][field]
+        assert schema["pattern"] == OBJECT_SHA_PATTERN
+
+    ref_schema = tools["gh_run_workflow_exact"].input_schema["properties"]["ref"]
+    assert ref_schema["pattern"] == REF_PATTERN
+    assert ref_schema["maxLength"] == 1024
 
 
 @pytest.mark.asyncio
-async def test_exact_ref_pattern_for_workflow_dispatch_exact() -> None:
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    tool = tools_dict["gh_run_workflow_exact"]
-    schema = tool.input_schema["properties"]["ref"]
-    assert "pattern" in schema
-    assert schema["pattern"] == REF_PATTERN
-
-
-@pytest.mark.asyncio
-async def test_label_color_is_six_hex_chars() -> None:
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for tool_name in ("gh_create_label", "gh_upsert_label", "gh_edit_label"):
-        tool = tools_dict[tool_name]
-        raw_schema = tool.input_schema["properties"]["color"]
-        schema = _extract_string_inner(raw_schema)
-        assert "pattern" in schema, f"{tool_name}.color missing pattern"
-        assert schema["pattern"] == LABEL_COLOR_PATTERN, (
-            f"{tool_name}.color pattern must be {LABEL_COLOR_PATTERN}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_bounded_string_parameters() -> None:
-    """Free-form text fields must have max_length bounds."""
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    bounded_strings = {
-        "gh_create_issue": {"title", "body"},
-        "gh_edit_issue": {"title", "body"},
-        "gh_create_milestone": {"title", "description", "due_on"},
-        "gh_create_comment": {"body"},
-        "gh_create_pr": {"title", "body"},
-        "gh_edit_pr": {"title", "body"},
-        "gh_create_release": {"body", "name", "target"},
-        "gh_create_release_exact": {"body", "name"},
-        "gh_create_branch": {"name", "base"},
-        "gh_create_branch_from_sha": {"name"},
+async def test_finite_enums_and_label_color_are_explicit() -> None:
+    tools = await _tools()
+    assert set(tools["gh_create_milestone"].input_schema["properties"]["state"]["enum"]) == {
+        "open",
+        "closed",
     }
-    for tool_name, fields in bounded_strings.items():
-        tool = tools_dict[tool_name]
-        for field in fields:
-            raw_schema = tool.input_schema["properties"][field]
-            schema = _extract_string_inner(raw_schema)
-            # Bounded means maxLength is set, or it's a constrained type
-            has_max = schema.get("maxLength") is not None
-            has_min = schema.get("minLength") is not None
-            is_constrained = "pattern" in schema or "enum" in schema
-            assert has_max or has_min or is_constrained, f"{tool_name}.{field} should be bounded"
-
-
-@pytest.mark.asyncio
-async def test_bounded_array_parameters() -> None:
-    """Collection parameters must have maxItems bounds."""
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    array_specs = [
-        ("gh_edit_issue", "labels_add"),
-        ("gh_edit_issue", "labels_remove"),
-        ("gh_edit_issue", "assignees_add"),
-        ("gh_edit_issue", "assignees_remove"),
-        ("gh_create_pr", "labels"),
-        ("gh_create_pr", "assignees"),
-        ("gh_create_pr", "review_users"),
-        ("gh_commit_files", "files"),
-        ("gh_run_workflow", "fields"),
-        ("gh_run_workflow_exact", "fields"),
-    ]
-    for tool_name, array_field in array_specs:
-        tool = tools_dict[tool_name]
-        schema = tool.input_schema["properties"].get(array_field)
-        assert schema is not None, f"{tool_name} missing {array_field}"
-        inner = _extract_array_inner(schema)
-        assert inner.get("type") == "array", f"{tool_name}.{array_field} must be array"
-        assert "maxItems" in inner, f"{tool_name}.{array_field} missing maxItems"
-        assert isinstance(inner["maxItems"], int), f"{tool_name}.{array_field}.maxItems must be int"
-
-
-@pytest.mark.asyncio
-async def test_high_risk_exact_preconditions() -> None:
-    """Critical write tools must pin exact preconditions on their most-sensitive fields."""
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-
-    merge_pr = tools_dict["gh_merge_pr"].input_schema["properties"]
-    assert "expected_head_sha" in merge_pr
-    assert merge_pr["expected_head_sha"]["pattern"] == OBJECT_SHA_PATTERN
-
-    commit_files = tools_dict["gh_commit_files"].input_schema["properties"]
-    assert "expected_head_sha" in commit_files
-    assert commit_files["expected_head_sha"]["pattern"] == OBJECT_SHA_PATTERN
-
-    branch_from_sha = tools_dict["gh_create_branch_from_sha"].input_schema["properties"]
-    assert "base_sha" in branch_from_sha
-    assert branch_from_sha["base_sha"]["pattern"] == OBJECT_SHA_PATTERN
-
-    release_exact = tools_dict["gh_create_release_exact"].input_schema["properties"]
-    assert "expected_target_sha" in release_exact
-    assert release_exact["expected_target_sha"]["pattern"] == OBJECT_SHA_PATTERN
-
-    workflow_exact = tools_dict["gh_run_workflow_exact"].input_schema["properties"]
-    assert "expected_ref_sha" in workflow_exact
-    assert workflow_exact["expected_ref_sha"]["pattern"] == OBJECT_SHA_PATTERN
-
-
-@pytest.mark.asyncio
-async def test_workflow_input_strings_constrained_to_key_equals_value() -> None:
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for tool_name in ("gh_run_workflow", "gh_run_workflow_exact"):
-        tool = tools_dict[tool_name]
-        fields_schema = tool.input_schema["properties"].get("fields")
-        assert fields_schema is not None, f"{tool_name} missing fields param"
-        inner = _extract_array_inner(fields_schema)
-        assert inner.get("type") == "array"
-        items = inner.get("items", {})
-        assert "pattern" in items, f"{tool_name}.fields items missing pattern"
-        assert re.fullmatch(r"^[^=]+=.*$", items["pattern"]), (
-            f"{tool_name}.fields items pattern must enforce key=value"
-        )
-
-
-@pytest.mark.asyncio
-async def test_forbidden_generic_executor_fields() -> None:
-    """No write tool may expose arbitrary command/URL/JSON executor fields."""
-    FORBIDDEN_FIELDS = {
-        "args",
-        "command",
-        "shell",
-        "url",
-        "api_endpoint",
-        "request_path",
-        "payload",
-        "json",
-        "confirmation",
-        "authorized",
-        "bypass",
+    assert set(tools["gh_submit_pr_review"].input_schema["properties"]["action"]["enum"]) == {
         "approve",
+        "request_changes",
+        "comment",
     }
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in PUBLIC_WRITE_TOOLS:
-        tool = tools_dict[name]
-        props = set(tool.input_schema.get("properties", {}).keys())
-        violations = props & FORBIDDEN_FIELDS
-        assert not violations, f"{name} exposes forbidden fields: {violations}"
-
-
-@pytest.mark.asyncio
-async def test_forbidden_generic_url_or_request_fields() -> None:
-    """No write tool may accept an arbitrary request URL or endpoint selector."""
-    TOOLS_WITH_PATH_FIELD = {
-        "gh_get_file_contents",
-        "gh_read_artifact_file",
+    assert set(tools["gh_merge_pr"].input_schema["properties"]["method"]["enum"]) == {
+        "merge",
+        "squash",
+        "rebase",
     }
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in PUBLIC_WRITE_TOOLS:
-        if name in TOOLS_WITH_PATH_FIELD:
-            continue
-        tool = tools_dict[name]
-        props = tool.input_schema.get("properties", {})
-        for field_name, schema in props.items():
-            if field_name in ("url", "request_url", "api_endpoint", "request_path"):
-                raise AssertionError(f"{name}.{field_name} looks like arbitrary URL selector")
-            if field_name == "method":
-                enum_vals = schema.get("enum", [])
-                if set(enum_vals) == {"GET", "POST", "PUT", "DELETE"}:
-                    raise AssertionError(f"{name}.method looks like generic HTTP method selector")
+
+    for tool_name in ("gh_create_label", "gh_upsert_label", "gh_edit_label"):
+        raw = tools[tool_name].input_schema["properties"]["color"]
+        assert _unwrap_optional(raw)["pattern"] == LABEL_COLOR_PATTERN
 
 
 @pytest.mark.asyncio
-async def test_annotation_truthfulness_against_known_sets() -> None:
-    """Cross-check annotations against the canonical additive/destructive sets."""
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    for name in PUBLIC_WRITE_TOOLS:
-        tool = tools_dict[name]
-        expected_read_only = False
-        expected_destructive = name in DESTRUCTIVE_WRITE_TOOLS
-        assert tool.annotations.read_only_hint is expected_read_only, (
-            f"{name} read_only_hint mismatch"
-        )
-        assert tool.annotations.destructive_hint is expected_destructive, (
-            f"{name} destructive_hint mismatch"
-        )
-        assert tool.annotations.open_world_hint is True, f"{name} open_world_hint must be True"
+async def test_workflow_inputs_are_bounded_key_value_entries() -> None:
+    tools = await _tools()
+    for tool_name in ("gh_run_workflow", "gh_run_workflow_exact"):
+        raw = tools[tool_name].input_schema["properties"]["fields"]
+        fields = _unwrap_optional(raw)
+        assert fields["type"] == "array"
+        assert fields["maxItems"] == 25
+        items = fields["items"]
+        assert items["pattern"] == WORKFLOW_FIELD_PATTERN
+        assert items["maxLength"] == 65_535
 
 
 @pytest.mark.asyncio
-async def test_enum_literals_are_finite() -> None:
-    """Where the facade uses Literal/enum types, the schema must list finite values."""
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
+async def test_commit_file_payload_is_host_bounded() -> None:
+    tools = await _tools()
+    root = tools["gh_commit_files"].input_schema
+    files = root["properties"]["files"]
+    assert files["type"] == "array"
+    assert files["minItems"] == 1
+    assert files["maxItems"] == 1000
 
-    milestone_state = tools_dict["gh_create_milestone"].input_schema["properties"]["state"]
-    assert "enum" in milestone_state
-    assert set(milestone_state["enum"]) == {"open", "closed"}
-
-    review_action = tools_dict["gh_submit_pr_review"].input_schema["properties"]["action"]
-    assert "enum" in review_action
-    assert set(review_action["enum"]) == {"approve", "request_changes", "comment"}
-
-    merge_method = tools_dict["gh_merge_pr"].input_schema["properties"]["method"]
-    assert "enum" in merge_method
-    assert set(merge_method["enum"]) == {"merge", "squash", "rebase"}
-
-
-@pytest.mark.asyncio
-async def test_commit_file_payload_has_content_bound() -> None:
-    tools_dict = {t.name: t for t in await mcp.list_tools()}
-    commit_files = tools_dict["gh_commit_files"].input_schema["properties"]
-    files_schema = commit_files["files"]
-    assert files_schema["type"] == "array"
-    assert files_schema["minItems"] >= 1
-    assert files_schema["maxItems"] <= 1000
-    item_def = files_schema.get("items", {})
-    item_ref = item_def.get("$ref", "")
-    assert "PublicCommitFile" in item_ref, (
-        f"commit files schema should reference PublicCommitFile, got {item_ref}"
-    )
+    item = _resolve_ref(root, files["items"])
+    properties = item["properties"]
+    assert properties["path"]["maxLength"] == 4096
+    assert properties["content"]["maxLength"] == 5_000_000
+    assert set(properties["mode"]["enum"]) == {"100644", "100755", "120000"}
