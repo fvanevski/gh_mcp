@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 
 
 class GitHubPrimaryRateLimitState(BaseModel):
-    """Primary API rate-limit state reported by GitHub's ``rate`` response object."""
+    """Primary REST API state reported by GitHub's ``resources.core`` object."""
 
+    resource: Literal["core"] = "core"
     limit: int | None = Field(default=None, ge=0)
     remaining: int | None = Field(default=None, ge=0)
     used: int | None = Field(default=None, ge=0)
@@ -28,14 +29,14 @@ class GitHubRateLimitResponseHeaders(BaseModel):
 
 
 class GitHubApiRateObservation(BaseModel):
-    """Authoritative GitHub-provided state from one governed ``GET /rate_limit`` attempt."""
+    """GitHub-provided state from one governed ``GET /rate_limit`` attempt."""
 
     request_performed: bool
+    response_body_available: bool
     observed_at_epoch: float = Field(ge=0)
     request_id: str | None = None
     headers: GitHubRateLimitResponseHeaders
     primary: GitHubPrimaryRateLimitState | None = None
-    warning: str | None = None
 
 
 class GitHubGovernorRateStatus(BaseModel):
