@@ -10,10 +10,17 @@ Write tools are off-by-default and gated behind explicit environment flags.
 ## Quick start
 
 ```bash
+gh --version                 # requires gh >= 2.97.0
 cp .env.example .env        # add GITHUB_TOKEN
 uv sync --dev
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
+
+`gh >= 2.97.0` is a runtime requirement. The exact Actions log readers depend on the
+`gh api --allow-escape-sequences` capability introduced in 2.97.0 so that the server can
+receive raw log bytes and normalize terminal controls itself before returning MCP evidence.
+Do not support or validate this server against older `gh` releases without an explicit
+compatibility design change.
 
 Tests that hit live GitHub (integration suite) skip when `GITHUB_TOKEN` is absent. All
 other tests run offline.
@@ -104,6 +111,9 @@ the limit above the hard cap.
 ## Commands that agents will need
 
 ```bash
+# Confirm the runtime CLI compatibility floor
+gh --version
+
 # Run all unit tests (offline, fast)
 uv run pytest
 
@@ -153,7 +163,10 @@ Do **not** invoke the raw `gh` CLI directly when an MCP tool exists — the serv
 
 ## Known constraints
 
-- The `gh` CLI must be installed and on `$PATH`. The server never installs or manages it.
+- The `gh` CLI must be installed on `$PATH` at version **2.97.0 or newer**. The server never
+  installs or manages it. `gh_get_job_logs` and `gh_get_run_logs` rely on the
+  `gh api --allow-escape-sequences` behavior available from 2.97.0 onward; older releases
+  are outside the supported runtime contract.
 - Rate limits, authentication scope, and permission scoping are delegated entirely to
   `gh` and the supplied token — the server performs no additional auth checks.
 - Tools like `gh release create` that require file uploads or multi-step interactive flows
