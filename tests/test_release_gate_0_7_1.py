@@ -89,7 +89,7 @@ def test_release_docs_report_final_surface_and_non_goals() -> None:
         "generic shell",
         "administrator",
         "automatic",
-        "artifact/log deletion",
+        "artifact deletion",
         "branch-protection",
     )
     for phrase in non_goals:
