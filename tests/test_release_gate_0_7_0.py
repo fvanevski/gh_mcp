@@ -1,4 +1,4 @@
-"""Release-integration regression gate for version 0.7.0."""
+"""Historical release-floor regression gate for version 0.7.0."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from mcp_gh_server import __version__
 from mcp_gh_server.server import mcp
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.7.0"
+HISTORICAL_VERSION = (0, 7, 0)
 MINIMUM_TOOL_COUNT = 56
 MINIMUM_READ_ONLY_COUNT = 35
 EXPECTED_WRITE_COUNT = 21
@@ -40,7 +40,14 @@ FORBIDDEN_PUBLIC_TOOLS = {
 }
 
 
-def test_release_versions_and_lockfile_agree() -> None:
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    major, minor, patch = value.split(".")
+    return int(major), int(minor), int(patch)
+
+
+def test_release_versions_preserve_0_7_0_floor_and_current_agreement() -> None:
+    """Keep current version authorities aligned without pinning later releases to 0.7.0."""
+
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
     editable_packages = [
@@ -49,10 +56,10 @@ def test_release_versions_and_lockfile_agree() -> None:
         if package.get("name") == "mcp-gh-server" and package.get("source") == {"editable": "."}
     ]
 
-    assert __version__ == EXPECTED_VERSION
-    assert project["project"]["version"] == EXPECTED_VERSION
     assert len(editable_packages) == 1
-    assert editable_packages[0]["version"] == EXPECTED_VERSION
+    assert project["project"]["version"] == __version__
+    assert editable_packages[0]["version"] == __version__
+    assert _version_tuple(__version__) >= HISTORICAL_VERSION
 
 
 async def test_release_tool_inventory_floor_and_non_goals() -> None:
@@ -66,7 +73,7 @@ async def test_release_tool_inventory_floor_and_non_goals() -> None:
     }
 
     # 0.7.0 established a historical release floor, not a permanent ceiling on
-    # additive tools developed before the next version gate. The exact current
+    # additive tools developed before later version gates. The exact current
     # inventory remains enforced separately by test_tool_schema_snapshot.py.
     assert len(tools) >= MINIMUM_TOOL_COUNT
     assert len(read_only) >= MINIMUM_READ_ONLY_COUNT
@@ -75,16 +82,21 @@ async def test_release_tool_inventory_floor_and_non_goals() -> None:
     assert FORBIDDEN_PUBLIC_TOOLS.isdisjoint(tools)
 
 
-def test_release_docs_report_current_surface() -> None:
-    readme = (ROOT / "README.md").read_text()
-    qwen = (ROOT / "QWEN.md").read_text()
+def test_release_document_preserves_historical_surface() -> None:
+    """Keep the immutable 0.7.0 release record exact as current docs advance."""
+
     gate = (ROOT / "docs" / "release_gate_0_7_0.md").read_text()
 
-    assert "0.7.0" in readme
-    assert "Read-only (35)" in readme
-    assert "Write (21)" in readme
-    for document in (qwen, gate):
-        assert "0.7.0" in document
-        assert "56 public MCP tools" in document
-        assert "35 read-only" in document
-        assert "21 write" in document
+    assert "Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write." in gate
+    for tool_name in RELEASE_NEW_TOOLS:
+        assert tool_name in gate
+    for phrase in (
+        "arbitrary public `gh <args...>`",
+        "arbitrary public `gh api`",
+        "generic shell or subprocess MCP tool",
+        "administrator bypasses",
+        "automatic repeated workflow rerun or dispatch",
+        "artifact or log deletion",
+        "branch-protection or ruleset mutation",
+    ):
+        assert phrase in gate
