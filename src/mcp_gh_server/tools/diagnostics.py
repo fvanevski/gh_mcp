@@ -22,6 +22,7 @@ from ..rate_status_models import (
     GitHubRateLimitResponseHeaders,
 )
 from ..request_governor import (
+    GitHubGovernorSnapshot,
     GitHubRequestError,
     GitHubRequestGovernor,
     GitHubRequestMetadata,
@@ -45,7 +46,9 @@ class _RateStatusCache:
     cached_at_monotonic: float | None = None
 
 
-_RATE_STATUS_CACHES: WeakKeyDictionary[GitHubRequestGovernor, _RateStatusCache] = WeakKeyDictionary()
+_RATE_STATUS_CACHES: WeakKeyDictionary[GitHubRequestGovernor, _RateStatusCache] = (
+    WeakKeyDictionary()
+)
 
 
 @mcp.tool(
@@ -211,7 +214,8 @@ async def _perform_rate_status_request(app: AppContext) -> _RateStatusObservatio
     def collect(chunk: bytes) -> None:
         if len(body) + len(chunk) > _RATE_STATUS_MAX_BODY_BYTES:
             raise RuntimeError(
-                f"GitHub /rate_limit response exceeded the {_RATE_STATUS_MAX_BODY_BYTES}-byte hard limit"
+                "GitHub /rate_limit response exceeded the "
+                f"{_RATE_STATUS_MAX_BODY_BYTES}-byte hard limit"
             )
         body.extend(chunk)
 

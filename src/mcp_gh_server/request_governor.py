@@ -42,14 +42,14 @@ class GitHubRequestMetadata:
     warning: str | None = None
     attempts: int = 1
     retry_after_seconds: float | None = None
-    rate_limit_resource: str | None = None
-    rate_limit_limit: int | None = None
-    rate_limit_remaining: int | None = None
-    rate_limit_used: int | None = None
     rate_limit_reset_epoch: int | None = None
+    rate_limit_remaining: int | None = None
     etag: str | None = None
     last_modified: str | None = None
     not_modified: bool = False
+    rate_limit_resource: str | None = None
+    rate_limit_limit: int | None = None
+    rate_limit_used: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +145,7 @@ class GitHubRequestGovernor:
         self._blocked_reason: RateBlockReason | None = None
         self._last_rate_event_at_wall: float | None = None
         self._last_rate_request_id: str | None = None
-        self._last_rate_warning: str | None = None
+        self._last_rate_warning: str | None
 
     async def execute(
         self,

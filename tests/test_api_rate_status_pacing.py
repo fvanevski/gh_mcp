@@ -184,7 +184,8 @@ async def test_rate_status_coalesces_concurrent_diagnostic_calls(
     )
 
     assert len(client.calls) == 1
-    assert sorted([first.github.request_performed, second.github.request_performed]) == [False, True]
+    performed = [first.github.request_performed, second.github.request_performed]
+    assert sorted(performed) == [False, True]
     assert sorted([first.github.cached, second.github.cached]) == [False, True]
 
 
