@@ -518,9 +518,7 @@ async def gh_get_pr_checks(
         prefix = "gh command returned status 1 without structured output: "
         message = str(exc)
         detail = message.removeprefix(prefix) if message.startswith(prefix) else ""
-        no_checks = detail.startswith("no checks reported on the '") and detail.endswith(
-            "' branch"
-        )
+        no_checks = detail.startswith("no checks reported on the '") and detail.endswith("' branch")
         no_required_checks = (
             required_only
             and detail.startswith("no required checks reported on the '")

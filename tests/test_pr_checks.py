@@ -29,7 +29,7 @@ def _write_fake_gh(
     state_path = tmp_path / "pr-read-count"
     fake_gh = tmp_path / "gh"
     fake_gh.write_text(
-        f'''#!/usr/bin/env python3
+        f"""#!/usr/bin/env python3
 import json
 import pathlib
 import sys
@@ -53,7 +53,7 @@ elif args[:2] == ["pr", "checks"]:
     raise SystemExit(1)
 else:
     raise SystemExit(2)
-'''
+"""
     )
     fake_gh.chmod(0o700)
 
