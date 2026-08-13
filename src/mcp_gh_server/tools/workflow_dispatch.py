@@ -139,7 +139,7 @@ async def _require_unambiguous_dispatch_name(
     *,
     ctx: Context[AppContext],
 ) -> None:
-    """Reject a short dispatch name that GitHub could resolve as either a branch or tag."""
+    """Reject a short ref name that GitHub could resolve as either a branch or tag."""
 
     counterpart = _counterpart_ref(ref)
     result = await gh_get_ref(owner, repo, counterpart, ctx=ctx)
