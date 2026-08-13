@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     default_max_results: int = Field(default=30, ge=1)
     hard_max_results: int = Field(default=100, ge=1)
     command_timeout_seconds: float = Field(default=30, gt=0)
+    api_rate_status_min_interval_seconds: float = Field(default=5.0, ge=1.0)
 
     transport: Literal["stdio", "streamable-http"] = "stdio"
     http_host: str = "127.0.0.1"

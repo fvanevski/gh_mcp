@@ -9,6 +9,7 @@ from mcp_gh_server.server import mcp
 EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
     "gh_server_info": (set(), set()),
     "gh_info": (set(), set()),
+    "gh_get_api_rate_status": (set(), set()),
     "gh_search_repos": (
         {"query", "sort", "order", "per_page"},
         {"query"},
@@ -326,6 +327,7 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
 READ_ONLY_TOOLS = {
     "gh_server_info",
     "gh_info",
+    "gh_get_api_rate_status",
     "gh_search_repos",
     "gh_search_issues",
     "gh_search_code",
@@ -407,7 +409,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 60
+    assert len(tools) == 61
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -418,6 +420,9 @@ async def test_exact_tool_surface_snapshot() -> None:
         assert tool.annotations.destructive_hint is (name in DESTRUCTIVE_WRITE_TOOLS)
         assert tool.annotations.idempotent_hint is (name in READ_ONLY_TOOLS)
         assert tool.annotations.open_world_hint is (name != "gh_server_info")
+
+    rate_output = tools["gh_get_api_rate_status"].output_schema["properties"]
+    assert {"github", "governor"} == set(rate_output)
 
     compare_schema = tools["gh_compare_commits"].input_schema["properties"]
     assert compare_schema["base_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"

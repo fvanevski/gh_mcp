@@ -51,12 +51,14 @@ from mcp_gh_server.models import (
 )
 from mcp_gh_server.pr_draft_state_models import PullRequestDraftStateTransitionResult
 from mcp_gh_server.pr_review_models import PullRequestReviewsPage, PullRequestReviewState
+from mcp_gh_server.rate_status_models import ApiRateStatus
 from mcp_gh_server.release_exact_models import ReleaseExactResult
 from mcp_gh_server.workflow_dispatch_models import WorkflowDispatchExactResult
 
 EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_server_info": ServerInfo,
     "gh_info": dict[str, Any],
+    "gh_get_api_rate_status": ApiRateStatus,
     "gh_search_repos": SearchResults,
     "gh_search_issues": SearchResults,
     "gh_search_code": SearchResults,
@@ -119,7 +121,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 60
+    assert len(EXPECTED_RETURN_MODELS) == 61
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)
