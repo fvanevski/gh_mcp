@@ -48,8 +48,8 @@ class GitHubGovernorRateStatus(BaseModel):
     retry_after_seconds: float | None = Field(default=None, ge=0)
     block_reason: Literal["retry_after", "primary_reset", "fallback"] | None = None
     last_rate_event_at_epoch: float | None = Field(default=None, ge=0)
-    last_request_id: str | None = None
-    last_warning: str | None = None
+    last_rate_request_id: str | None = None
+    last_rate_warning: str | None = None
 
 
 class ApiRateStatus(BaseModel):
