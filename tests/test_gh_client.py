@@ -167,7 +167,6 @@ async def test_run_rejects_documented_status_exit_without_json(
         await client.run("pr", "checks", expected_returncode={0, 1, 8})
 
 
-@pytest.mark.asyncio
 async def test_stream_text_does_not_receive_escape_flag_for_ordinary_api_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -191,15 +190,15 @@ print("{}")
         on_chunk=chunks.append,
     )
 
-    argv_lines = (
-        Path("/tmp/captured_argv_no_opt").read_text().splitlines()
-        if Path("/tmp/captured_argv_no_opt").exists()
-        else []
-    )
-    assert all("--allow-escape-sequences" not in line for line in argv_lines)
+    argv_lines = Path("/tmp/captured_argv_no_opt").read_text().splitlines()
+    assert argv_lines[1:] == [
+        "api",
+        "repos/octo/repo/actions/jobs/1/logs",
+        "-X",
+        "GET",
+    ]
 
 
-@pytest.mark.asyncio
 async def test_stream_text_injects_allow_escape_sequences_for_opted_in_api_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -224,15 +223,16 @@ os.write(1, b"ok\\n")
         allow_escape_sequences=True,
     )
 
-    argv_lines = (
-        Path("/tmp/captured_argv_opt").read_text().splitlines()
-        if Path("/tmp/captured_argv_opt").exists()
-        else []
-    )
-    assert any("--allow-escape-sequences" in line for line in argv_lines)
+    argv_lines = Path("/tmp/captured_argv_opt").read_text().splitlines()
+    assert argv_lines[1:] == [
+        "api",
+        "--allow-escape-sequences",
+        "repos/octo/repo/actions/jobs/1/logs",
+        "-X",
+        "GET",
+    ]
 
 
-@pytest.mark.asyncio
 async def test_stream_text_rejects_direct_allow_escape_sequences_bare_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -251,7 +251,6 @@ async def test_stream_text_rejects_direct_allow_escape_sequences_bare_flag(
         )
 
 
-@pytest.mark.asyncio
 async def test_stream_text_rejects_direct_allow_escape_sequences_with_value(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -270,7 +269,6 @@ async def test_stream_text_rejects_direct_allow_escape_sequences_with_value(
         )
 
 
-@pytest.mark.asyncio
 async def test_stream_text_rejects_non_api_use_of_allow_escape_sequences(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
