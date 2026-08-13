@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 
 
 class GitHubPrimaryRateLimitState(BaseModel):
-    """Primary REST API state reported by GitHub's ``resources.core`` object."""
+    """One primary REST/API rate resource reported by GitHub."""
 
-    resource: Literal["core"] = "core"
+    resource: str = Field(min_length=1)
     limit: int | None = Field(default=None, ge=0)
     remaining: int | None = Field(default=None, ge=0)
     used: int | None = Field(default=None, ge=0)
@@ -18,22 +18,28 @@ class GitHubPrimaryRateLimitState(BaseModel):
 
 
 class GitHubRateLimitResponseHeaders(BaseModel):
-    """Rate-limit metadata already captured from the current GitHub response headers."""
+    """Rate-limit metadata captured from the source GitHub response headers."""
 
+    resource: str | None = None
+    limit: int | None = Field(default=None, ge=0)
     remaining: int | None = Field(default=None, ge=0)
+    used: int | None = Field(default=None, ge=0)
     reset_epoch: int | None = Field(default=None, ge=0)
     retry_after_seconds: float | None = Field(default=None, ge=0)
 
 
 class GitHubApiRateObservation(BaseModel):
-    """GitHub-provided state from one governed ``GET /rate_limit`` attempt."""
+    """GitHub-provided state from the most recent governed ``GET /rate_limit`` observation."""
 
     request_performed: bool
+    cached: bool
+    cache_age_seconds: float | None = Field(default=None, ge=0)
     response_body_available: bool
-    observed_at_epoch: float = Field(ge=0)
+    observed_at_epoch: float | None = Field(default=None, ge=0)
     request_id: str | None = None
     headers: GitHubRateLimitResponseHeaders
     primary: GitHubPrimaryRateLimitState | None = None
+    primary_resources: list[GitHubPrimaryRateLimitState] = Field(default_factory=list)
 
 
 class GitHubGovernorRateStatus(BaseModel):

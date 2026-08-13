@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+import mcp_gh_server.tools.diagnostics as diagnostics
 from mcp_gh_server.rate_status_models import ApiRateStatus
 from mcp_gh_server.request_governor import (
     READ_REQUEST,
@@ -33,8 +35,7 @@ class _FakeClock:
         return self.wall_value
 
     async def sleep(self, seconds: float) -> None:
-        self.monotonic_value += seconds
-        self.wall_value += seconds
+        self.advance(seconds)
 
     def advance(self, seconds: float) -> None:
         self.monotonic_value += seconds
@@ -56,21 +57,34 @@ class _FakeRateClient:
     results: list[GitHubRequestResult[Any] | BaseException]
     calls: list[tuple[str, ...]] = field(default_factory=list)
 
-    async def run_with_metadata(self, *args: str, **kwargs: Any) -> GitHubRequestResult[Any]:
-        assert kwargs == {}
 
-        async def operation() -> GitHubRequestResult[Any]:
-            self.calls.append(args)
-            value = self.results.pop(0)
-            if isinstance(value, BaseException):
-                raise value
-            return value
+async def _fake_stream_governed_bytes(
+    client: _FakeRateClient,
+    *args: str,
+    on_chunk: Any,
+    timeout: float | None = None,
+) -> GitHubRequestMetadata:
+    assert timeout is None
 
-        return await self.governor.execute(READ_REQUEST, operation)
+    async def operation() -> GitHubRequestResult[None]:
+        client.calls.append(args)
+        value = client.results.pop(0)
+        if isinstance(value, BaseException):
+            raise value
+        if isinstance(value.value, dict):
+            on_chunk(json.dumps(value.value).encode())
+        return GitHubRequestResult(value=None, metadata=value.metadata)
+
+    return (await client.governor.execute(READ_REQUEST, operation)).metadata
 
 
-def _context(client: _FakeRateClient) -> Any:
-    app = AppContext(client=client, settings=Settings())  # type: ignore[arg-type]
+def _patch_transport(monkeypatch: pytest.MonkeyPatch, clock: _FakeClock) -> None:
+    monkeypatch.setattr(diagnostics, "stream_governed_bytes", _fake_stream_governed_bytes)
+    monkeypatch.setattr(diagnostics, "monotonic", clock.monotonic)
+
+
+def _context(client: _FakeRateClient, **settings: Any) -> Any:
+    app = AppContext(client=client, settings=Settings(**settings))  # type: ignore[arg-type]
     return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=app))
 
 
@@ -96,7 +110,10 @@ def _rate_result(
         },
         metadata=GitHubRequestMetadata(
             request_id=request_id,
+            rate_limit_resource="core",
+            rate_limit_limit=limit,
             rate_limit_remaining=remaining,
+            rate_limit_used=actual_used,
             rate_limit_reset_epoch=reset_epoch,
         ),
     )
@@ -109,11 +126,14 @@ def test_rate_status_public_model_schema_separates_github_and_governor() -> None
     definitions = schema["$defs"]
     assert set(definitions["GitHubApiRateObservation"]["properties"]) == {
         "request_performed",
+        "cached",
+        "cache_age_seconds",
         "response_body_available",
         "observed_at_epoch",
         "request_id",
         "headers",
         "primary",
+        "primary_resources",
     }
     assert set(definitions["GitHubPrimaryRateLimitState"]["properties"]) == {
         "resource",
@@ -123,7 +143,10 @@ def test_rate_status_public_model_schema_separates_github_and_governor() -> None
         "reset_epoch",
     }
     assert set(definitions["GitHubRateLimitResponseHeaders"]["properties"]) == {
+        "resource",
+        "limit",
         "remaining",
+        "used",
         "reset_epoch",
         "retry_after_seconds",
     }
@@ -142,8 +165,11 @@ def test_rate_status_public_model_schema_separates_github_and_governor() -> None
     }
 
 
-async def test_rate_status_reports_normal_github_capacity_separately_from_governor() -> None:
+async def test_rate_status_reports_normal_github_capacity_separately_from_governor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = _FakeClock()
+    _patch_transport(monkeypatch, clock)
     client = _FakeRateClient(
         _governor(clock),
         [_rate_result(remaining=4_999, reset_epoch=1_600, request_id="req-normal")],
@@ -153,10 +179,15 @@ async def test_rate_status_reports_normal_github_capacity_separately_from_govern
 
     assert client.calls == [("api", "rate_limit", "-X", "GET")]
     assert result.github.request_performed is True
+    assert result.github.cached is False
+    assert result.github.cache_age_seconds is None
     assert result.github.response_body_available is True
     assert result.github.observed_at_epoch == pytest.approx(1_000.0)
     assert result.github.request_id == "req-normal"
+    assert result.github.headers.resource == "core"
+    assert result.github.headers.limit == 5_000
     assert result.github.headers.remaining == 4_999
+    assert result.github.headers.used == 1
     assert result.github.headers.reset_epoch == 1_600
     assert result.github.primary is not None
     assert result.github.primary.resource == "core"
@@ -164,6 +195,7 @@ async def test_rate_status_reports_normal_github_capacity_separately_from_govern
     assert result.github.primary.remaining == 4_999
     assert result.github.primary.used == 1
     assert result.github.primary.reset_epoch == 1_600
+    assert [state.resource for state in result.github.primary_resources] == ["core"]
     assert result.governor.reads_blocked is False
     assert result.governor.writes_blocked is False
     assert result.governor.block_reason is None
@@ -172,8 +204,11 @@ async def test_rate_status_reports_normal_github_capacity_separately_from_govern
     assert result.governor.last_rate_warning is None
 
 
-async def test_exhausted_primary_blocks_diagnostics_until_reset_then_expires_stale_state() -> None:
+async def test_exhausted_primary_blocks_diagnostics_until_reset_then_expires_stale_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = _FakeClock()
+    _patch_transport(monkeypatch, clock)
     client = _FakeRateClient(
         _governor(clock),
         [
@@ -199,9 +234,10 @@ async def test_exhausted_primary_blocks_diagnostics_until_reset_then_expires_sta
 
     suppressed = await gh_get_api_rate_status(ctx=_context(client))
     assert suppressed.github.request_performed is False
-    assert suppressed.github.response_body_available is False
-    assert suppressed.github.request_id is None
-    assert suppressed.github.primary is None
+    assert suppressed.github.cached is True
+    assert suppressed.github.cache_age_seconds == pytest.approx(0.0)
+    assert suppressed.github.request_id == "req-exhausted"
+    assert suppressed.github.primary is not None
     assert len(client.calls) == 1
     assert suppressed.governor.retry_after_seconds == pytest.approx(10.0)
 
@@ -224,8 +260,11 @@ async def test_exhausted_primary_blocks_diagnostics_until_reset_then_expires_sta
     assert "primary rate limit is exhausted" in after_reset.governor.last_rate_warning
 
 
-async def test_retry_after_response_is_retained_without_allowing_polling_bypass() -> None:
+async def test_retry_after_response_is_retained_without_allowing_polling_bypass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = _FakeClock()
+    _patch_transport(monkeypatch, clock)
     client = _FakeRateClient(
         _governor(clock),
         [
@@ -244,6 +283,7 @@ async def test_retry_after_response_is_retained_without_allowing_polling_bypass(
 
     assert client.calls == [("api", "rate_limit", "-X", "GET")]
     assert limited.github.request_performed is True
+    assert limited.github.cached is False
     assert limited.github.response_body_available is False
     assert limited.github.request_id == "req-retry-after"
     assert limited.github.headers.retry_after_seconds == pytest.approx(7.0)
@@ -255,12 +295,17 @@ async def test_retry_after_response_is_retained_without_allowing_polling_bypass(
 
     suppressed = await gh_get_api_rate_status(ctx=_context(client))
     assert suppressed.github.request_performed is False
+    assert suppressed.github.cached is False
+    assert suppressed.github.response_body_available is False
     assert len(client.calls) == 1
     assert suppressed.governor.retry_after_seconds == pytest.approx(7.0)
 
 
-async def test_secondary_or_abuse_signal_uses_existing_fallback_policy() -> None:
+async def test_secondary_or_abuse_signal_uses_existing_fallback_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = _FakeClock()
+    _patch_transport(monkeypatch, clock)
     governor = _governor(clock, rate_limit_fallback_seconds=23.0)
     client = _FakeRateClient(
         governor,
@@ -296,8 +341,11 @@ async def test_secondary_or_abuse_signal_uses_existing_fallback_policy() -> None
     assert "fallback cooldown" in expired.last_rate_warning
 
 
-async def test_rate_status_reports_local_write_pacing_without_blocking_reads() -> None:
+async def test_rate_status_reports_local_write_pacing_without_blocking_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     clock = _FakeClock()
+    _patch_transport(monkeypatch, clock)
     governor = _governor(clock)
 
     async def write() -> GitHubRequestResult[str]:

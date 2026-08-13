@@ -7,11 +7,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from time import monotonic, time
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 T = TypeVar("T")
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
+RateBlockReason = Literal["retry_after", "primary_reset", "fallback"]
 
 
 class GitHubRequestKind(StrEnum):
@@ -41,8 +42,11 @@ class GitHubRequestMetadata:
     warning: str | None = None
     attempts: int = 1
     retry_after_seconds: float | None = None
-    rate_limit_reset_epoch: int | None = None
+    rate_limit_resource: str | None = None
+    rate_limit_limit: int | None = None
     rate_limit_remaining: int | None = None
+    rate_limit_used: int | None = None
+    rate_limit_reset_epoch: int | None = None
     etag: str | None = None
     last_modified: str | None = None
     not_modified: bool = False
@@ -67,7 +71,7 @@ class GitHubGovernorSnapshot:
     write_delay_seconds: float
     blocked_until_epoch: float | None
     retry_after_seconds: float | None
-    block_reason: str | None
+    block_reason: RateBlockReason | None
     last_rate_event_at_epoch: float | None
     last_rate_request_id: str | None
     last_rate_warning: str | None
@@ -138,7 +142,7 @@ class GitHubRequestGovernor:
         self._last_write_finished_at: float | None = None
         self._blocked_until_wall: float | None = None
         self._blocked_metadata: GitHubRequestMetadata | None = None
-        self._blocked_reason: str | None = None
+        self._blocked_reason: RateBlockReason | None = None
         self._last_rate_event_at_wall: float | None = None
         self._last_rate_request_id: str | None = None
         self._last_rate_warning: str | None = None
@@ -293,7 +297,7 @@ class GitHubRequestGovernor:
     def _rate_limit_deadline(
         self,
         metadata: GitHubRequestMetadata,
-    ) -> tuple[float | None, str | None]:
+    ) -> tuple[float | None, RateBlockReason | None]:
         if metadata.retry_after_seconds is not None:
             return (
                 self._wall_clock() + max(metadata.retry_after_seconds, 0.0),
@@ -304,7 +308,7 @@ class GitHubRequestGovernor:
         return None, None
 
     @staticmethod
-    def _rate_limit_warning(reason: str | None) -> str:
+    def _rate_limit_warning(reason: RateBlockReason | None) -> str:
         if reason == "retry_after":
             return (
                 "GitHub rate-limit or abuse throttling supplied Retry-After; local governor "

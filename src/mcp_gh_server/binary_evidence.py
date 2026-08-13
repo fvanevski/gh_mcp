@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from .gh_client import (
     GhClient,
@@ -13,7 +13,6 @@ from .gh_client import (
     _infer_request_kind,
     _is_rate_limited,
     _is_retryable_failure,
-    _metadata_from_headers,
     _redacted_command,
     _status_from_stderr,
     _terminate_process,
@@ -218,3 +217,45 @@ async def _stream_bytes_once(
         )
 
     return GitHubRequestResult(value=None, metadata=metadata)
+
+
+def _metadata_from_headers(
+    headers: Mapping[str, str],
+    *,
+    not_modified: bool,
+) -> GitHubRequestMetadata:
+    """Capture complete primary-rate provenance from one included GitHub response."""
+
+    resource = headers.get("x-ratelimit-resource")
+    return GitHubRequestMetadata(
+        request_id=headers.get("x-github-request-id"),
+        retry_after_seconds=_nonnegative_float(headers.get("retry-after")),
+        rate_limit_resource=resource or None,
+        rate_limit_limit=_nonnegative_int(headers.get("x-ratelimit-limit")),
+        rate_limit_remaining=_nonnegative_int(headers.get("x-ratelimit-remaining")),
+        rate_limit_used=_nonnegative_int(headers.get("x-ratelimit-used")),
+        rate_limit_reset_epoch=_nonnegative_int(headers.get("x-ratelimit-reset")),
+        etag=headers.get("etag"),
+        last_modified=headers.get("last-modified"),
+        not_modified=not_modified,
+    )
+
+
+def _nonnegative_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _nonnegative_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
