@@ -108,6 +108,7 @@ _API_BOOLEAN_FLAGS = frozenset(
     {"-i", "--include", "--paginate", "--silent", "--slurp", "--verbose"}
 )
 _STREAM_FORBIDDEN_FLAGS = frozenset({"-i", "--include", "--paginate", "--slurp"})
+_ALLOWS_ESCAPE_SEQUENCES_FLAG = "--allow-escape-sequences"
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +181,7 @@ class GhClient:
         *args: str,
         on_chunk: Callable[[str], None],
         timeout: float | None = None,
+        allow_escape_sequences: bool = False,
     ) -> GitHubRequestMetadata:
         """Stream one governed read-only ``gh`` response into a synchronous text sink.
 
@@ -190,6 +192,17 @@ class GhClient:
 
         if _infer_request_kind(args) is not GitHubRequestKind.READ:
             raise ValueError("stream_text accepts only commands classified as read-only")
+        for arg in args:
+            if arg == _ALLOWS_ESCAPE_SEQUENCES_FLAG or arg.startswith(
+                f"{_ALLOWS_ESCAPE_SEQUENCES_FLAG}="
+            ):
+                raise ValueError(
+                    "stream_text rejects direct --allow-escape-sequences; use the opt-in parameter"
+                )
+        if allow_escape_sequences and args and args[0] != "api":
+            raise ValueError("stream_text allows allow_escape_sequences only on gh api reads")
+        if allow_escape_sequences and args and args[0] == "api":
+            args = ("api", _ALLOWS_ESCAPE_SEQUENCES_FLAG, *args[1:])
         if any(flag in _STREAM_FORBIDDEN_FLAGS for flag in args):
             raise ValueError("stream_text does not support include/paginate/slurp output framing")
 

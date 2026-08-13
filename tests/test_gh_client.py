@@ -165,3 +165,121 @@ async def test_run_rejects_documented_status_exit_without_json(
 
     with pytest.raises(RuntimeError, match="without structured output"):
         await client.run("pr", "checks", expected_returncode={0, 1, 8})
+
+
+async def test_stream_text_does_not_receive_escape_flag_for_ordinary_api_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gh(
+        tmp_path,
+        """import os, sys
+from pathlib import Path
+Path("/tmp/captured_argv_no_opt").write_text("\\n".join(sys.argv))
+print("{}")
+""",
+    )
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+    chunks: list[str] = []
+
+    await client.stream_text(
+        "api",
+        "repos/octo/repo/actions/jobs/1/logs",
+        "-X",
+        "GET",
+        on_chunk=chunks.append,
+    )
+
+    argv_lines = Path("/tmp/captured_argv_no_opt").read_text().splitlines()
+    assert argv_lines[1:] == [
+        "api",
+        "repos/octo/repo/actions/jobs/1/logs",
+        "-X",
+        "GET",
+    ]
+
+
+async def test_stream_text_injects_allow_escape_sequences_for_opted_in_api_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gh(
+        tmp_path,
+        """import os, sys
+from pathlib import Path
+Path("/tmp/captured_argv_opt").write_text("\\n".join(sys.argv))
+os.write(1, b"ok\\n")
+""",
+    )
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+    chunks: list[str] = []
+
+    await client.stream_text(
+        "api",
+        "repos/octo/repo/actions/jobs/1/logs",
+        "-X",
+        "GET",
+        on_chunk=chunks.append,
+        allow_escape_sequences=True,
+    )
+
+    argv_lines = Path("/tmp/captured_argv_opt").read_text().splitlines()
+    assert argv_lines[1:] == [
+        "api",
+        "--allow-escape-sequences",
+        "repos/octo/repo/actions/jobs/1/logs",
+        "-X",
+        "GET",
+    ]
+
+
+async def test_stream_text_rejects_direct_allow_escape_sequences_bare_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gh(tmp_path, "print('{}')\n")
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+
+    with pytest.raises(ValueError, match="rejects direct --allow-escape-sequences"):
+        await client.stream_text(
+            "api",
+            "--allow-escape-sequences",
+            "repos/octo/repo/actions/jobs/1/logs",
+            "-X",
+            "GET",
+            on_chunk=lambda _: None,
+        )
+
+
+async def test_stream_text_rejects_direct_allow_escape_sequences_with_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gh(tmp_path, "print('{}')\n")
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+
+    with pytest.raises(ValueError, match="rejects direct --allow-escape-sequences"):
+        await client.stream_text(
+            "api",
+            "--allow-escape-sequences=true",
+            "repos/octo/repo/actions/jobs/1/logs",
+            "-X",
+            "GET",
+            on_chunk=lambda _: None,
+        )
+
+
+async def test_stream_text_rejects_non_api_use_of_allow_escape_sequences(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_gh(tmp_path, "print('{}')\n")
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    client = GhClient(Settings())
+
+    with pytest.raises(ValueError, match="only on gh api reads"):
+        await client.stream_text(
+            "issue",
+            "list",
+            on_chunk=lambda _: None,
+            allow_escape_sequences=True,
+        )
