@@ -215,7 +215,7 @@ async def test_retry_after_response_is_retained_without_allowing_polling_bypass(
     assert suppressed.governor.retry_after_seconds == pytest.approx(7.0)
 
 
-async def test_secondary_or_abuse_signal_uses_existing_fallback_without_hardcoded_threshold() -> None:
+async def test_secondary_or_abuse_signal_uses_existing_fallback_policy() -> None:
     clock = _FakeClock()
     governor = _governor(clock, rate_limit_fallback_seconds=23.0)
     client = _FakeRateClient(
