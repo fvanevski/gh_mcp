@@ -34,6 +34,7 @@ from .tools.actions import (
     gh_list_workflows,
     gh_watch_run,
 )
+from .tools.artifact_content import gh_list_artifact_files, gh_read_artifact_file
 from .tools.artifacts import gh_get_artifact, gh_list_run_artifacts
 from .tools.compare_commits import gh_compare_commits
 from .tools.diagnostics import gh_info, gh_server_info
@@ -234,6 +235,7 @@ __all__ = [
     "gh_get_run_logs",
     "gh_get_workflow",
     "gh_info",
+    "gh_list_artifact_files",
     "gh_list_issues",
     "gh_list_labels",
     "gh_list_milestones",
@@ -248,6 +250,7 @@ __all__ = [
     "gh_list_runs",
     "gh_list_workflows",
     "gh_merge_pr",
+    "gh_read_artifact_file",
     "gh_run_workflow",
     "gh_run_workflow_exact",
     "gh_search_code",

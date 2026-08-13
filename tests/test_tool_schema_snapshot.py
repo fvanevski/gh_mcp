@@ -208,6 +208,14 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "artifact_id"},
         {"owner", "repo", "artifact_id"},
     ),
+    "gh_list_artifact_files": (
+        {"owner", "repo", "artifact_id", "page", "per_page"},
+        {"owner", "repo", "artifact_id"},
+    ),
+    "gh_read_artifact_file": (
+        {"owner", "repo", "artifact_id", "path", "max_bytes"},
+        {"owner", "repo", "artifact_id", "path"},
+    ),
     "gh_list_run_jobs": (
         {"owner", "repo", "run_id", "attempt", "page", "per_page"},
         {"owner", "repo", "run_id"},
@@ -346,6 +354,8 @@ READ_ONLY_TOOLS = {
     "gh_get_run",
     "gh_list_run_artifacts",
     "gh_get_artifact",
+    "gh_list_artifact_files",
+    "gh_read_artifact_file",
     "gh_watch_run",
     "gh_list_run_jobs",
     "gh_get_failed_run_logs",
@@ -397,7 +407,7 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 58
+    assert len(tools) == 60
     assert set(tools) == set(EXPECTED_SURFACE)
 
     for name, tool in tools.items():
@@ -640,6 +650,25 @@ async def test_exact_tool_surface_snapshot() -> None:
     artifact_output = tools["gh_get_artifact"].output_schema["properties"]
     assert artifact_output["workflow_head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
     assert artifact_output["expired"]["type"] == "boolean"
+
+    artifact_files_schema = tools["gh_list_artifact_files"].input_schema["properties"]
+    assert artifact_files_schema["artifact_id"]["minimum"] == 1
+    assert artifact_files_schema["page"]["minimum"] == 1
+    assert artifact_files_schema["per_page"]["anyOf"][0]["maximum"] == 100
+    artifact_files_output = tools["gh_list_artifact_files"].output_schema["properties"]
+    assert artifact_files_output["workflow_head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
+    assert artifact_files_output["archive_sha256"]["pattern"] == r"^[0-9a-f]{64}$"
+    assert artifact_files_output["truncated"]["type"] == "boolean"
+
+    artifact_read_schema = tools["gh_read_artifact_file"].input_schema["properties"]
+    assert artifact_read_schema["artifact_id"]["minimum"] == 1
+    assert artifact_read_schema["path"]["maxLength"] == 4096
+    assert artifact_read_schema["max_bytes"]["anyOf"][0]["maximum"] == 1_000_000
+    artifact_read_output = tools["gh_read_artifact_file"].output_schema["properties"]
+    assert artifact_read_output["workflow_head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
+    assert artifact_read_output["archive_sha256"]["pattern"] == r"^[0-9a-f]{64}$"
+    assert artifact_read_output["sha256"]["pattern"] == r"^[0-9a-f]{64}$"
+    assert artifact_read_output["truncated"]["type"] == "boolean"
 
     for name in ("gh_get_job_logs", "gh_get_run_logs"):
         schema = tools[name].input_schema["properties"]
