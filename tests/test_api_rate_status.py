@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from mcp_gh_server.rate_status_models import ApiRateStatus
 from mcp_gh_server.request_governor import (
     READ_REQUEST,
     WRITE_REQUEST,
@@ -99,6 +100,46 @@ def _rate_result(
             rate_limit_reset_epoch=reset_epoch,
         ),
     )
+
+
+def test_rate_status_public_model_schema_separates_github_and_governor() -> None:
+    schema = ApiRateStatus.model_json_schema()
+    assert set(schema["properties"]) == {"github", "governor"}
+
+    definitions = schema["$defs"]
+    assert set(definitions["GitHubApiRateObservation"]["properties"]) == {
+        "request_performed",
+        "response_body_available",
+        "observed_at_epoch",
+        "request_id",
+        "headers",
+        "primary",
+    }
+    assert set(definitions["GitHubPrimaryRateLimitState"]["properties"]) == {
+        "resource",
+        "limit",
+        "remaining",
+        "used",
+        "reset_epoch",
+    }
+    assert set(definitions["GitHubRateLimitResponseHeaders"]["properties"]) == {
+        "remaining",
+        "reset_epoch",
+        "retry_after_seconds",
+    }
+    assert set(definitions["GitHubGovernorRateStatus"]["properties"]) == {
+        "observed_at_epoch",
+        "reads_blocked",
+        "writes_blocked",
+        "writes_delayed",
+        "write_delay_seconds",
+        "blocked_until_epoch",
+        "retry_after_seconds",
+        "block_reason",
+        "last_rate_event_at_epoch",
+        "last_rate_request_id",
+        "last_rate_warning",
+    }
 
 
 async def test_rate_status_reports_normal_github_capacity_separately_from_governor() -> None:
