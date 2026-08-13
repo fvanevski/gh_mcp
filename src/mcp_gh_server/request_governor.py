@@ -41,11 +41,8 @@ class GitHubRequestMetadata:
     warning: str | None = None
     attempts: int = 1
     retry_after_seconds: float | None = None
-    rate_limit_resource: str | None = None
-    rate_limit_limit: int | None = None
     rate_limit_reset_epoch: int | None = None
     rate_limit_remaining: int | None = None
-    rate_limit_used: int | None = None
     etag: str | None = None
     last_modified: str | None = None
     not_modified: bool = False
