@@ -139,7 +139,7 @@ async def _require_unambiguous_dispatch_name(
     *,
     ctx: Context[AppContext],
 ) -> None:
-    """Reject a short ref name that GitHub could resolve as either a branch or tag."""
+    """Reject a short dispatch name that GitHub could resolve as either a branch or tag."""
 
     counterpart = _counterpart_ref(ref)
     result = await gh_get_ref(owner, repo, counterpart, ctx=ctx)
@@ -454,7 +454,13 @@ async def gh_run_workflow_exact(
         raise ValueError("expected_ref_sha must be exactly 40 hexadecimal characters")
 
     app = app_from_context(ctx)
-    require_write_enabled(app, owner, repo, action="workflow_dispatch")
+    require_write_enabled(
+        app,
+        owner,
+        repo,
+        action="workflow_dispatch",
+        workflow=workflow_id,
+    )
     inputs = _workflow_inputs(fields)
     normalized_expected_sha = expected_ref_sha.casefold()
     dispatch_ref = ref.split("/", 1)[1] if "/" in ref else ""
