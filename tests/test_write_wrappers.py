@@ -17,7 +17,6 @@ from mcp_gh_server.server import (
     gh_commit_files,
     gh_create_branch,
     gh_create_branch_from_sha,
-    gh_create_comment,
     gh_create_issue,
     gh_create_label,
     gh_create_milestone,
@@ -619,20 +618,7 @@ async def test_get_failed_run_logs_is_noninteractive_bounded_and_attempt_pinned(
 
 
 @pytest.mark.asyncio
-async def test_comment_branch_and_pr_edit_use_raw_writes() -> None:
-    comment_url = "https://github.com/octo/repo/issues/4#issuecomment-5"
-    comment_client = FakeGhClient([{"stdout": comment_url}])
-    comment = await gh_create_comment(
-        "octo",
-        "repo",
-        4,
-        "Hello",
-        ctx=_context(comment_client),
-    )
-    assert comment.url == comment_url
-    assert comment_client.calls[0][1] == {"json_output": False, "stdin_text": "Hello"}
-    assert "--body-file" in comment_client.calls[0][0]
-
+async def test_branch_and_pr_edit_use_raw_writes() -> None:
     branch_client = FakeGhClient([{"stdout": ""}])
     await gh_create_branch(
         "octo",

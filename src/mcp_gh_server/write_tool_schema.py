@@ -16,7 +16,6 @@ from pydantic import Field
 
 from .issue_state_models import IssueState, IssueStateReason, IssueStateTransitionResult
 from .legacy_action_write_adapter import gh_run_workflow as _gh_run_workflow
-from .legacy_comment_write_adapter import gh_create_comment as _gh_create_comment
 from .legacy_git_write_adapter import (
     gh_create_branch as _gh_create_branch,
 )
@@ -84,6 +83,7 @@ from .tooling import (
     AppContext,
 )
 from .tools.issue_state import gh_set_issue_state as _gh_set_issue_state
+from .tools.issues import gh_create_comment as _gh_create_comment
 from .tools.pr_draft_state import gh_set_pr_draft_state as _gh_set_pr_draft_state
 from .tools.release_exact import gh_create_release_exact as _gh_create_release_exact
 from .tools.workflow_dispatch import gh_run_workflow_exact as _gh_run_workflow_exact
@@ -959,9 +959,10 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         (
             "Additive write: post exactly one bounded Markdown conversation comment on "
             "the specified issue or pull request after ordinary write authorization. "
-            "This legacy surface has no structured comment-id readback, so it does not "
-            "claim verified semantic success. It is not a formal pull-request review "
-            "and cannot merge."
+            "The mutation is attempted once through the issue-comments REST endpoint, "
+            "and authoritative readback of the returned immutable comment ID verifies "
+            "repository and issue identity plus the requested body. It is not a formal "
+            "pull-request review and cannot merge."
         ),
         ADD_EXTERNAL,
     ),

@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from .write_contracts import ExactWriteResult
+
 # ---------------------------------------------------------------------------
 # Info tools
 # ---------------------------------------------------------------------------
@@ -718,9 +720,10 @@ class IssueEdit(WriteResult):
     message: str
 
 
-class CommentCreate(WriteResult):
-    """Result of creating a comment."""
+class CommentCreate(ExactWriteResult):
+    """Authoritative result of creating an issue or pull-request comment."""
 
+    comment_id: int | None = Field(default=None, ge=1)
     url: str
     message: str
 
