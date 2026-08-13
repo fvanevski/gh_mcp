@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from .write_contracts import ExactWriteResult
+
 # ---------------------------------------------------------------------------
 # Info tools
 # ---------------------------------------------------------------------------
@@ -632,36 +634,32 @@ class PullRequestChecks(BaseModel):
 
 
 class WorkflowJobStep(BaseModel):
-    """One step in a GitHub Actions workflow job."""
+    """One step reported for a workflow job."""
 
     number: int = Field(ge=1)
     name: str
     status: str
     conclusion: str | None = None
-    started_at: str | None = None
-    completed_at: str | None = None
 
 
 class WorkflowJob(BaseModel):
-    """One GitHub Actions job with its bounded step metadata."""
+    """One job in a workflow-run jobs page."""
 
     id: int = Field(ge=1)
     name: str
     status: str
     conclusion: str | None = None
-    started_at: str | None = None
-    completed_at: str | None = None
     url: str | None = None
     runner_name: str | None = None
     steps: list[WorkflowJobStep] = Field(default_factory=list)
 
 
 class WorkflowJobsPage(BaseModel):
-    """One bounded page of jobs for an exact workflow-run attempt."""
+    """One bounded workflow-job page pinned to a run attempt/head."""
 
     run_id: int = Field(ge=1)
     attempt: int = Field(ge=1)
-    head_sha: str = Field(pattern=r"^[0-9A-Fa-f]{40}$")
+    head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     page: int = Field(ge=1)
     per_page: int = Field(ge=1, le=100)
     total_count: int = Field(ge=0)
@@ -670,14 +668,11 @@ class WorkflowJobsPage(BaseModel):
 
 
 class WorkflowRunFailedLogs(BaseModel):
-    """Bounded failed-step logs for one exact workflow-run attempt."""
+    """Bounded failed-job logs pinned to one workflow-run attempt/head."""
 
     run_id: int = Field(ge=1)
     attempt: int = Field(ge=1)
-    head_sha: str = Field(pattern=r"^[0-9A-Fa-f]{40}$")
-    status: str
-    conclusion: str | None = None
-    url: str | None = None
+    head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
     content: str
     truncated: bool
     bytes_returned: int = Field(ge=0)
@@ -718,9 +713,10 @@ class IssueEdit(WriteResult):
     message: str
 
 
-class CommentCreate(WriteResult):
-    """Result of creating a comment."""
+class CommentCreate(ExactWriteResult):
+    """Authoritative result of creating an issue or pull-request comment."""
 
+    comment_id: int | None = Field(default=None, ge=1)
     url: str
     message: str
 
