@@ -41,8 +41,11 @@ class GitHubRequestMetadata:
     warning: str | None = None
     attempts: int = 1
     retry_after_seconds: float | None = None
+    rate_limit_resource: str | None = None
+    rate_limit_limit: int | None = None
     rate_limit_reset_epoch: int | None = None
     rate_limit_remaining: int | None = None
+    rate_limit_used: int | None = None
     etag: str | None = None
     last_modified: str | None = None
     not_modified: bool = False
@@ -56,6 +59,23 @@ class GitHubRequestResult[T]:
     metadata: GitHubRequestMetadata = field(default_factory=GitHubRequestMetadata)
 
 
+@dataclass(frozen=True, slots=True)
+class GitHubGovernorSnapshot:
+    """Read-only point-in-time view of local rate-limit and write-pacing policy state."""
+
+    observed_at_epoch: float
+    reads_blocked: bool
+    writes_blocked: bool
+    writes_delayed: bool
+    write_delay_seconds: float
+    blocked_until_epoch: float | None
+    retry_after_seconds: float | None
+    block_reason: str | None
+    last_rate_event_at_epoch: float | None
+    last_request_id: str | None
+    last_warning: str | None
+
+
 class GitHubRequestError(RuntimeError):
     """Structured command failure consumed by ``GitHubRequestGovernor``."""
 
@@ -67,6 +87,7 @@ class GitHubRequestError(RuntimeError):
         retryable: bool = False,
         ambiguous: bool = False,
         rate_limited: bool = False,
+        governor_blocked: bool = False,
         metadata: GitHubRequestMetadata | None = None,
     ) -> None:
         super().__init__(message)
@@ -74,6 +95,7 @@ class GitHubRequestError(RuntimeError):
         self.retryable = retryable
         self.ambiguous = ambiguous
         self.rate_limited = rate_limited
+        self.governor_blocked = governor_blocked
         self.metadata = metadata or GitHubRequestMetadata()
 
 
@@ -119,6 +141,9 @@ class GitHubRequestGovernor:
         self._last_write_finished_at: float | None = None
         self._blocked_until_wall: float | None = None
         self._blocked_metadata: GitHubRequestMetadata | None = None
+        self._blocked_reason: str | None = None
+        self._last_rate_event_at_wall: float | None = None
+        self._last_rate_warning: str | None = None
 
     async def execute(
         self,
@@ -174,6 +199,33 @@ class GitHubRequestGovernor:
                     metadata = replace(metadata, warning=" ".join(warning_parts))
                 return replace(result, metadata=metadata)
 
+    def rate_status(self) -> GitHubGovernorSnapshot:
+        """Return local governor status without issuing or bypassing a GitHub request."""
+
+        now_wall = self._wall_clock()
+        self._expire_rate_limit_state(now_wall)
+        blocked = self._blocked_until_wall is not None
+        retry_after = (
+            max(self._blocked_until_wall - now_wall, 0.0)
+            if self._blocked_until_wall is not None
+            else None
+        )
+        write_delay = self._write_pacing_delay()
+        metadata = self._blocked_metadata or GitHubRequestMetadata()
+        return GitHubGovernorSnapshot(
+            observed_at_epoch=now_wall,
+            reads_blocked=blocked,
+            writes_blocked=blocked,
+            writes_delayed=write_delay > 0,
+            write_delay_seconds=write_delay,
+            blocked_until_epoch=self._blocked_until_wall,
+            retry_after_seconds=retry_after,
+            block_reason=self._blocked_reason,
+            last_rate_event_at_epoch=self._last_rate_event_at_wall,
+            last_request_id=metadata.request_id if blocked else None,
+            last_warning=self._last_rate_warning if blocked else None,
+        )
+
     def _should_retry(
         self,
         policy: GitHubRequestPolicy,
@@ -192,26 +244,40 @@ class GitHubRequestGovernor:
         delay = float(self._backoff_base_seconds * (2 ** max(attempts - 1, 0)))
         return min(delay, self._backoff_max_seconds)
 
-    async def _pace_write(self) -> None:
+    def _write_pacing_delay(self) -> float:
         if self._last_write_finished_at is None:
-            return
+            return 0.0
         elapsed = self._monotonic_clock() - self._last_write_finished_at
-        remaining = self._write_spacing_seconds - elapsed
+        return max(self._write_spacing_seconds - elapsed, 0.0)
+
+    async def _pace_write(self) -> None:
+        remaining = self._write_pacing_delay()
         if remaining > 0:
             await self._sleep(remaining)
 
-    def _record_rate_limit(self, metadata: GitHubRequestMetadata) -> None:
-        deadline = self._rate_limit_deadline(metadata)
+    def _record_rate_limit(
+        self,
+        metadata: GitHubRequestMetadata,
+        *,
+        warning: str | None = None,
+    ) -> None:
+        deadline, reason = self._rate_limit_deadline(metadata)
         blocked_metadata = metadata
         if deadline is None:
             deadline = self._wall_clock() + self._rate_limit_fallback_seconds
+            reason = "fallback"
             blocked_metadata = replace(
                 metadata,
                 retry_after_seconds=self._rate_limit_fallback_seconds,
             )
+        effective_warning = warning or metadata.warning or self._rate_limit_warning(reason)
+        blocked_metadata = replace(blocked_metadata, warning=effective_warning)
+        self._last_rate_event_at_wall = self._wall_clock()
+        self._last_rate_warning = effective_warning
         if self._blocked_until_wall is None or deadline > self._blocked_until_wall:
             self._blocked_until_wall = deadline
             self._blocked_metadata = blocked_metadata
+            self._blocked_reason = reason
 
     def _record_success_rate_limit(self, metadata: GitHubRequestMetadata) -> str | None:
         if metadata.rate_limit_remaining != 0 or metadata.rate_limit_reset_epoch is None:
@@ -219,26 +285,56 @@ class GitHubRequestGovernor:
         deadline = float(metadata.rate_limit_reset_epoch)
         if deadline <= self._wall_clock():
             return None
-        self._record_rate_limit(metadata)
-        return (
+        warning = (
             "GitHub primary rate limit is exhausted; further requests are blocked until "
             "the reported reset time."
         )
+        self._record_rate_limit(metadata, warning=warning)
+        return warning
 
-    def _rate_limit_deadline(self, metadata: GitHubRequestMetadata) -> float | None:
+    def _rate_limit_deadline(
+        self,
+        metadata: GitHubRequestMetadata,
+    ) -> tuple[float | None, str | None]:
         if metadata.retry_after_seconds is not None:
-            return self._wall_clock() + max(metadata.retry_after_seconds, 0.0)
+            return (
+                self._wall_clock() + max(metadata.retry_after_seconds, 0.0),
+                "retry_after",
+            )
         if metadata.rate_limit_remaining == 0 and metadata.rate_limit_reset_epoch is not None:
-            return float(metadata.rate_limit_reset_epoch)
-        return None
+            return float(metadata.rate_limit_reset_epoch), "primary_reset"
+        return None, None
+
+    @staticmethod
+    def _rate_limit_warning(reason: str | None) -> str:
+        if reason == "retry_after":
+            return (
+                "GitHub rate-limit or abuse throttling supplied Retry-After; local governor "
+                "cooldown is active."
+            )
+        if reason == "primary_reset":
+            return (
+                "GitHub primary rate limit is exhausted; local governor blocks requests until "
+                "the reported reset time."
+            )
+        return (
+            "GitHub rate-limit or abuse throttling supplied no usable Retry-After/reset; "
+            "local governor fallback cooldown is active."
+        )
+
+    def _expire_rate_limit_state(self, now: float) -> None:
+        if self._blocked_until_wall is None or now < self._blocked_until_wall:
+            return
+        self._blocked_until_wall = None
+        self._blocked_metadata = None
+        self._blocked_reason = None
+        self._last_rate_event_at_wall = None
+        self._last_rate_warning = None
 
     def _enforce_rate_limit_pause(self) -> None:
-        if self._blocked_until_wall is None:
-            return
         now = self._wall_clock()
-        if now >= self._blocked_until_wall:
-            self._blocked_until_wall = None
-            self._blocked_metadata = None
+        self._expire_rate_limit_state(now)
+        if self._blocked_until_wall is None:
             return
 
         remaining = self._blocked_until_wall - now
@@ -248,5 +344,6 @@ class GitHubRequestGovernor:
             "GitHub request governor is paused by a prior rate-limit response; "
             f"retry after at least {remaining:.3f}s.",
             rate_limited=True,
+            governor_blocked=True,
             metadata=metadata,
         )
