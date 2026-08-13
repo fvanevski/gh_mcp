@@ -2,12 +2,34 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 
 from mcp.server.mcpserver import Context
 
 from ..models import SearchResults
 from ..tooling import READ_EXTERNAL, AppContext, app_from_context, mcp, parse_search_result
+
+
+def _quote_search_component(value: str) -> str:
+    """Quote one GitHub Search keyword or qualifier value as gh search does."""
+
+    if any(character in value for character in ' "\t\r\n'):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def _search_query_from_args(query_args: list[str]) -> str:
+    """Recreate the Search REST query generated from gh search argv components."""
+
+    formatted: list[str] = []
+    for argument in query_args:
+        qualifier, separator, value = argument.partition(":")
+        if separator:
+            formatted.append(f"{qualifier}:{_quote_search_component(value)}")
+        else:
+            formatted.append(_quote_search_component(argument))
+    return " ".join(formatted)
 
 
 async def _authoritative_search_total(
@@ -88,7 +110,7 @@ async def gh_search_repos(
     total = await _authoritative_search_total(
         app,
         "search/repositories",
-        " ".join(query_args),
+        _search_query_from_args(query_args),
         len(items),
     )
     truncated = len(items) < total
@@ -135,7 +157,7 @@ async def gh_search_issues(
     total = await _authoritative_search_total(
         app,
         "search/issues",
-        " ".join(query_args),
+        _search_query_from_args(query_args),
         len(items),
     )
     truncated = len(items) < total
@@ -173,7 +195,7 @@ async def gh_search_code(
     total = await _authoritative_search_total(
         app,
         "search/code",
-        " ".join(query_args),
+        _search_query_from_args(query_args),
         len(items),
     )
     truncated = len(items) < total
