@@ -10,6 +10,44 @@ from ..models import SearchResults
 from ..tooling import READ_EXTERNAL, AppContext, app_from_context, mcp, parse_search_result
 
 
+async def _authoritative_search_total(
+    app: AppContext,
+    endpoint: str,
+    query: str,
+    returned_items: int,
+) -> int:
+    """Read and validate one authoritative bounded Search REST count."""
+
+    result = await app.client.run(
+        "api",
+        endpoint,
+        "-X",
+        "GET",
+        "-f",
+        f"q={query}",
+        "-f",
+        "per_page=1",
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError("GitHub Search count endpoint returned a non-object response")
+
+    incomplete_results = result.get("incomplete_results")
+    if incomplete_results is True:
+        raise RuntimeError("GitHub Search count evidence is incomplete")
+    if incomplete_results is not False:
+        raise RuntimeError("GitHub Search count evidence has malformed incomplete_results")
+
+    total_count = result.get("total_count")
+    if (
+        isinstance(total_count, bool)
+        or not isinstance(total_count, int)
+        or total_count < 0
+        or total_count < returned_items
+    ):
+        raise RuntimeError("GitHub Search count evidence has malformed total_count")
+    return total_count
+
+
 @mcp.tool(annotations=READ_EXTERNAL)
 async def gh_search_repos(
     query: str,
@@ -43,10 +81,17 @@ async def gh_search_repos(
         str(limit),
         "--",
     ]
-    args.extend(shlex.split(query))
+    query_args = shlex.split(query)
+    args.extend(query_args)
     result = await app.client.run(*args)
-    items, total = parse_search_result(result)
-    truncated = len(items) >= limit
+    items, _ = parse_search_result(result)
+    total = await _authoritative_search_total(
+        app,
+        "search/repositories",
+        " ".join(query_args),
+        len(items),
+    )
+    truncated = len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
 
 
@@ -83,10 +128,17 @@ async def gh_search_issues(
         str(limit),
         "--",
     ]
-    args.extend(shlex.split(query))
+    query_args = shlex.split(query)
+    args.extend(query_args)
     result = await app.client.run(*args)
-    items, total = parse_search_result(result)
-    truncated = len(items) >= limit
+    items, _ = parse_search_result(result)
+    total = await _authoritative_search_total(
+        app,
+        "search/issues",
+        " ".join(query_args),
+        len(items),
+    )
+    truncated = len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
 
 
@@ -114,8 +166,15 @@ async def gh_search_code(
         str(limit),
         "--",
     ]
-    args.extend(shlex.split(query))
+    query_args = shlex.split(query)
+    args.extend(query_args)
     result = await app.client.run(*args)
-    items, total = parse_search_result(result)
-    truncated = len(items) >= limit
+    items, _ = parse_search_result(result)
+    total = await _authoritative_search_total(
+        app,
+        "search/code",
+        " ".join(query_args),
+        len(items),
+    )
+    truncated = len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
