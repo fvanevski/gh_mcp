@@ -4,15 +4,17 @@ A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
 runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
-Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write.
+Version 0.7.1 exposes 61 public MCP tools: 40 read-only and 21 write.
 
 ## Tools
 
-### Read-only (35)
+### Read-only (40)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
 - `gh_info`: gh CLI version, authentication status, and active account.
+- `gh_get_api_rate_status`: report GitHub-provided primary rate-limit observations
+  separately from locally governed blocking/pacing state, with bounded anti-polling reuse.
 - `gh_search_repos`: search GitHub repositories with qualifiers.
 - `gh_search_issues`: search issues and pull requests with qualifiers.
 - `gh_search_code`: search source code with qualifiers.
@@ -29,6 +31,8 @@ Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write.
   preserving pagination and exact-head evidence.
 - `gh_get_pr_review_state`: aggregate exact-head review/request/thread evidence without
   treating truncated evidence as complete.
+- `gh_get_merge_requirements`: aggregate effective merge requirements/readiness for an
+  exact expected PR head and fail closed when policy or identity evidence is incomplete.
 - `gh_get_repo`: get details of a specific repository.
 - `gh_list_repos`: list repositories for a user or organization.
 - `gh_list_releases`: list releases in a repository.
@@ -41,6 +45,10 @@ Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write.
   workflow run, with optional exact-name filtering and run attempt/head identity.
 - `gh_get_artifact`: get one exact artifact's metadata, including digest, expiry,
   associated workflow run, and workflow head SHA.
+- `gh_list_artifact_files`: inspect one exact unexpired artifact ZIP and list a bounded
+  page of normalized regular-file metadata without extracting the archive.
+- `gh_read_artifact_file`: read one exact normalized artifact path as bounded UTF-8
+  text/JSON evidence with complete-file digest and truncation metadata.
 - `gh_watch_run`: poll a workflow run until completion or a caller-supplied timeout.
 - `gh_get_pr_checks`: return bounded CI check summaries pinned to an exact PR revision.
 - `gh_list_run_jobs`: list one bounded page of jobs and steps for an exact run attempt.
@@ -56,6 +64,8 @@ Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write.
   object identity and returning the peeled commit SHA for annotated tags.
 - `gh_get_commit`: read one exact 40-character Git commit SHA with its immutable
   tree, ordered parents, author/committer, message, and GitHub verification evidence.
+- `gh_compare_commits`: compare two exact commit SHAs with explicit merge-base,
+  ahead/behind status, independently bounded commit/file evidence, and digests.
 
 ### Write (21)
 
@@ -90,7 +100,7 @@ Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write.
 - `gh_commit_files`: atomically create or replace files in one branch commit
   (destructive write, separately disabled by default).
 
-## 0.7.0 architecture and evidence contract
+## 0.7.1 architecture and evidence contract
 
 `src/mcp_gh_server/server.py` is the composition root; public tool implementations live in
 cohesive domain modules under `src/mcp_gh_server/tools/`. GitHub request execution is
@@ -102,13 +112,23 @@ applicable, perform one mutation attempt, and require authoritative readback bef
 verified success. Ambiguous or partial writes are not blindly retried.
 
 Evidence reads remain explicitly bounded. Callers must preserve truncation/completeness
-metadata, byte counts, digests, and warnings rather than presenting partial artifact or log
-evidence as complete.
+metadata, byte counts, digests, and warnings rather than presenting partial artifact, log,
+or comparison evidence as complete.
 
-0.7.0 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public `gh api`,
+The 0.7.1 inspection surface adds conservative exact-state evidence rather than new mutation
+paths. `gh_get_merge_requirements` discards readiness evidence when PR identity moves and
+reports unavailable or unmodeled policy as incomplete. `gh_compare_commits` accepts only
+exact commit SHAs and independently bounds commit and file collections. Artifact-content
+inspection operates on exact unexpired artifact IDs, never extracts ZIPs, constrains normalized
+paths and sizes, rejects symlinks/special/encrypted or binary content, and returns bounded
+text/JSON evidence with digests. `gh_get_api_rate_status` keeps GitHub-provided primary-rate
+observations separate from local governor state and uses a local refresh interval only as
+anti-polling policy. See the focused documents under `docs/` for each contract.
+
+0.7.1 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public `gh api`,
 a generic shell/subprocess MCP tool, administrator bypasses, automatic repeated workflow
 rerun/dispatch, artifact/log deletion, or branch-protection/ruleset mutation. See
-`docs/release_gate_0_7_0.md` for the release acceptance mapping.
+`docs/release_gate_0_7_1.md` for the final release acceptance mapping.
 
 ## Install
 
@@ -185,7 +205,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.7.0`, but availability in
+The action surface is version `0.7.1`, but availability in
 ChatGPT depends on the account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -271,7 +291,7 @@ MCP tool invocation reached server: tool=gh_get_pr
 ```
 
 After deploying the current release, delete and reinstall the Plus custom plugin and
-verify `gh_server_info` reports both versions as 0.7.0. An immediate namespace-disabled
+verify `gh_server_info` reports both versions as 0.7.1. An immediate namespace-disabled
 response with no `gh_get_pr` marker still proves rejection occurred in the host before
 the revised server operation. It does not indicate GitHub authentication, repository,
 PR, or readback failure and must not be retried as though a GitHub write partially ran.
@@ -539,6 +559,9 @@ uv run ruff format --check .
 uv run mypy
 uv run pytest
 ```
+
+The final 0.7.1 release mapping and inventory validation are documented in
+`docs/release_gate_0_7_1.md`.
 
 ## Known boundaries
 

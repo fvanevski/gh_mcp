@@ -2,16 +2,29 @@
 
 This script exercises the underlying gh CLI commands that the MCP tools
 wrap, confirming they work correctly. Tool registration is verified
-by the successful import of the server module.
+by the successful import of the server module. Pass ``--inventory-only``
+to verify the exact release inventory without issuing GitHub requests.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+EXPECTED_VERSION = "0.7.1"
+EXPECTED_TOOL_COUNT = 61
+REQUIRED_0_7_1_TOOLS = {
+    "gh_get_merge_requirements",
+    "gh_compare_commits",
+    "gh_list_artifact_files",
+    "gh_read_artifact_file",
+    "gh_get_api_rate_status",
+}
+INVENTORY_ONLY = "--inventory-only" in sys.argv[1:]
 
 print("=" * 60)
 print("gh_mcp MCP Tool Exercise")
@@ -24,12 +37,32 @@ try:
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from mcp_gh_server.server import mcp
 
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+    if mcp.version != EXPECTED_VERSION:
+        raise RuntimeError(
+            f"server version mismatch: expected {EXPECTED_VERSION}, got {mcp.version}"
+        )
+    if len(tools) != EXPECTED_TOOL_COUNT:
+        raise RuntimeError(f"tool-count mismatch: expected {EXPECTED_TOOL_COUNT}, got {len(tools)}")
+    missing = REQUIRED_0_7_1_TOOLS.difference(tools)
+    if missing:
+        raise RuntimeError(f"missing 0.7.1 tools: {', '.join(sorted(missing))}")
+    for name in REQUIRED_0_7_1_TOOLS:
+        annotations = tools[name].annotations
+        if annotations is None or annotations.read_only_hint is not True:
+            raise RuntimeError(f"0.7.1 tool is not registered read-only: {name}")
+
     print("✓ Server module imported successfully")
     print(f"✓ Server name: {mcp.name}")
     print(f"✓ Server version: {mcp.version}")
+    print(f"✓ Exact public tool count: {len(tools)}")
+    print("✓ Required 0.7.1 read-only tools are registered")
 except Exception as e:
     print(f"✗ Tool registration failed: {e}")
     sys.exit(1)
+
+if INVENTORY_ONLY:
+    sys.exit(0)
 
 print()
 
@@ -46,6 +79,18 @@ tests = [
             "status",
             "--json",
             "hosts",
+        ],
+    ),
+    (
+        "gh_get_api_rate_status",
+        [
+            "gh",
+            "api",
+            "rate_limit",
+            "-X",
+            "GET",
+            "--jq",
+            "{rate: .rate}",
         ],
     ),
     (
