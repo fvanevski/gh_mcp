@@ -43,9 +43,7 @@ try:
             f"server version mismatch: expected {EXPECTED_VERSION}, got {mcp.version}"
         )
     if len(tools) != EXPECTED_TOOL_COUNT:
-        raise RuntimeError(
-            f"tool-count mismatch: expected {EXPECTED_TOOL_COUNT}, got {len(tools)}"
-        )
+        raise RuntimeError(f"tool-count mismatch: expected {EXPECTED_TOOL_COUNT}, got {len(tools)}")
     missing = REQUIRED_0_7_1_TOOLS.difference(tools)
     if missing:
         raise RuntimeError(f"missing 0.7.1 tools: {', '.join(sorted(missing))}")
