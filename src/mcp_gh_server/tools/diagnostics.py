@@ -187,6 +187,6 @@ def _governor_rate_status(snapshot: GitHubGovernorSnapshot) -> GitHubGovernorRat
             snapshot.block_reason,
         ),
         last_rate_event_at_epoch=snapshot.last_rate_event_at_epoch,
-        last_request_id=snapshot.last_request_id,
-        last_warning=snapshot.last_warning,
+        last_rate_request_id=snapshot.last_rate_request_id,
+        last_rate_warning=snapshot.last_rate_warning,
     )
