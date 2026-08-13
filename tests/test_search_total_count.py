@@ -130,5 +130,5 @@ async def test_incomplete_count_evidence_is_rejected() -> None:
 async def test_malformed_count_evidence_is_rejected(count_evidence: Any) -> None:
     client = FakeGhClient([[{"id": 1}, {"id": 2}], count_evidence])
 
-    with pytest.raises(RuntimeError, match="count|malformed"):
+    with pytest.raises(RuntimeError, match=r"count|malformed"):
         await gh_search_repos(query="repo:octo/repo", per_page=2, ctx=_context(client))
