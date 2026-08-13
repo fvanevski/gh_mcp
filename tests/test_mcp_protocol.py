@@ -461,10 +461,10 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     commit_schema = tools["gh_commit_files"].input_schema
     assert commit_schema["properties"]["expected_head_sha"]["pattern"]
     assert commit_schema["properties"]["files"]["minItems"] == 1
-    assert commit_schema["properties"]["files"]["items"]["$ref"].endswith("/$defs/CommitFile")
+    assert commit_schema["properties"]["files"]["items"]["$ref"].endswith("/$defs/PublicCommitFile")
     issue_branch_schema = tools["gh_create_branch"].input_schema["properties"]
     assert issue_branch_schema["issue_number"]["minimum"] == 1
-    assert "branch name" in issue_branch_schema["base"]["description"]
+    assert "branch-name base" in issue_branch_schema["base"]["description"]
     exact_branch_schema = tools["gh_create_branch_from_sha"].input_schema["properties"]
     assert exact_branch_schema["base_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
     exact_branch_output = tools["gh_create_branch_from_sha"].output_schema["properties"]

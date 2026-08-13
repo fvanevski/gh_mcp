@@ -24,12 +24,16 @@ from mcp_gh_server.server import (
     gh_create_milestone,
     gh_create_pr,
     gh_create_release,
+    gh_create_release_exact,
     gh_create_repo,
     gh_edit_issue,
     gh_edit_label,
     gh_edit_pr,
     gh_merge_pr,
     gh_run_workflow,
+    gh_run_workflow_exact,
+    gh_set_issue_state,
+    gh_set_pr_draft_state,
     gh_submit_pr_review,
     gh_upsert_label,
 )
@@ -81,26 +85,30 @@ def _context(client: MetadataAwareClient) -> Any:
 
 def test_all_public_writes_are_bound_to_issue9_compatibility_modules() -> None:
     expected = {
-        gh_create_issue: "mcp_gh_server.legacy_issue_core_write_adapter",
-        gh_edit_issue: "mcp_gh_server.legacy_issue_core_write_adapter",
-        gh_create_label: "mcp_gh_server.legacy_label_write_adapter",
-        gh_upsert_label: "mcp_gh_server.legacy_label_write_adapter",
-        gh_edit_label: "mcp_gh_server.legacy_label_write_adapter",
-        gh_create_milestone: "mcp_gh_server.legacy_milestone_write_adapter",
-        gh_create_comment: "mcp_gh_server.legacy_comment_write_adapter",
-        gh_create_pr: "mcp_gh_server.legacy_pr_metadata_write_adapter",
-        gh_edit_pr: "mcp_gh_server.legacy_pr_metadata_write_adapter",
-        gh_submit_pr_review: "mcp_gh_server.legacy_pr_review_write_adapter",
-        gh_merge_pr: "mcp_gh_server.legacy_pr_merge_write_adapter",
-        gh_create_repo: "mcp_gh_server.legacy_repository_write_adapters",
-        gh_commit_files: "mcp_gh_server.legacy_repository_write_adapters",
-        gh_create_release: "mcp_gh_server.legacy_release_write_adapter",
-        gh_run_workflow: "mcp_gh_server.legacy_action_write_adapter",
-        gh_create_branch: "mcp_gh_server.legacy_git_write_adapter",
-        gh_create_branch_from_sha: "mcp_gh_server.legacy_git_write_adapter",
+        gh_create_issue: "mcp_gh_server.write_tool_schema",
+        gh_edit_issue: "mcp_gh_server.write_tool_schema",
+        gh_set_issue_state: "mcp_gh_server.write_tool_schema",
+        gh_create_label: "mcp_gh_server.write_tool_schema",
+        gh_upsert_label: "mcp_gh_server.write_tool_schema",
+        gh_edit_label: "mcp_gh_server.write_tool_schema",
+        gh_create_milestone: "mcp_gh_server.write_tool_schema",
+        gh_create_comment: "mcp_gh_server.write_tool_schema",
+        gh_create_pr: "mcp_gh_server.write_tool_schema",
+        gh_edit_pr: "mcp_gh_server.write_tool_schema",
+        gh_set_pr_draft_state: "mcp_gh_server.write_tool_schema",
+        gh_submit_pr_review: "mcp_gh_server.write_tool_schema",
+        gh_merge_pr: "mcp_gh_server.write_tool_schema",
+        gh_create_repo: "mcp_gh_server.write_tool_schema",
+        gh_commit_files: "mcp_gh_server.write_tool_schema",
+        gh_create_release: "mcp_gh_server.write_tool_schema",
+        gh_create_release_exact: "mcp_gh_server.write_tool_schema",
+        gh_run_workflow: "mcp_gh_server.write_tool_schema",
+        gh_run_workflow_exact: "mcp_gh_server.write_tool_schema",
+        gh_create_branch: "mcp_gh_server.write_tool_schema",
+        gh_create_branch_from_sha: "mcp_gh_server.write_tool_schema",
     }
 
-    assert len(expected) == 17
+    assert len(expected) == 21
     for function, module in expected.items():
         assert function.__module__ == module
 
