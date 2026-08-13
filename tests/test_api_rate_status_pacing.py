@@ -162,9 +162,7 @@ async def test_rate_status_coalesces_concurrent_diagnostic_calls(
     import asyncio
 
     payload = {
-        "resources": {
-            "core": {"limit": 5_000, "used": 1, "remaining": 4_999, "reset": 2_600}
-        }
+        "resources": {"core": {"limit": 5_000, "used": 1, "remaining": 4_999, "reset": 2_600}}
     }
     clock = _FakeClock()
     monkeypatch.setattr(diagnostics, "stream_governed_bytes", _fake_stream_governed_bytes)

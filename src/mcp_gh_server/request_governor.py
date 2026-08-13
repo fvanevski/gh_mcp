@@ -145,7 +145,7 @@ class GitHubRequestGovernor:
         self._blocked_reason: RateBlockReason | None = None
         self._last_rate_event_at_wall: float | None = None
         self._last_rate_request_id: str | None = None
-        self._last_rate_warning: str | None
+        self._last_rate_warning: str | None = None
 
     async def execute(
         self,
