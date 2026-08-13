@@ -382,25 +382,28 @@ DESTRUCTIVE_WRITE_TOOLS = {
 
 EXPECTED_DESCRIPTIONS = {
     "gh_create_issue": (
-        "Create a new issue in a repository.\n\n"
-        "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval."
+        "Additive write: create exactly one issue in the target repository. "
+        "The ordinary write gate and repository policy must allow the target. "
+        "Optional labels and assignees are bounded; authoritative readback verifies "
+        "the created issue when a stable identity is returned. This tool does not "
+        "edit, close, comment on, or delete an existing issue."
     ),
     "gh_edit_issue": (
-        "Edit an existing issue in a repository.\n\n"
-        "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval."
+        "Destructive write: edit metadata on exactly one existing issue after "
+        "ordinary write authorization. The request may change title, body, labels, "
+        "assignees, or milestone; authoritative readback checks requested fields. "
+        "It does not close or reopen the issue, post comments, delete the issue, or "
+        "bypass repository policy."
     ),
     "gh_list_milestones": (
         "List milestones in a repository via the GitHub API.\n\n"
         "state: open, closed, or all (default: all)."
     ),
     "gh_create_milestone": (
-        "Create a new milestone in a repository via the GitHub API.\n\n"
-        "due_on: due date in ISO format (e.g. '2026-12-31').\n"
-        "state: open or closed (default: open).\n\n"
-        "This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host\n"
-        "is responsible for user-facing approval."
+        "Additive write: create exactly one repository milestone with bounded title, "
+        "description, due date, and explicit open/closed state after ordinary write "
+        "authorization. Authoritative readback verifies the created milestone. It "
+        "does not assign issues to the milestone or edit existing milestones."
     ),
 }
 
@@ -423,6 +426,11 @@ async def test_exact_tool_surface_snapshot() -> None:
 
     rate_output = tools["gh_get_api_rate_status"].output_schema["properties"]
     assert {"github", "governor"} == set(rate_output)
+
+    repo_create_schema = tools["gh_create_repo"].input_schema["properties"]
+    assert repo_create_schema["name"]["pattern"] == (
+        r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/)?[A-Za-z0-9_.-]{1,100}$"
+    )
 
     compare_schema = tools["gh_compare_commits"].input_schema["properties"]
     assert compare_schema["base_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
