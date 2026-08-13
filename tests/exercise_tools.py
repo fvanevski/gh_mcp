@@ -34,12 +34,13 @@ def parse_args() -> argparse.Namespace:
 
 async def verify_inventory() -> None:
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+    from mcp_gh_server import __version__
     from mcp_gh_server.server import mcp
 
     tools = {tool.name: tool for tool in await mcp.list_tools()}
-    if mcp.version != EXPECTED_VERSION:
+    if __version__ != EXPECTED_VERSION:
         raise RuntimeError(
-            f"server version mismatch: expected {EXPECTED_VERSION}, got {mcp.version}"
+            f"server version mismatch: expected {EXPECTED_VERSION}, got {__version__}"
         )
     if len(tools) != EXPECTED_TOOL_COUNT:
         raise RuntimeError(
@@ -53,7 +54,7 @@ async def verify_inventory() -> None:
         if annotations is None or annotations.read_only_hint is not True:
             raise RuntimeError(f"0.7.1 tool is not registered read-only: {name}")
 
-    print(f"✓ Server version: {mcp.version}")
+    print(f"✓ Server version: {__version__}")
     print(f"✓ Exact public tool count: {len(tools)}")
     print("✓ Required 0.7.1 read-only tools are registered")
 
