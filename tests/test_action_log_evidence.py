@@ -619,3 +619,58 @@ def test_accumulator_literal_markers_match_across_normalized_boundary() -> None:
     accumulator.add_text("tart]mid\x80[end]")
     result = accumulator.finish()
     assert result.content == "[start]mid\\x80[end]"
+
+
+async def test_run_logs_normalize_esc_and_another_c0_control_in_stream() -> None:
+    import hashlib as hd
+
+    # Stream carries ESC (0x1b) plus NUL (0x00); both must normalize to visible \xNN.
+    raw_stream = "build\x1bos \x00ok\n"
+    client = FakeGhClient(_single_run_results(), streams=[raw_stream])
+
+    result = await gh_get_run_logs("octo", "repo", 123, 2, ctx=_context(client))
+
+    expected = "build\\x1bos \\x00ok\n"
+    assert result.text == expected
+    assert result.total_bytes == len(expected.encode("utf-8"))
+    assert result.sha256 == hd.sha256(expected.encode("utf-8")).hexdigest()
+    assert any(sc[1].get("allow_escape_sequences") is True for sc in client.stream_calls)
+
+
+async def test_job_logs_normalize_c1_and_esc_and_nul_in_stream() -> None:
+    import hashlib as hd
+
+    # Stream carries C1 (0x80), ESC (0x1b), and NUL (0x00).
+    raw_stream = "run\x80done\x1b[2m\x00end\n"
+    client = FakeGhClient(_single_job_results(), streams=[raw_stream])
+
+    result = await gh_get_job_logs("octo", "repo", 456, 2, ctx=_context(client))
+
+    assert "\x80" not in result.text and "\x1b" not in result.text and "\x00" not in result.text
+    assert "\\x80" in result.text and "\\x1b" in result.text and "\\x00" in result.text
+    expected = "run\\x80done\\x1b[2m\\x00end\n"
+    assert result.text == expected
+    assert result.total_bytes == len(expected.encode("utf-8"))
+    assert result.sha256 == hd.sha256(expected.encode("utf-8")).hexdigest()
+    assert any(sc[1].get("allow_escape_sequences") is True for sc in client.stream_calls)
+
+
+def test_accumulator_normalized_tail_selection_regression() -> None:
+    # Tail selection on a stream containing controls must operate on normalized text.
+    from mcp_gh_server.action_log_evidence import _NORMALIZATION_TABLE
+
+    text = "prefix\x01\x7fmiddle\x80\x9fsuf"
+    accumulator = ActionLogEvidenceAccumulator(
+        requested_max_bytes=10_000,
+        hard_max_bytes=10_000,
+        tail_bytes=8,
+    )
+    accumulator.add_text(text)
+    result = accumulator.finish()
+
+    # Normalized source has controls replaced by 4-char hex escapes.
+    normalized = text.translate(_NORMALIZATION_TABLE)
+    suffix = normalized[-8:] if len(normalized) >= 8 else normalized
+    assert result.content == suffix
+    assert result.total_bytes == len(normalized.encode("utf-8"))
+    assert result.sha256 == hashlib.sha256(normalized.encode("utf-8")).hexdigest()

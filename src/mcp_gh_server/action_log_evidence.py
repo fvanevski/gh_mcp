@@ -93,8 +93,8 @@ class ActionLogEvidenceAccumulator:
         self._hard_max_bytes = hard_max_bytes
         self._effective_limit = min(requested, hard_max_bytes)
         self._tail_bytes = tail_bytes
-        self._start_marker = start_marker
-        self._end_marker = end_marker
+        self._start_marker = _normalize_terminal_controls(start_marker) if start_marker else None
+        self._end_marker = _normalize_terminal_controls(end_marker) if end_marker else None
         self._label = label
 
         self._hasher = hashlib.sha256()
