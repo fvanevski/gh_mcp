@@ -46,7 +46,7 @@ def _version_tuple(value: str) -> tuple[int, int, int]:
 
 
 def test_release_versions_preserve_0_7_0_floor_and_current_agreement() -> None:
-    """Keep current version authorities aligned without pinning later releases to 0.7.0."""
+    """Keep current version authorities aligned while preserving the 0.7.0 floor."""
 
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
@@ -87,7 +87,8 @@ def test_release_document_preserves_historical_surface() -> None:
 
     gate = (ROOT / "docs" / "release_gate_0_7_0.md").read_text()
 
-    assert "Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write." in gate
+    historical_surface = "Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write."
+    assert historical_surface in gate
     for tool_name in RELEASE_NEW_TOOLS:
         assert tool_name in gate
     for phrase in (
