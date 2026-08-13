@@ -69,8 +69,8 @@ class GitHubGovernorSnapshot:
     retry_after_seconds: float | None
     block_reason: str | None
     last_rate_event_at_epoch: float | None
-    last_request_id: str | None
-    last_warning: str | None
+    last_rate_request_id: str | None
+    last_rate_warning: str | None
 
 
 class GitHubRequestError(RuntimeError):
@@ -140,6 +140,7 @@ class GitHubRequestGovernor:
         self._blocked_metadata: GitHubRequestMetadata | None = None
         self._blocked_reason: str | None = None
         self._last_rate_event_at_wall: float | None = None
+        self._last_rate_request_id: str | None = None
         self._last_rate_warning: str | None = None
 
     async def execute(
@@ -208,7 +209,6 @@ class GitHubRequestGovernor:
             else None
         )
         write_delay = self._write_pacing_delay()
-        metadata = self._blocked_metadata or GitHubRequestMetadata()
         return GitHubGovernorSnapshot(
             observed_at_epoch=now_wall,
             reads_blocked=blocked,
@@ -219,8 +219,8 @@ class GitHubRequestGovernor:
             retry_after_seconds=retry_after,
             block_reason=self._blocked_reason,
             last_rate_event_at_epoch=self._last_rate_event_at_wall,
-            last_request_id=metadata.request_id if blocked else None,
-            last_warning=self._last_rate_warning if blocked else None,
+            last_rate_request_id=self._last_rate_request_id,
+            last_rate_warning=self._last_rate_warning,
         )
 
     def _should_retry(
@@ -270,6 +270,7 @@ class GitHubRequestGovernor:
         effective_warning = warning or metadata.warning or self._rate_limit_warning(reason)
         blocked_metadata = replace(blocked_metadata, warning=effective_warning)
         self._last_rate_event_at_wall = self._wall_clock()
+        self._last_rate_request_id = metadata.request_id
         self._last_rate_warning = effective_warning
         if self._blocked_until_wall is None or deadline > self._blocked_until_wall:
             self._blocked_until_wall = deadline
@@ -325,8 +326,6 @@ class GitHubRequestGovernor:
         self._blocked_until_wall = None
         self._blocked_metadata = None
         self._blocked_reason = None
-        self._last_rate_event_at_wall = None
-        self._last_rate_warning = None
 
     def _enforce_rate_limit_pause(self) -> None:
         now = self._wall_clock()
