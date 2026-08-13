@@ -126,7 +126,9 @@ async def test_rate_status_reports_normal_github_capacity_separately_from_govern
     assert result.governor.reads_blocked is False
     assert result.governor.writes_blocked is False
     assert result.governor.block_reason is None
-    assert result.governor.last_warning is None
+    assert result.governor.last_rate_event_at_epoch is None
+    assert result.governor.last_rate_request_id is None
+    assert result.governor.last_rate_warning is None
 
 
 async def test_exhausted_primary_blocks_diagnostics_until_reset_then_expires_stale_state() -> None:
@@ -150,9 +152,9 @@ async def test_exhausted_primary_blocks_diagnostics_until_reset_then_expires_sta
     assert exhausted.governor.blocked_until_epoch == pytest.approx(1_010.0)
     assert exhausted.governor.retry_after_seconds == pytest.approx(10.0)
     assert exhausted.governor.last_rate_event_at_epoch == pytest.approx(1_000.0)
-    assert exhausted.governor.last_request_id == "req-exhausted"
-    assert exhausted.governor.last_warning is not None
-    assert "primary rate limit is exhausted" in exhausted.governor.last_warning
+    assert exhausted.governor.last_rate_request_id == "req-exhausted"
+    assert exhausted.governor.last_rate_warning is not None
+    assert "primary rate limit is exhausted" in exhausted.governor.last_rate_warning
 
     suppressed = await gh_get_api_rate_status(ctx=_context(client))
     assert suppressed.github.request_performed is False
@@ -175,9 +177,10 @@ async def test_exhausted_primary_blocks_diagnostics_until_reset_then_expires_sta
     assert after_reset.governor.blocked_until_epoch is None
     assert after_reset.governor.retry_after_seconds is None
     assert after_reset.governor.block_reason is None
-    assert after_reset.governor.last_rate_event_at_epoch is None
-    assert after_reset.governor.last_request_id is None
-    assert after_reset.governor.last_warning is None
+    assert after_reset.governor.last_rate_event_at_epoch == pytest.approx(1_000.0)
+    assert after_reset.governor.last_rate_request_id == "req-exhausted"
+    assert after_reset.governor.last_rate_warning is not None
+    assert "primary rate limit is exhausted" in after_reset.governor.last_rate_warning
 
 
 async def test_retry_after_response_is_retained_without_allowing_polling_bypass() -> None:
@@ -205,9 +208,9 @@ async def test_retry_after_response_is_retained_without_allowing_polling_bypass(
     assert limited.github.headers.retry_after_seconds == pytest.approx(7.0)
     assert limited.governor.block_reason == "retry_after"
     assert limited.governor.retry_after_seconds == pytest.approx(7.0)
-    assert limited.governor.last_request_id == "req-retry-after"
-    assert limited.governor.last_warning is not None
-    assert "rate-limit or abuse" in limited.governor.last_warning
+    assert limited.governor.last_rate_request_id == "req-retry-after"
+    assert limited.governor.last_rate_warning is not None
+    assert "rate-limit or abuse" in limited.governor.last_rate_warning
 
     suppressed = await gh_get_api_rate_status(ctx=_context(client))
     assert suppressed.github.request_performed is False
@@ -235,18 +238,21 @@ async def test_secondary_or_abuse_signal_uses_existing_fallback_policy() -> None
     assert limited.github.request_id == "req-abuse"
     assert limited.governor.block_reason == "fallback"
     assert limited.governor.retry_after_seconds == pytest.approx(23.0)
-    assert limited.governor.last_warning is not None
-    assert "rate-limit or abuse" in limited.governor.last_warning
-    assert "fallback cooldown" in limited.governor.last_warning
+    assert limited.governor.last_rate_warning is not None
+    assert "rate-limit or abuse" in limited.governor.last_rate_warning
+    assert "fallback cooldown" in limited.governor.last_rate_warning
 
     clock.advance(23.0)
     expired = governor.rate_status()
     assert expired.reads_blocked is False
     assert expired.writes_blocked is False
+    assert expired.blocked_until_epoch is None
+    assert expired.retry_after_seconds is None
     assert expired.block_reason is None
-    assert expired.last_rate_event_at_epoch is None
-    assert expired.last_request_id is None
-    assert expired.last_warning is None
+    assert expired.last_rate_event_at_epoch == pytest.approx(1_000.0)
+    assert expired.last_rate_request_id == "req-abuse"
+    assert expired.last_rate_warning is not None
+    assert "fallback cooldown" in expired.last_rate_warning
 
 
 async def test_rate_status_reports_local_write_pacing_without_blocking_reads() -> None:
