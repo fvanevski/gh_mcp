@@ -22,6 +22,7 @@ from ..models import (
     PullRequestReviewSubmission,
     SearchResults,
 )
+from ..request_governor import GitHubRequestError
 from ..tooling import (
     ADD_EXTERNAL,
     MUTATE_EXTERNAL,
@@ -511,7 +512,21 @@ async def gh_get_pr_checks(
     ]
     if required_only:
         args.append("--required")
-    result = await app.client.run(*args, expected_returncode={0, 1, 8})
+    try:
+        result = await app.client.run(*args, expected_returncode={0, 1, 8})
+    except GitHubRequestError as exc:
+        prefix = "gh command returned status 1 without structured output: "
+        message = str(exc)
+        detail = message.removeprefix(prefix) if message.startswith(prefix) else ""
+        no_checks = detail.startswith("no checks reported on the '") and detail.endswith("' branch")
+        no_required_checks = (
+            required_only
+            and detail.startswith("no required checks reported on the '")
+            and detail.endswith("' branch")
+        )
+        if not (no_checks or no_required_checks):
+            raise
+        result = []
     if not isinstance(result, list):
         raise RuntimeError("GitHub CLI did not return structured pull-request checks")
     await _verify_pr_shas(app, owner, repo, number, (base_sha, head_sha))
