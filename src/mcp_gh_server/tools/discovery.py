@@ -2,12 +2,72 @@
 
 from __future__ import annotations
 
+import json
 import shlex
 
 from mcp.server.mcpserver import Context
 
 from ..models import SearchResults
 from ..tooling import READ_EXTERNAL, AppContext, app_from_context, mcp, parse_search_result
+
+
+def _quote_search_component(value: str) -> str:
+    """Quote one GitHub Search keyword or qualifier value as gh search does."""
+
+    if any(character in value for character in ' "\t\r\n'):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def _search_query_from_args(query_args: list[str]) -> str:
+    """Recreate the Search REST query generated from gh search argv components."""
+
+    formatted: list[str] = []
+    for argument in query_args:
+        qualifier, separator, value = argument.partition(":")
+        if separator:
+            formatted.append(f"{qualifier}:{_quote_search_component(value)}")
+        else:
+            formatted.append(_quote_search_component(argument))
+    return " ".join(formatted)
+
+
+async def _authoritative_search_total(
+    app: AppContext,
+    endpoint: str,
+    query: str,
+    returned_items: int,
+) -> int:
+    """Read and validate one authoritative bounded Search REST count."""
+
+    result = await app.client.run(
+        "api",
+        endpoint,
+        "-X",
+        "GET",
+        "-f",
+        f"q={query}",
+        "-f",
+        "per_page=1",
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError("GitHub Search count endpoint returned a non-object response")
+
+    incomplete_results = result.get("incomplete_results")
+    if incomplete_results is True:
+        raise RuntimeError("GitHub Search count evidence is incomplete")
+    if incomplete_results is not False:
+        raise RuntimeError("GitHub Search count evidence has malformed incomplete_results")
+
+    total_count = result.get("total_count")
+    if (
+        isinstance(total_count, bool)
+        or not isinstance(total_count, int)
+        or total_count < 0
+        or total_count < returned_items
+    ):
+        raise RuntimeError("GitHub Search count evidence has malformed total_count")
+    return total_count
 
 
 @mcp.tool(annotations=READ_EXTERNAL)
@@ -43,10 +103,17 @@ async def gh_search_repos(
         str(limit),
         "--",
     ]
-    args.extend(shlex.split(query))
+    query_args = shlex.split(query)
+    args.extend(query_args)
     result = await app.client.run(*args)
-    items, total = parse_search_result(result)
-    truncated = len(items) >= limit
+    items, _ = parse_search_result(result)
+    total = await _authoritative_search_total(
+        app,
+        "search/repositories",
+        _search_query_from_args(query_args),
+        len(items),
+    )
+    truncated = len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
 
 
@@ -83,10 +150,17 @@ async def gh_search_issues(
         str(limit),
         "--",
     ]
-    args.extend(shlex.split(query))
+    query_args = shlex.split(query)
+    args.extend(query_args)
     result = await app.client.run(*args)
-    items, total = parse_search_result(result)
-    truncated = len(items) >= limit
+    items, _ = parse_search_result(result)
+    total = await _authoritative_search_total(
+        app,
+        "search/issues",
+        _search_query_from_args(query_args),
+        len(items),
+    )
+    truncated = len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
 
 
@@ -114,8 +188,15 @@ async def gh_search_code(
         str(limit),
         "--",
     ]
-    args.extend(shlex.split(query))
+    query_args = shlex.split(query)
+    args.extend(query_args)
     result = await app.client.run(*args)
-    items, total = parse_search_result(result)
-    truncated = len(items) >= limit
+    items, _ = parse_search_result(result)
+    total = await _authoritative_search_total(
+        app,
+        "search/code",
+        _search_query_from_args(query_args),
+        len(items),
+    )
+    truncated = len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
