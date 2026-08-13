@@ -83,6 +83,68 @@ async def test_search_tools_use_authoritative_total_count_and_preserve_items(
     )
 
 
+@pytest.mark.parametrize(
+    ("tool", "subcommand", "endpoint"),
+    [
+        (gh_search_repos, "repos", "search/repositories"),
+        (gh_search_issues, "issues", "search/issues"),
+        (gh_search_code, "code", "search/code"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("query", "expected_search_args", "expected_count_query"),
+    [
+        (
+            '"vim plugin" language:vim',
+            ("vim plugin", "language:vim"),
+            'q="vim plugin" language:vim',
+        ),
+        (
+            'label:"good first issue"',
+            ("label:good first issue",),
+            'q=label:"good first issue"',
+        ),
+    ],
+)
+async def test_search_tools_preserve_query_semantics_for_authoritative_count(
+    tool: Any,
+    subcommand: str,
+    endpoint: str,
+    query: str,
+    expected_search_args: tuple[str, ...],
+    expected_count_query: str,
+) -> None:
+    items = [{"opaque": "match"}]
+    client = FakeGhClient(
+        [
+            items,
+            {"total_count": 1, "incomplete_results": False, "items": [{"ignored": True}]},
+        ]
+    )
+
+    result = await tool(query=query, per_page=1, ctx=_context(client))
+
+    assert result.items == items
+    assert result.total_count == 1
+    assert result.truncated is False
+    assert len(client.calls) == 2
+
+    search_call = client.calls[0][0]
+    assert search_call[:2] == ("search", subcommand)
+    separator = search_call.index("--")
+    assert search_call[separator + 1 :] == expected_search_args
+    assert client.calls[1][0] == (
+        "api",
+        endpoint,
+        "-X",
+        "GET",
+        "-f",
+        expected_count_query,
+        "-f",
+        "per_page=1",
+    )
+
+
 async def test_zero_items_and_zero_total_are_complete() -> None:
     client = FakeGhClient([[], {"total_count": 0, "incomplete_results": False, "items": []}])
 
