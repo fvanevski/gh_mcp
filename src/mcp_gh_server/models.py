@@ -634,32 +634,36 @@ class PullRequestChecks(BaseModel):
 
 
 class WorkflowJobStep(BaseModel):
-    """One step reported for a workflow job."""
+    """One step in a GitHub Actions workflow job."""
 
     number: int = Field(ge=1)
     name: str
     status: str
     conclusion: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
 
 
 class WorkflowJob(BaseModel):
-    """One job in a workflow-run jobs page."""
+    """One GitHub Actions job with its bounded step metadata."""
 
     id: int = Field(ge=1)
     name: str
     status: str
     conclusion: str | None = None
+    started_at: str | None = None
+    completed_at: str | None = None
     url: str | None = None
     runner_name: str | None = None
     steps: list[WorkflowJobStep] = Field(default_factory=list)
 
 
 class WorkflowJobsPage(BaseModel):
-    """One bounded workflow-job page pinned to a run attempt/head."""
+    """One bounded page of jobs for an exact workflow-run attempt."""
 
     run_id: int = Field(ge=1)
     attempt: int = Field(ge=1)
-    head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    head_sha: str = Field(pattern=r"^[0-9A-Fa-f]{40}$")
     page: int = Field(ge=1)
     per_page: int = Field(ge=1, le=100)
     total_count: int = Field(ge=0)
@@ -668,11 +672,14 @@ class WorkflowJobsPage(BaseModel):
 
 
 class WorkflowRunFailedLogs(BaseModel):
-    """Bounded failed-job logs pinned to one workflow-run attempt/head."""
+    """Bounded failed-step logs for one exact workflow-run attempt."""
 
     run_id: int = Field(ge=1)
     attempt: int = Field(ge=1)
-    head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    head_sha: str = Field(pattern=r"^[0-9A-Fa-f]{40}$")
+    status: str
+    conclusion: str | None = None
+    url: str | None = None
     content: str
     truncated: bool
     bytes_returned: int = Field(ge=0)
