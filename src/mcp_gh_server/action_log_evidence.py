@@ -6,6 +6,21 @@ import hashlib
 
 from .evidence import BoundedTextEvidence
 
+# C0 controls (U+0000-U+001F) except TAB(0x09), LF(0x0A), CR(0x0D); DEL(U+007F);
+# C1 controls (U+0080-U+009F). All are replaced by their literal hex escape form so
+# that sha256 / byte counting / marker matching operate on inert plaintext.
+_NORMALIZATION_TABLE: dict[int, str] = {
+    i: f"\\x{i:02x}" for i in range(128) if (i < 0x20 and i not in {0x09, 0x0A, 0x0D}) or i == 0x7F
+}
+for _i in range(0x80, 0xA0):
+    _NORMALIZATION_TABLE[_i] = f"\\x{_i:02x}"
+
+
+def _normalize_terminal_controls(text: str) -> str:
+    """Replace terminal control characters with inert visible hex-escape text."""
+
+    return text.translate(_NORMALIZATION_TABLE)
+
 
 class _Utf8PrefixCollector:
     """Retain at most one valid UTF-8 prefix without buffering the full source."""
@@ -102,6 +117,7 @@ class ActionLogEvidenceAccumulator:
         if not chunk:
             return
 
+        chunk = _normalize_terminal_controls(chunk)
         encoded = chunk.encode("utf-8")
         self._hasher.update(encoded)
         self._total_bytes += len(encoded)

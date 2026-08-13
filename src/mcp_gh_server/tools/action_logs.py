@@ -360,6 +360,7 @@ async def _stream_job_log(
         "-X",
         "GET",
         on_chunk=accumulator.add_text,
+        allow_escape_sequences=True,
     )
 
 

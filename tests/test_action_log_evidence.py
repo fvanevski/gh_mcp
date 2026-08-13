@@ -40,8 +40,11 @@ class FakeGhClient:
         *args: str,
         on_chunk: Callable[[str], None],
         timeout: float | None = None,
+        allow_escape_sequences: bool = False,
     ) -> GitHubRequestMetadata:
-        self.stream_calls.append((args, {"timeout": timeout}))
+        self.stream_calls.append(
+            (args, {"timeout": timeout, "allow_escape_sequences": allow_escape_sequences})
+        )
         result = self.streams.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -168,7 +171,7 @@ async def test_run_logs_stream_successful_complete_evidence_without_run_archive(
                 "-X",
                 "GET",
             ),
-            {"timeout": None},
+            {"timeout": None, "allow_escape_sequences": True},
         )
     ]
     flattened = " ".join(" ".join(args) for args, _ in [*client.calls, *client.stream_calls])
@@ -555,3 +558,64 @@ def test_streaming_accumulator_missing_end_marker_fails_closed_across_chunks() -
 
     with pytest.raises(ValueError, match="end_marker was not found"):
         accumulator.finish()
+
+
+def test_accumulator_normalize_c0_c1_del_controls_but_preserve_lf_cr_tab() -> None:
+    import hashlib as hd
+
+    # Build a stream containing C0 (except LF/CR/TAB), DEL, and C1 controls.
+    parts: list[str] = []
+    parts.append("start")
+    parts.append("\x00")  # NUL (C0)
+    parts.append("\x01")  # SOH (C0)
+    parts.append("\t")  # TAB preserved
+    parts.append("\n")  # LF preserved
+    parts.append("\r")  # CR preserved
+    parts.append("\x1f")  # US (C0)
+    parts.append("\x7f")  # DEL
+    parts.append("\x80")  # C1
+    parts.append("\x9f")  # C1
+    parts.append("\xff")  # valid UTF-8, not control
+    parts.append("end")
+
+    text = "".join(parts)
+    accumulator = ActionLogEvidenceAccumulator(requested_max_bytes=10_000, hard_max_bytes=10_000)
+    accumulator.add_text(text)
+    result = accumulator.finish()
+
+    # Normalized form should have hex escapes instead of control chars.
+    expected = (
+        "start"
+        + "\\x00"
+        + "\\x01"
+        + "\t"
+        + "\n"
+        + "\r"
+        + "\\x1f"
+        + "\\x7f"
+        + "\\x80"
+        + "\\x9f"
+        + "\xff"
+        + "end"
+    )
+    assert result.content == expected
+
+    # sha256 must cover the normalized stream, not raw bytes.
+    expected_sha = hd.sha256(expected.encode("utf-8")).hexdigest()
+    assert result.sha256 == expected_sha
+    assert result.total_bytes == len(expected.encode("utf-8"))
+
+
+def test_accumulator_literal_markers_match_across_normalized_boundary() -> None:
+    # Markers work correctly even when the stream carries control characters
+    # elsewhere; normalization turns them into inert hex escapes.
+    accumulator = ActionLogEvidenceAccumulator(
+        requested_max_bytes=10_000,
+        hard_max_bytes=10_000,
+        start_marker="[start]",
+        end_marker="[end]",
+    )
+    accumulator.add_text("head\x01\x7f[s")
+    accumulator.add_text("tart]mid\x80[end]")
+    result = accumulator.finish()
+    assert result.content == "[start]mid\\x80[end]"

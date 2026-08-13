@@ -62,7 +62,7 @@ elif args[:2] == ["api", "repos/octo/repo/actions/runs/123/attempts/2/jobs"]:
             "conclusion": "success",
         }],
     }))
-elif args[:2] == ["api", "repos/octo/repo/actions/jobs/456/logs"]:
+elif any("repos/octo/repo/actions/jobs/456/logs" in arg for arg in args):
     assert "--include" not in args and "-i" not in args
     assert "--paginate" not in args and "--slurp" not in args
     sys.stdout.write("job completed successfully")
