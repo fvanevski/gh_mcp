@@ -100,12 +100,116 @@ def validate_repository(owner: str, repo: str) -> None:
         raise ValueError("owner and repo must be canonical GitHub names without path separators")
 
 
+def _configured_repository_targets(raw: str, *, env_name: str) -> set[str]:
+    """Parse a comma-separated exact owner/repo allowlist and fail closed if malformed."""
+
+    targets: set[str] = set()
+    for raw_value in raw.split(","):
+        value = raw_value.strip()
+        if not value:
+            continue
+        if value.count("/") != 1:
+            raise RuntimeError(f"{env_name} contains invalid repository target {value!r}")
+        owner, repo = value.split("/", 1)
+        try:
+            validate_repository(owner, repo)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"{env_name} contains invalid repository target {value!r}"
+            ) from exc
+        targets.add(f"{owner}/{repo}".casefold())
+    return targets
+
+
+def _normalize_workflow_selector(workflow: int | str) -> str:
+    """Normalize a positive workflow ID or preserve one exact configured workflow path."""
+
+    if isinstance(workflow, bool):
+        raise ValueError("workflow selector must be a positive ID or exact workflow path")
+    if isinstance(workflow, int):
+        if workflow < 1:
+            raise ValueError("workflow selector must be a positive ID or exact workflow path")
+        return str(workflow)
+
+    value = workflow.strip()
+    if (
+        not value
+        or value != workflow
+        or len(value.encode()) > 1024
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        raise ValueError("workflow selector must be a positive ID or exact workflow path")
+    if value.isdecimal():
+        workflow_id = int(value)
+        if workflow_id < 1:
+            raise ValueError("workflow selector must be a positive ID or exact workflow path")
+        return str(workflow_id)
+    return value
+
+
+def _configured_workflow_targets(raw: str, *, env_name: str) -> set[tuple[str, str]]:
+    """Parse exact owner/repo@workflow targets while preserving workflow-path case."""
+
+    targets: set[tuple[str, str]] = set()
+    for raw_value in raw.split(","):
+        value = raw_value.strip()
+        if not value:
+            continue
+        repository, separator, workflow = value.partition("@")
+        if not separator or repository.count("/") != 1:
+            raise RuntimeError(f"{env_name} contains invalid workflow target {value!r}")
+        owner, repo = repository.split("/", 1)
+        try:
+            validate_repository(owner, repo)
+            selector = _normalize_workflow_selector(workflow)
+        except ValueError as exc:
+            raise RuntimeError(f"{env_name} contains invalid workflow target {value!r}") from exc
+        targets.add((f"{owner}/{repo}".casefold(), selector))
+    return targets
+
+
+def require_repo_creation_target(app: AppContext, owner: str, repo: str) -> None:
+    """Require exact authorization for one prospective repository creation target."""
+
+    target = f"{owner}/{repo}".casefold()
+    allowed = _configured_repository_targets(
+        app.settings.allowed_repo_creation_targets,
+        env_name="MCP_GH_ALLOWED_REPO_CREATION_TARGETS",
+    )
+    if target not in allowed:
+        raise RuntimeError(
+            f"GitHub repository creation is not allowed for prospective repository {owner}/{repo}; "
+            "configure MCP_GH_ALLOWED_REPO_CREATION_TARGETS"
+        )
+
+
+def require_workflow_dispatch_target(
+    app: AppContext,
+    owner: str,
+    repo: str,
+    workflow: int | str,
+) -> None:
+    """Require exact authorization for one repository/workflow dispatch target."""
+
+    target = (f"{owner}/{repo}".casefold(), _normalize_workflow_selector(workflow))
+    allowed = _configured_workflow_targets(
+        app.settings.allowed_workflow_dispatch_targets,
+        env_name="MCP_GH_ALLOWED_WORKFLOW_DISPATCH_TARGETS",
+    )
+    if target not in allowed:
+        raise RuntimeError(
+            f"GitHub workflow dispatch is not allowed for {owner}/{repo}@{target[1]}; "
+            "configure MCP_GH_ALLOWED_WORKFLOW_DISPATCH_TARGETS"
+        )
+
+
 def require_write_enabled(
     app: AppContext,
     owner: str,
     repo: str,
     *,
     action: str,
+    workflow: int | str | None = None,
 ) -> None:
     """Enforce server-side write, repository, and high-risk action policy."""
 
@@ -119,6 +223,13 @@ def require_write_enabled(
         target not in allowed_repositories and owner.casefold() not in allowed_owners
     ):
         raise RuntimeError(f"GitHub writes are not allowed for repository {owner}/{repo}")
+
+    if action == "repo_create":
+        require_repo_creation_target(app, owner, repo)
+    elif action == "workflow_dispatch":
+        if workflow is None:
+            raise RuntimeError("workflow dispatch authorization requires an exact workflow target")
+        require_workflow_dispatch_target(app, owner, repo, workflow)
 
 
 def require_action_enabled(app: AppContext, action: str) -> None:
