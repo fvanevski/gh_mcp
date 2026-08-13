@@ -37,7 +37,7 @@ from .tools.actions import (
 from .tools.artifact_content import gh_list_artifact_files, gh_read_artifact_file
 from .tools.artifacts import gh_get_artifact, gh_list_run_artifacts
 from .tools.compare_commits import gh_compare_commits
-from .tools.diagnostics import gh_info, gh_server_info
+from .tools.diagnostics import gh_get_api_rate_status, gh_info, gh_server_info
 from .tools.discovery import gh_search_code, gh_search_issues, gh_search_repos
 from .tools.git import (
     gh_create_branch as _registered_gh_create_branch,
@@ -47,12 +47,6 @@ from .tools.git import (
     gh_get_ref,
 )
 from .tools.issue_state import gh_set_issue_state
-from .tools.issues import (
-    gh_get_issue,
-    gh_list_issues,
-    gh_list_labels,
-    gh_list_milestones,
-)
 from .tools.merge_requirements import gh_get_merge_requirements
 from .tools.pr_draft_state import gh_set_pr_draft_state
 from .tools.pr_reviews import gh_get_pr_review_state, gh_list_pr_reviews
@@ -217,6 +211,7 @@ __all__ = [
     "gh_edit_issue",
     "gh_edit_label",
     "gh_edit_pr",
+    "gh_get_api_rate_status",
     "gh_get_artifact",
     "gh_get_commit",
     "gh_get_failed_run_logs",
