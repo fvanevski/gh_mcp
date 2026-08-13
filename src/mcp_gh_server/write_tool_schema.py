@@ -127,8 +127,16 @@ Login = Annotated[
     str,
     Field(min_length=1, max_length=39, pattern=OWNER_RE.pattern),
 ]
+AssigneeSelector = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=39,
+        pattern=r"^(?:@me|[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))$",
+    ),
+]
 Labels = Annotated[list[LabelName], Field(max_length=100)]
-Assignees = Annotated[list[Login], Field(max_length=10)]
+Assignees = Annotated[list[AssigneeSelector], Field(max_length=10)]
 Reviewers = Annotated[list[Login], Field(max_length=100)]
 BranchName = Annotated[str, Field(min_length=1, max_length=1024)]
 TagName = Annotated[str, Field(min_length=1, max_length=1019)]
@@ -204,7 +212,7 @@ async def gh_create_issue(
     ] = None,
     assignees: Annotated[
         Assignees | None,
-        Field(description="Optional GitHub user logins to assign."),
+        Field(description="Optional GitHub user logins or the @me selector to assign."),
     ] = None,
     *,
     ctx: Context[AppContext],
@@ -244,11 +252,11 @@ async def gh_edit_issue(
     ] = None,
     assignees_add: Annotated[
         Assignees | None,
-        Field(description="Assignee logins to add."),
+        Field(description="Assignee logins or the @me selector to add."),
     ] = None,
     assignees_remove: Annotated[
         Assignees | None,
-        Field(description="Assignee logins to remove."),
+        Field(description="Assignee logins or the @me selector to remove."),
     ] = None,
     milestone: Annotated[
         PositiveNumber | None,
@@ -451,7 +459,7 @@ async def gh_create_pr(
     ] = None,
     assignees: Annotated[
         Assignees | None,
-        Field(description="Optional GitHub user logins to assign."),
+        Field(description="Optional GitHub user logins or the @me selector to assign."),
     ] = None,
     review_users: Annotated[
         Reviewers | None,
@@ -497,11 +505,11 @@ async def gh_edit_pr(
     ] = None,
     assignees_add: Annotated[
         Assignees | None,
-        Field(description="Assignee logins to add."),
+        Field(description="Assignee logins or the @me selector to add."),
     ] = None,
     assignees_remove: Annotated[
         Assignees | None,
-        Field(description="Assignee logins to remove."),
+        Field(description="Assignee logins or the @me selector to remove."),
     ] = None,
     base: Annotated[
         BranchName | None,
@@ -1049,10 +1057,11 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         "Create release at exact target",
         (
             "Additive write: create one GitHub release using an exact 40-character target "
-            "commit SHA. The tool verifies target identity, optionally requires the tag "
-            "and every release state including drafts to be absent, performs exactly one "
-            "governed creation request, and verifies release, tag commit, and explicit "
-            "latest state. It never retries an ambiguous release mutation automatically."
+            "commit SHA after ordinary write authorization and the separate release-creation "
+            "fine gate. The tool verifies target identity, optionally requires the tag and "
+            "every release state including drafts to be absent, performs exactly one governed "
+            "creation request, and verifies release, tag commit, and explicit latest state. "
+            "It never retries an ambiguous release mutation automatically."
         ),
         ADD_EXTERNAL,
     ),
@@ -1071,8 +1080,9 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
     "gh_run_workflow_exact": WriteToolMetadata(
         "Dispatch workflow at exact ref",
         (
-            "Destructive write: under one server-local critical section, verify an exact "
-            "canonical branch/tag ref against expected_ref_sha, reject same-name "
+            "Destructive write: after ordinary write authorization and the separate "
+            "workflow-dispatch fine gate, verify under one server-local critical section an "
+            "exact canonical branch/tag ref against expected_ref_sha, reject same-name "
             "branch/tag ambiguity, and reject an existing workflow_dispatch run for the "
             "workflow/head before one dispatch. Returned run details and authoritative "
             "readback bind the result to an exact run ID; the tool never redispatches "

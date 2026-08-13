@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 
-import pytest
-
 from mcp_gh_server.server import mcp
 from mcp_gh_server.write_tool_schema import WRITE_TOOL_METADATA
 
@@ -56,11 +54,22 @@ DESTRUCTIVE_WRITE_TOOLS = PUBLIC_WRITE_TOOLS - ADDITIVE_WRITE_TOOLS
 
 OBJECT_SHA_PATTERN = r"^[0-9A-Fa-f]{40}$"
 OWNER_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
+ASSIGNEE_SELECTOR_PATTERN = r"^(?:@me|[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))$"
 REPOSITORY_PATTERN = r"^[A-Za-z0-9_.-]{1,100}$"
 REPOSITORY_CREATE_PATTERN = r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/)?[A-Za-z0-9_.-]{1,100}$"
 REF_PATTERN = r"^(?:heads|tags)/.+$"
 LABEL_COLOR_PATTERN = r"^[0-9A-Fa-f]{6}$"
 WORKFLOW_FIELD_PATTERN = r"^[^=]+=.*$"
+
+FINE_GATE_DESCRIPTION_MARKERS = {
+    "gh_merge_pr": "PR-merge fine gate",
+    "gh_create_repo": "repository-creation fine gate",
+    "gh_commit_files": "content-commit fine gate",
+    "gh_create_release": "release-creation fine gate",
+    "gh_create_release_exact": "release-creation fine gate",
+    "gh_run_workflow": "workflow-dispatch fine gate",
+    "gh_run_workflow_exact": "workflow-dispatch fine gate",
+}
 
 FORBIDDEN_FIELD_NAMES = {
     "admin",
@@ -152,7 +161,6 @@ async def _tools() -> dict:
     return {tool.name: tool for tool in await mcp.list_tools()}
 
 
-@pytest.mark.asyncio
 async def test_exact_public_write_surface_is_independent_and_complete() -> None:
     tools = await _tools()
     actual_writes = {
@@ -165,7 +173,6 @@ async def test_exact_public_write_surface_is_independent_and_complete() -> None:
     assert len(PUBLIC_WRITE_TOOLS) == 21
 
 
-@pytest.mark.asyncio
 async def test_registered_write_metadata_is_canonical_and_truthful() -> None:
     tools = await _tools()
     descriptions: set[str] = set()
@@ -191,7 +198,14 @@ async def test_registered_write_metadata_is_canonical_and_truthful() -> None:
     assert len(descriptions) == len(PUBLIC_WRITE_TOOLS)
 
 
-@pytest.mark.asyncio
+async def test_high_risk_write_descriptions_name_required_fine_gate() -> None:
+    tools = await _tools()
+
+    for tool_name, marker in FINE_GATE_DESCRIPTION_MARKERS.items():
+        description = tools[tool_name].description or ""
+        assert marker in description, f"{tool_name} must advertise {marker!r}"
+
+
 async def test_repository_target_schemas_are_canonical() -> None:
     tools = await _tools()
     owner_repo_tools = PUBLIC_WRITE_TOOLS - {"gh_create_repo"}
@@ -213,7 +227,37 @@ async def test_repository_target_schemas_are_canonical() -> None:
     assert re.fullmatch(create_name["pattern"], "owner/repo/extra") is None
 
 
-@pytest.mark.asyncio
+async def test_assignee_selectors_preserve_me_without_loosening_reviewers() -> None:
+    tools = await _tools()
+    assignee_fields = (
+        ("gh_create_issue", "assignees"),
+        ("gh_edit_issue", "assignees_add"),
+        ("gh_edit_issue", "assignees_remove"),
+        ("gh_create_pr", "assignees"),
+        ("gh_edit_pr", "assignees_add"),
+        ("gh_edit_pr", "assignees_remove"),
+    )
+
+    for tool_name, field_name in assignee_fields:
+        raw = tools[tool_name].input_schema["properties"][field_name]
+        assert "@me" in raw["description"]
+        selectors = _unwrap_optional(raw)
+        assert selectors["type"] == "array"
+        assert selectors["maxItems"] == 10
+        item = selectors["items"]
+        assert item["pattern"] == ASSIGNEE_SELECTOR_PATTERN
+        assert item["maxLength"] == 39
+        assert re.fullmatch(item["pattern"], "octocat")
+        assert re.fullmatch(item["pattern"], "@me")
+        assert re.fullmatch(item["pattern"], "@you") is None
+        assert re.fullmatch(item["pattern"], "octo/user") is None
+
+    reviewers_raw = tools["gh_create_pr"].input_schema["properties"]["review_users"]
+    reviewers = _unwrap_optional(reviewers_raw)
+    assert reviewers["items"]["pattern"] == OWNER_PATTERN
+    assert re.fullmatch(reviewers["items"]["pattern"], "@me") is None
+
+
 async def test_all_write_schema_leaves_are_bounded() -> None:
     """Strings, integers, arrays, and arbitrary objects must expose hard schema bounds."""
     tools = await _tools()
@@ -242,7 +286,6 @@ async def test_all_write_schema_leaves_are_bounded() -> None:
                 assert additional not in (True, {}), f"{path} exposes arbitrary JSON"
 
 
-@pytest.mark.asyncio
 async def test_no_generic_executor_or_host_bypass_surface_exists() -> None:
     tools = await _tools()
 
@@ -263,7 +306,6 @@ async def test_no_generic_executor_or_host_bypass_surface_exists() -> None:
                     assert verbs != {"GET", "POST", "PUT", "PATCH", "DELETE"}
 
 
-@pytest.mark.asyncio
 async def test_exact_sha_and_ref_preconditions_are_host_visible() -> None:
     tools = await _tools()
     sha_fields = {
@@ -284,7 +326,6 @@ async def test_exact_sha_and_ref_preconditions_are_host_visible() -> None:
     assert ref_schema["maxLength"] == 1024
 
 
-@pytest.mark.asyncio
 async def test_finite_enums_and_label_color_are_explicit() -> None:
     tools = await _tools()
     assert set(tools["gh_create_milestone"].input_schema["properties"]["state"]["enum"]) == {
@@ -307,7 +348,6 @@ async def test_finite_enums_and_label_color_are_explicit() -> None:
         assert _unwrap_optional(raw)["pattern"] == LABEL_COLOR_PATTERN
 
 
-@pytest.mark.asyncio
 async def test_workflow_inputs_are_bounded_key_value_entries() -> None:
     tools = await _tools()
     for tool_name in ("gh_run_workflow", "gh_run_workflow_exact"):
@@ -320,7 +360,6 @@ async def test_workflow_inputs_are_bounded_key_value_entries() -> None:
         assert items["maxLength"] == 65_535
 
 
-@pytest.mark.asyncio
 async def test_commit_file_payload_is_host_bounded() -> None:
     tools = await _tools()
     root = tools["gh_commit_files"].input_schema

@@ -37,8 +37,15 @@ bounded, typed parameters appropriate to the operation, including:
 - bounded branch, tag, ref, title, body, description, and commit-message strings;
 - finite enums for state/review/merge choices;
 - bounded assignee, reviewer, label, workflow-input, and commit-file collections;
+- assignee elements limited to a canonical GitHub login or the exact compatibility
+  selector `@me`, while reviewer elements remain canonical GitHub logins only;
 - bounded nested commit-file path/content/mode fields; and
 - an explicit `REPO` or `OWNER/REPO` shape for repository creation.
+
+The `@me` exception is intentionally narrow. GitHub CLI accepts it for issue/PR assignee
+selection, and the frozen write contract normalizes it to the authenticated concrete login
+for authoritative readback. It is not a generic login syntax, is not accepted for review
+requests, and must not be broadened into arbitrary symbolic selectors.
 
 Runtime validation may be stricter than JSON Schema where Git ref/path validity cannot be
 expressed completely without changing accepted GitHub semantics. Runtime validators and
@@ -57,6 +64,11 @@ Every public write has one action-specific description that states:
 2. important authorization, exact-state, or fine-gate preconditions; and
 3. material capabilities the tool does not have, including separation from adjacent
    higher-risk actions when relevant.
+
+A tool governed by a separate operation fine gate must name that fine gate in its own
+host-facing description. Exact-state and compatibility variants do not inherit this
+requirement from an adjacent tool's documentation; each advertised operation must be
+self-describing to the host.
 
 Annotations remain semantic rather than host-policy workarounds:
 
@@ -78,6 +90,8 @@ invariants continue to apply, including:
 - separate fine gates for repository creation, release creation, workflow dispatch,
   content commits, and pull-request merge;
 - exact expected state/head/ref/target checks where the tool contract prescribes them;
+- preservation of the supported `@me` assignee selector and its concrete-login readback
+  normalization for issue/PR create and assignee edits;
 - one governed mutation attempt for no-blind-retry operations;
 - authoritative readback where a stable identity exists; and
 - explicit ambiguous/partial-write reporting instead of automatic replay.
@@ -108,10 +122,14 @@ The contract is enforced by complementary tests:
   provenance;
 - `tests/test_write_schema_policy.py` independently enumerates the write surface, checks
   canonical metadata/annotations, recursively audits bounded schema leaves and nested
-  objects, rejects generic executor/bypass fields, and pins high-risk exact-state and
-  payload constraints; and
+  objects, rejects generic executor/bypass fields, pins the narrow `@me` assignee-selector
+  exception without loosening reviewer logins, requires each high-risk write description
+  to name its actual fine gate, and pins exact-state/payload constraints; and
 - write-wrapper tests verify that facade calls still delegate to the existing execution
-  implementations.
+  implementations, including symbolic-assignee readback semantics.
+
+Async schema-policy tests follow the repository's `asyncio_mode = "auto"` convention and
+do not carry explicit `@pytest.mark.asyncio` decorators.
 
 A new public write or a material schema/annotation change must update the independent
 policy set and the relevant exact snapshot intentionally. Green tests alone are not a
