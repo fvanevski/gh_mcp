@@ -36,7 +36,13 @@ async def gh_run_workflow(
     """
 
     app = app_from_context(ctx)
-    require_write_enabled(app, owner, repo, action="workflow_dispatch")
+    require_write_enabled(
+        app,
+        owner,
+        repo,
+        action="workflow_dispatch",
+        workflow=workflow_id,
+    )
     args = [
         "workflow",
         "run",
