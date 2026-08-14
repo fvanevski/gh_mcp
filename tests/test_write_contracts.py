@@ -417,9 +417,7 @@ async def test_review_adapter_rejects_semantic_readback_mismatch() -> None:
     client = FakeServerClient(
         [
             {"login": "reviewer"},
-            {
-                "base": {"sha": "a" * 40}, "head": {"sha": head_sha}, "user": {"login": "author"}
-            },
+            {"base": {"sha": "a" * 40}, "head": {"sha": head_sha}, "user": {"login": "author"}},
             {"id": 91, "state": "APPROVED", "html_url": review_url},
             {
                 "id": 91,

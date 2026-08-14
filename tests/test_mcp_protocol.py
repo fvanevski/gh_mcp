@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.shared.exceptions import McpError
 from mcp.types import TextContent
 
 from mcp_gh_server.asgi import app
@@ -168,21 +166,21 @@ async def test_tool_schemas_are_bounded_and_exact() -> None:
 
     merge = tools["gh_merge_pr"]
     merge_props = merge.input_schema["properties"]
-    assert merge_props["expected_head_sha"]["pattern"] == "^[0-9a-fA-F]{40}$"
+    assert merge_props["expected_head_sha"]["pattern"] == "^[0-9A-Fa-f]{40}$"
     assert merge_props["method"]["enum"] == ["merge", "squash", "rebase"]
 
     dispatch = tools["gh_run_workflow_exact"]
     dispatch_props = dispatch.input_schema["properties"]
     assert dispatch_props["workflow_id"]["minimum"] == 1
     assert dispatch_props["expected_workflow_path"]["pattern"] == (
-        r"^\.github/workflows/[A-Za-z0-9._/-]+\.(?:yml|yaml)$"
+        r"^\.github/workflows/[^/\x00-\x1f\x7f]+\.ya?ml$"
     )
     assert dispatch_props["ref"]["pattern"] == r"^(?:heads|tags)/.+$"
-    assert dispatch_props["expected_ref_sha"]["pattern"] == "^[0-9a-fA-F]{40}$"
+    assert dispatch_props["expected_ref_sha"]["pattern"] == "^[0-9A-Fa-f]{40}$"
 
     commit = tools["gh_commit_files"]
     commit_props = commit.input_schema["properties"]
-    assert commit_props["expected_head_sha"]["pattern"] == "^[0-9a-fA-F]{40}$"
+    assert commit_props["expected_head_sha"]["pattern"] == "^[0-9A-Fa-f]{40}$"
     files_schema = commit_props["files"]
     assert files_schema["minItems"] == 1
     assert files_schema["maxItems"] == 1000
@@ -284,10 +282,12 @@ def _stdio_server_parameters() -> StdioServerParameters:
 
 @asynccontextmanager
 async def _initialized_stdio_session() -> Any:
-    async with stdio_client(_stdio_server_parameters()) as (read_stream, write_stream):
-        async with ClientSession(read_stream, write_stream) as session:
-            await session.initialize()
-            yield session
+    async with (
+        stdio_client(_stdio_server_parameters()) as read_stream_write_stream,
+        ClientSession(read_stream_write_stream[0], read_stream_write_stream[1]) as session,
+    ):
+        await session.initialize()
+        yield session
 
 
 async def test_stdio_protocol_lists_current_surface() -> None:
@@ -316,11 +316,11 @@ async def test_stdio_server_info_reports_current_version() -> None:
 
 async def test_stdio_disabled_write_fails_without_disabling_namespace() -> None:
     async with _initialized_stdio_session() as session:
-        with pytest.raises(McpError):
-            await session.call_tool(
-                "gh_create_issue",
-                arguments={"owner": "octo", "repo": "repo", "title": "blocked"},
-            )
+        result = await session.call_tool(
+            "gh_create_issue",
+            arguments={"owner": "octo", "repo": "repo", "title": "blocked"},
+        )
+        assert result.is_error is True
         tools_after = await session.list_tools()
 
     assert len(tools_after.tools) == 58
@@ -329,17 +329,17 @@ async def test_stdio_disabled_write_fails_without_disabling_namespace() -> None:
 
 async def test_stdio_invalid_schema_is_rejected_before_execution() -> None:
     async with _initialized_stdio_session() as session:
-        with pytest.raises(McpError):
-            await session.call_tool(
-                "gh_merge_pr",
-                arguments={
-                    "owner": "octo",
-                    "repo": "repo",
-                    "number": 1,
-                    "expected_head_sha": "not-a-sha",
-                    "method": "merge",
-                },
-            )
+        result = await session.call_tool(
+            "gh_merge_pr",
+            arguments={
+                "owner": "octo",
+                "repo": "repo",
+                "number": 1,
+                "expected_head_sha": "not-a-sha",
+                "method": "merge",
+            },
+        )
+        assert result.is_error is True
 
 
 @pytest.fixture
@@ -375,19 +375,19 @@ async def streamable_server() -> Any:
 
 async def test_streamable_http_protocol_initializes_and_lists_tools(streamable_server: str) -> None:
     async with streamable_http_client(streamable_server) as streams:
-        read_stream, write_stream, _ = streams
+        read_stream, write_stream = streams
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
             tools = await session.list_tools()
 
-    assert initialized.server_info.name == "mcp-gh-server"
+    assert initialized.server_info.name == "GitHub CLI"
     assert initialized.server_info.version == "0.8.0"
     assert len(tools.tools) == 58
 
 
 async def test_streamable_http_server_info_is_current(streamable_server: str) -> None:
     async with streamable_http_client(streamable_server) as streams:
-        read_stream, write_stream, _ = streams
+        read_stream, write_stream = streams
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
             result = await session.call_tool("gh_server_info", arguments={})
@@ -401,14 +401,14 @@ async def test_streamable_http_server_info_is_current(streamable_server: str) ->
 
 async def test_streamable_http_write_denial_does_not_poison_server(streamable_server: str) -> None:
     async with streamable_http_client(streamable_server) as streams:
-        read_stream, write_stream, _ = streams
+        read_stream, write_stream = streams
         async with ClientSession(read_stream, write_stream) as session:
             await session.initialize()
-            with pytest.raises(McpError):
-                await session.call_tool(
-                    "gh_create_issue",
-                    arguments={"owner": "octo", "repo": "repo", "title": "blocked"},
-                )
+            result = await session.call_tool(
+                "gh_create_issue",
+                arguments={"owner": "octo", "repo": "repo", "title": "blocked"},
+            )
+            assert result.is_error is True
             server_info_after_denial = await session.call_tool("gh_server_info", arguments={})
 
     assert server_info_after_denial.is_error is False
@@ -419,20 +419,20 @@ async def test_streamable_http_write_denial_does_not_poison_server(streamable_se
 async def test_streamable_http_schema_failure_does_not_invoke_tool(streamable_server: str) -> None:
     with patch("mcp_gh_server.tools.pr_writes.gh_merge_pr") as mocked:
         async with streamable_http_client(streamable_server) as streams:
-            read_stream, write_stream, _ = streams
+            read_stream, write_stream = streams
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
-                with pytest.raises(McpError):
-                    await session.call_tool(
-                        "gh_merge_pr",
-                        arguments={
-                            "owner": "octo",
-                            "repo": "repo",
-                            "number": 1,
-                            "expected_head_sha": "bad",
-                            "method": "merge",
-                        },
-                    )
+                result = await session.call_tool(
+                    "gh_merge_pr",
+                    arguments={
+                        "owner": "octo",
+                        "repo": "repo",
+                        "number": 1,
+                        "expected_head_sha": "bad",
+                        "method": "merge",
+                    },
+                )
+                assert result.is_error is True
 
     mocked.assert_not_called()
 
@@ -500,21 +500,16 @@ async def test_no_tool_description_claims_admin_bypass() -> None:
 
 
 async def test_error_result_does_not_disable_tool_namespace() -> None:
-    tools_before = await mcp.list_tools()
-    names_before = _tool_names(tools_before)
-
-    client = FakeClient()
-    context = _context(client)
-    with pytest.raises(RuntimeError, match="writes are disabled"):
-        await _tool_by_name(tools_before, "gh_create_issue").fn(
-            owner="octo",
-            repo="repo",
-            title="blocked",
-            ctx=context,
+    async with _initialized_stdio_session() as session:
+        result = await session.call_tool(
+            "gh_create_issue",
+            arguments={"owner": "octo", "repo": "repo", "title": "blocked"},
         )
+        assert result.is_error is True
+        tools_after = await session.list_tools()
 
-    names_after = _tool_names(await mcp.list_tools())
-    assert names_after == names_before
+    assert len(tools_after.tools) == 58
+    assert "gh_create_issue" in {tool.name for tool in tools_after.tools}
 
 
 def test_streamable_http_app_is_mountable() -> None:

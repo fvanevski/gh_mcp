@@ -125,8 +125,7 @@ async def test_issue_branch_uses_exact_base_and_authoritative_link_readback() ->
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
 
 
-async def test_issue_branch_ambiguous_write_is_not_replayed_and_readback_remains_authoritative(
-) -> None:
+async def test_issue_branch_ambiguous_write_does_not_retry() -> None:
     sha = "a" * 40
     client = MetadataAwareClient(
         read_results=[
