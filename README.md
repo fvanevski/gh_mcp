@@ -127,7 +127,8 @@ applicable, perform one mutation attempt, and require authoritative readback bef
 verified success. Ambiguous or partial writes are not blindly retried. Canonical metadata-
 aware write paths rely on structured `GitHubRequestError` ambiguity metadata produced by
 `GhClient`; text-based inference from bare `RuntimeError` messages is restricted to the
-frozen `legacy_write_support.py` run-only test-double compatibility fallback.
+frozen `legacy_write_support.py` fallback for non-`GhClient` compatibility test doubles,
+which are deliberately exercised through their historical run-only interface.
 
 Evidence reads remain explicitly bounded. Callers must preserve truncation/completeness
 metadata, byte counts, digests, and warnings rather than presenting partial artifact, log,
