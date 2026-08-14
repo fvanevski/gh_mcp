@@ -13,6 +13,7 @@ import pytest
 
 from mcp_gh_server.legacy_release_write_adapter import gh_create_release
 from mcp_gh_server.models import CommitFile
+from mcp_gh_server.request_governor import GitHubRequestResult
 from mcp_gh_server.server import (
     AppContext,
     gh_commit_files,
@@ -38,7 +39,6 @@ from mcp_gh_server.server import (
     gh_run_workflow_exact,
     gh_server_info,
     gh_submit_pr_review,
-    gh_upsert_label,
     gh_watch_run,
 )
 from mcp_gh_server.settings import Settings
@@ -61,6 +61,12 @@ class FakeGhClient:
         if isinstance(result, Exception):
             raise result
         return result
+
+    async def run_with_metadata(self, *args: str, **kwargs: Any) -> GitHubRequestResult[Any]:
+        result = await self.run(*args, **kwargs)
+        if isinstance(result, GitHubRequestResult):
+            return result
+        return GitHubRequestResult(value=result)
 
     def clamp_max_results(self, requested: int | None) -> int:
         return requested if requested is not None else 30
@@ -91,7 +97,7 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     assert result.server_version == "0.7.1"
     assert result.tool_schema_version == "0.7.1"
     assert result.transport == "stdio"
-    assert result.tool_count == 59
+    assert result.tool_count == 58
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert result.pr_merge_enabled is True
@@ -166,6 +172,9 @@ async def test_create_issue_executes_then_reads_url() -> None:
     )
 
     assert result.number == 42
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
     create_args, create_kwargs = client.calls[0]
     assert create_args[:2] == ("issue", "create")
     assert "--json" not in create_args
@@ -206,28 +215,18 @@ async def test_create_label_executes_then_reads_exact_label() -> None:
     )
 
     assert result.name == "needs triage"
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
     create_args, create_kwargs = client.calls[0]
     assert create_args[:3] == ("label", "create", "needs triage")
     assert "--json" not in create_args
+    assert "--force" not in create_args
     assert create_kwargs == {"json_output": False}
     assert client.calls[1][0] == (
         "api",
         "repos/octo/repo/labels/needs%20triage",
     )
-
-
-@pytest.mark.asyncio
-async def test_upsert_label_is_the_only_force_capable_label_tool() -> None:
-    client = FakeGhClient(
-        [
-            {"stdout": ""},
-            {"name": "bug", "color": "ff0000", "description": None, "url": "api-url"},
-        ]
-    )
-
-    await gh_upsert_label("octo", "repo", "bug", "ff0000", ctx=_context(client))
-
-    assert "--force" in client.calls[0][0]
 
 
 @pytest.mark.asyncio
@@ -253,10 +252,13 @@ async def test_edit_label_uses_supported_name_flag_then_reads_label() -> None:
     )
 
     assert result.name == "renamed"
-    create_args = client.calls[0][0]
-    assert "--name" in create_args
-    assert "--new-name" not in create_args
-    assert "--json" not in create_args
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
+    edit_args = client.calls[0][0]
+    assert "--name" in edit_args
+    assert "--new-name" not in edit_args
+    assert "--json" not in edit_args
     assert client.calls[1][0] == ("api", "repos/octo/repo/labels/renamed")
 
 
@@ -264,8 +266,8 @@ async def test_edit_label_uses_supported_name_flag_then_reads_label() -> None:
 async def test_create_milestone_uses_input_then_reads_by_number() -> None:
     client = FakeGhClient(
         [
-            {"stdout": '{"number":7,"title":"v1","url":"api-url"}'},
-            {"number": 7, "title": "v1", "url": "api-url"},
+            {"number": 7, "title": "v1", "state": "open", "url": "api-url"},
+            {"number": 7, "title": "v1", "state": "open", "url": "api-url"},
         ]
     )
 
@@ -277,6 +279,9 @@ async def test_create_milestone_uses_input_then_reads_by_number() -> None:
     )
 
     assert result.number == 7
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
     create_args, create_kwargs = client.calls[0]
     assert create_args[:4] == (
         "api",
@@ -286,7 +291,7 @@ async def test_create_milestone_uses_input_then_reads_by_number() -> None:
     )
     assert "--input" in create_args
     assert "-i" not in create_args
-    assert create_kwargs == {"json_output": False}
+    assert create_kwargs == {}
     assert client.calls[1][0] == ("api", "repos/octo/repo/milestones/7")
 
 
@@ -387,7 +392,13 @@ async def test_edit_issue_resolves_milestone_then_reads_issue() -> None:
         [
             {"title": "Version 1"},
             {"stdout": ""},
-            {"number": 4, "title": "Updated", "state": "OPEN", "url": url},
+            {
+                "number": 4,
+                "title": "Updated",
+                "state": "OPEN",
+                "url": url,
+                "milestone": {"number": 7},
+            },
         ]
     )
 
@@ -401,6 +412,9 @@ async def test_edit_issue_resolves_milestone_then_reads_issue() -> None:
     )
 
     assert result.title == "Updated"
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
     assert client.calls[0][0] == ("api", "repos/octo/repo/milestones/7")
     edit_args, edit_kwargs = client.calls[1]
     assert edit_args[-2:] == ("--milestone", "Version 1")
@@ -760,8 +774,11 @@ async def test_empty_edit_body_is_sent_explicitly() -> None:
         ]
     )
 
-    await gh_edit_issue("octo", "repo", 4, ctx=_context(client), body="")
+    result = await gh_edit_issue("octo", "repo", 4, ctx=_context(client), body="")
 
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
     assert "--body-file" in client.calls[0][0]
     assert client.calls[0][1]["stdin_text"] == ""
 
