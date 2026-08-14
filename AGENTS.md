@@ -2,10 +2,10 @@
 
 ## What this is
 
-Python MCP 2.0 server (`mcp-gh-server`) that wraps the `gh` CLI as structured MCP tools.
-All `gh` operations run as detached async subprocesses; there is **no generic command
-executor** and no local checkout capability. Read-only tools return bounded structured JSON.
-Write tools are off-by-default and gated behind explicit environment flags.
+Python MCP 2.0 server (`mcp-gh`) wrapping the `gh` CLI as structured MCP tools. All `gh`
+operations run as detached async subprocesses; there is **no generic command executor** and
+**no local checkout capability**. Read-only tools return bounded structured JSON. Write
+tools are off-by-default and gated behind explicit environment flags.
 
 ## Quick start
 
@@ -16,35 +16,38 @@ uv sync --dev
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
 
-`gh >= 2.97.0` is a runtime requirement. The exact Actions log readers depend on the
-`gh api --allow-escape-sequences` capability introduced in 2.97.0 so that the server can
-receive raw log bytes and normalize terminal controls itself before returning MCP evidence.
-Do not support or validate this server against older `gh` releases without an explicit
-compatibility design change.
+`gh >= 2.97.0` is a runtime requirement. Actions log readers depend on the
+`gh api --allow-escape-sequences` behavior introduced in 2.97.0. Do not validate against
+older releases without an explicit compatibility design change.
 
-Tests that hit live GitHub (integration suite) skip when `GITHUB_TOKEN` is absent. All
-other tests run offline.
+Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offline.
 
 ## Project layout
 
 | Path | Purpose |
 |---|---|
 | `src/mcp_gh_server/server.py` | Composition root — registers every tool on the MCP object |
-| `src/mcp_gh_server/tools/` | Domain modules: `actions`, `diagnostics`, `discovery`, `git`, `issues`, `pull_requests`, `releases`, `repositories` |
-| `src/mcp_gh_server/legacy_*_adapter.py` | Write-tool implementations; each maps one MCP tool → one or more `gh` subcommands |
+| `src/mcp_gh_server/tooling.py` | Shared helpers: annotations, write gates, repository validation, evidence |
+| `src/mcp_gh_server/tools/` | Read-only tool implementations by domain |
+| `src/mcp_gh_server/write_tool_schema.py` | Public write-tool facade: schemas, titles, descriptions, annotations |
+| `src/mcp_gh_server/legacy_*.py` | 14 legacy adapter files mapping MCP tools → `gh` subcommands |
 | `src/mcp_gh_server/models.py` | Pydantic result schemas (used by tests and tool annotations) |
-| `src/mcp_gh_server/settings.py` | All runtime config, loaded once via `get_settings()` |
+| `src/mcp_gh_server/settings.py` | All runtime config, loaded once via `get_settings()` (cached `@lru_cache`) |
 | `src/mcp_gh_server/serialization.py` | JSON-safe serialization helpers (Decimal→str, bytes→base64:, inf→str) |
 | `tests/test_write_wrappers.py` | Largest test file; regression coverage for every write tool |
 | `tests/test_mcp_protocol.py` | Protocol-level contract tests (tool registration, schema, annotations) |
 | `tests/test_integration.py` | Live-GitHub integration tests — require `GITHUB_TOKEN` |
+
+Key invariant: write execution lives in `legacy_*.py`; the public facade in
+`write_tool_schema.py` owns host-facing schema only and delegates unchanged to those
+implementations. Changing a write tool's mutation semantics requires touching both.
 
 ## Runtime architecture
 
 - **Transport**: stdio (default) or Streamable HTTP on `127.0.0.1:8766`. Switch via
   `MCP_GH_TRANSPORT`.
 - **Settings loading**: `settings.get_settings()` is cached (`@lru_cache`). Calling it
-  again in the same process returns the same instance — do not mutate returned objects.
+  again returns the same instance — do not mutate returned objects.
 - **Logging always goes to stderr** so it never corrupts the MCP protocol channel.
 - **Environment file**: `.env` in the project root, or an absolute path via
   `MCP_GH_ENV_FILE`. `GITHUB_TOKEN` can also come from the host process environment.
@@ -75,6 +78,10 @@ Branch tools distinguish contracts deliberately:
 conditionally advances the branch only when `expected_head_sha` still matches. It does not
 support file deletion.
 
+PR author cannot `approve` their own pull request — the server checks login identity before
+the POST and returns an explicit `no review was attempted` error. `request_changes` has no
+equivalent server-side restriction (GitHub is authoritative).
+
 ## PR review workflow (read-only, no checkout)
 
 1. `gh_get_pr` → record `head_sha` and `base_sha`.
@@ -88,25 +95,6 @@ support file deletion.
 Formal review requires `gh_submit_pr_review` (not `gh_create_comment`). Merge requires
 `gh_merge_pr` with the same exact head SHA; `--match-head-commit` prevents silent revision
 swaps. Both are destructive writes requiring explicit opt-in.
-
-## CI / diagnostics (read-only)
-
-1. `gh_get_pr` → get PR head SHA.
-2. `gh_get_pr_checks` → categorized pass/fail/pending/skipping/cancel with link metadata.
-3. `gh_list_runs` or `gh_get_run` → identify the positive-integer run ID.
-4. `gh_list_run_jobs` → page of jobs and step status.
-5. `gh_get_failed_run_logs` → bounded failed-step logs. Check truncation fields before
-   claiming completeness.
-
-These tools expose no watch, rerun, cancel, delete, dispatch, browser, approval, or
-elicitation option. They remain available even when the call returns empty results or error
-metadata.
-
-## Search limits
-
-Search tools cap results at `MCP_GH_HARD_MAX_RESULTS` (default: 100). The per-call default
-is `MCP_GH_DEFAULT_MAX_RESULTS` (default: 30). A caller may request fewer but cannot raise
-the limit above the hard cap.
 
 ## Commands that agents will need
 
@@ -146,10 +134,14 @@ MCP_GH_TRANSPORT=streamable-http uv run mcp-gh
 - Integration tests live in `tests/test_integration.py`; they use `cli/cli` as the stable
   reference repo and skip gracefully without `GITHUB_TOKEN`.
 - Never commit `.env` files. The `.env.example` is the canonical template.
+- The released version (0.7.1) intentionally retains immutable inventory-gate failures
+  caused by the 59/19 development registry. Issue #61 owns the 0.8.0 cleanup — do not
+  hide those failures by lowering counts on intermediate child issues.
 
 ## Agent tooling (local stack)
 
-This repo is Python; prefer Serena over glob/grep for symbol work. Shell commands go through RTK to preserve tokens.
+This repo is Python; prefer Serena over glob/grep for symbol work. Shell commands go
+through RTK to preserve tokens.
 
 | Task | Tool | Example |
 |---|---|---|
@@ -159,19 +151,24 @@ This repo is Python; prefer Serena over glob/grep for symbol work. Shell command
 | Shell commands | `rtk <cmd>` | `rtk uv run pytest tests/test_write_wrappers.py` |
 | Cross-session memory | `openviking_recall` / `openviking_remember` | Preserve decisions about write-tool gate semantics across sessions |
 
-Do **not** invoke the raw `gh` CLI directly when an MCP tool exists — the server enforces write gates, SHA pinning, and bounded output that a bare subprocess skips. Do **not** commit `.env`; use `rtk` for env lookups if needed.
+Do **not** invoke the raw `gh` CLI directly when an MCP tool exists — the server enforces
+write gates, SHA pinning, and bounded output that a bare subprocess skips. Do **not**
+commit `.env`; use `rtk` for env lookups if needed.
 
 ## Known constraints
 
-- The `gh` CLI must be installed on `$PATH` at version **2.97.0 or newer**. The server never
-  installs or manages it. `gh_get_job_logs` and `gh_get_run_logs` rely on the
-  `gh api --allow-escape-sequences` behavior available from 2.97.0 onward; older releases
-  are outside the supported runtime contract.
+- The `gh` CLI must be installed on `$PATH` at version **2.97.0 or newer**. The server
+  never installs or manages it. `gh_get_job_logs` and `gh_get_run_logs` rely on the
+  `gh api --allow-escape-sequences` behavior available from 2.97.0 onward.
 - Rate limits, authentication scope, and permission scoping are delegated entirely to
   `gh` and the supplied token — the server performs no additional auth checks.
 - Tools like `gh release create` that require file uploads or multi-step interactive flows
   are intentionally out of scope.
-- `gh_search_repos/issues/code` use `--json` output; field names in results follow GitHub's
-  API naming convention (camelCase), not snake_case.
-- Result serialization converts `Decimal` → string, `bytes` → `base64:` prefix, infinities
-  → string, and all datetimes → ISO 8601. Do not assume native Python types in responses.
+- `gh_search_repos/issues/code` use `--json` output; field names follow GitHub's API
+  naming convention (camelCase), not snake_case.
+- Result serialization converts `Decimal` → string, `bytes` → `base64:` prefix,
+  infinities → string, and all datetimes → ISO 8601. Do not assume native Python types
+  in responses.
+- Detailed contract documents live under `docs/` (e.g. `docs/release_gate_0_7_1.md`,
+  `docs/pr-review-evidence-contract.md`, `docs/gh_action_logs.md`). Refer to them when
+  working on tools whose behavior is specified there rather than inferring from code.
