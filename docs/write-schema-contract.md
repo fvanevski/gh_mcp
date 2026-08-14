@@ -1,7 +1,7 @@
 # Public write-schema and host-legibility contract
 
 This document defines the current unreleased 0.8.0-development public MCP contract for the
-19 GitHub write tools. It is a schema and metadata contract only: it does not replace or
+18 GitHub write tools. It is a schema and metadata contract only: it does not replace or
 relax the existing execution, authorization, exact-state, mutation-attempt, or readback
 semantics. Released 0.7.x inventory counts remain governed by their immutable release-gate
 documents and tests.
@@ -16,10 +16,16 @@ public write. It owns:
 - truthful MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, and
   `openWorldHint`).
 
-Each facade wrapper delegates to the existing implementation in the legacy adapter or
-exact-state tool module. Those implementation modules remain authoritative for write
-gates, fine-grained action gates, GitHub mutation behavior, exact-state/SHA checks,
-authoritative readback, ambiguity handling, and the no-blind-retry policy.
+Each facade wrapper delegates to the authoritative execution implementation in a canonical
+domain module, an exact-state tool module, or a still-frozen compatibility adapter. Those
+implementation modules remain authoritative for write gates, fine-grained action gates,
+GitHub mutation behavior, exact-state/SHA checks, authoritative readback, ambiguity
+handling, and the no-blind-retry policy.
+
+Issue-domain create/edit writes are canonicalized in `tools/issue_writes.py` and return the
+shared tri-state write/readback metadata directly. The legacy `gh_upsert_label` public
+surface is retired: label creation never overwrites an existing label, while label edits
+remain an explicit separate operation.
 
 `src/mcp_gh_server/server.py` registers all public writes uniformly from
 `PUBLIC_WRITE_TOOLS` and `WRITE_TOOL_METADATA`. Public write descriptions are not
@@ -56,8 +62,8 @@ detection, mutation, reservation state, or readback. The path option therefore a
 generic repository-path, URL, or API surface.
 
 The `@me` exception is intentionally narrow. GitHub CLI accepts it for issue/PR assignee
-selection, and the frozen write contract normalizes it to the authenticated concrete login
-for authoritative readback. It is not a generic login syntax, is not accepted for review
+selection, and the write contract normalizes it to the authenticated concrete login for
+authoritative readback. It is not a generic login syntax, is not accepted for review
 requests, and must not be broadened into arbitrary symbolic selectors.
 
 Runtime validation may be stricter than JSON Schema where Git ref/path validity cannot be
@@ -85,7 +91,7 @@ self-describing to the host.
 
 Annotations remain semantic rather than host-policy workarounds:
 
-- all 19 current writes have `readOnlyHint=false`;
+- all 18 current writes have `readOnlyHint=false`;
 - additive writes have `destructiveHint=false`;
 - state-changing/destructive writes have `destructiveHint=true`;
 - writes do not claim idempotence; and
@@ -145,9 +151,9 @@ subsequent action.
 
 The contract is enforced by complementary tests:
 
-- `tests/test_tool_schema_snapshot.py` pins the current 59-tool development surface and
+- `tests/test_tool_schema_snapshot.py` pins the current 58-tool development surface and
   intentional schema/description snapshots;
-- `tests/test_write_surface_contract.py` pins all 19 current public write facades and their
+- `tests/test_write_surface_contract.py` pins all 18 current public write facades and their
   module provenance;
 - `tests/test_write_schema_policy.py` independently enumerates the write surface, checks
   canonical metadata/annotations, recursively audits bounded schema leaves and nested
@@ -158,7 +164,7 @@ The contract is enforced by complementary tests:
   zero-GitHub-call target mismatches, public ID-or-path workflow schema, exact case-preserving
   path resolution to numeric workflow identity, release-gate preservation, and unchanged
   ordinary repository policy; and
-- write-wrapper tests verify that facade calls still delegate to the existing execution
+- write-wrapper tests verify that facade calls still delegate to the authoritative execution
   implementations, including symbolic-assignee readback semantics.
 
 Repository-creation regression coverage additionally distinguishes required readback fields
