@@ -90,16 +90,15 @@ def test_release_docs_preserve_authority_and_describe_development_transition() -
     # Current development documentation must not pretend the already-retired generic
     # writes remain public merely because the package version has not yet advanced.
     for document in documents:
-        assert "58 public MCP tools" in document
-        assert "18 write" in document
+        assert "59 public MCP tools" in document
+        assert "19 write" in document
         assert "#61" in document
 
-    heading = "### Write (current unreleased surface: 18)"
+    heading = "### Write (current unreleased surface: 19)"
     assert heading in readme
     write_section = readme.split(heading, 1)[1].split("\n## ", 1)[0]
     assert "- `gh_create_release`:" not in write_section
     assert "- `gh_run_workflow`:" not in write_section
-    assert "- `gh_upsert_label`:" not in write_section
     assert "- `gh_create_release_exact`:" in write_section
     assert "- `gh_run_workflow_exact`:" in write_section
 
