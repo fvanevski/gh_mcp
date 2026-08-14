@@ -11,7 +11,6 @@ from mcp_gh_server.server import (
     AppContext,
     gh_create_release,
     gh_create_repo,
-    gh_run_workflow,
     gh_run_workflow_exact,
     mcp,
 )
@@ -59,7 +58,15 @@ async def test_defaults_fail_closed_for_high_risk_gates_and_target_lists() -> No
     with pytest.raises(RuntimeError, match="writes are disabled"):
         await gh_create_repo("octo/new-repo", ctx=ctx)
     with pytest.raises(RuntimeError, match="writes are disabled"):
-        await gh_run_workflow("octo", "repo", 17, ctx=ctx)
+        await gh_run_workflow_exact(
+            "octo",
+            "repo",
+            17,
+            WORKFLOW_PATH,
+            "heads/main",
+            "1" * 40,
+            ctx=ctx,
+        )
     assert client.calls == []
 
 
@@ -113,11 +120,19 @@ async def test_workflow_dispatch_numeric_target_mismatch_fails_before_any_github
     )
 
     with pytest.raises(RuntimeError, match="ALLOWED_WORKFLOW_DISPATCH_TARGETS"):
-        await gh_run_workflow("octo", "repo", 17, ctx=ctx)
+        await gh_run_workflow_exact(
+            "octo",
+            "repo",
+            17,
+            WORKFLOW_PATH,
+            "heads/main",
+            "1" * 40,
+            ctx=ctx,
+        )
     assert client.calls == []
 
 
-async def test_workflow_dispatch_path_target_mismatch_fails_before_resolution() -> None:
+async def test_workflow_dispatch_path_target_mismatch_fails_before_any_github_call() -> None:
     client = FakeGhClient([])
     ctx = _context(
         client,
@@ -128,7 +143,15 @@ async def test_workflow_dispatch_path_target_mismatch_fails_before_resolution() 
     )
 
     with pytest.raises(RuntimeError, match="ALLOWED_WORKFLOW_DISPATCH_TARGETS"):
-        await gh_run_workflow("octo", "repo", WORKFLOW_PATH, ctx=ctx)
+        await gh_run_workflow_exact(
+            "octo",
+            "repo",
+            17,
+            WORKFLOW_PATH,
+            "heads/main",
+            "1" * 40,
+            ctx=ctx,
+        )
     assert client.calls == []
 
 
@@ -163,59 +186,36 @@ async def test_workflow_path_resolution_rejects_case_mismatch() -> None:
     assert len(client.calls) == 1
 
 
-async def test_legacy_workflow_dispatch_accepts_exact_authorized_path() -> None:
-    url = "https://github.com/octo/repo/actions/runs/123"
-    client = FakeGhClient(
-        [
-            {"id": 17, "path": WORKFLOW_PATH},
-            {"stdout": f"Workflow dispatched: {url}\n"},
-            {"databaseId": 123, "url": url},
-        ]
-    )
-    ctx = _context(
-        client,
-        allow_write_commands=True,
-        allow_workflow_dispatch=True,
-        allowed_repositories="octo/repo",
-        allowed_workflow_dispatch_targets=f"octo/repo@{WORKFLOW_PATH}",
-    )
-
-    result = await gh_run_workflow("octo", "repo", WORKFLOW_PATH, ctx=ctx)
-
-    assert result.run_id == 123
-    assert client.calls[0][0][1] == "repos/octo/repo/actions/workflows/Release.yml"
-    assert client.calls[1][0][:3] == ("workflow", "run", "17")
-
-
-async def test_exact_workflow_path_resolves_before_exact_ref_precondition() -> None:
+@pytest.mark.parametrize(
+    "allowed_target",
+    ["octo/repo@17", f"octo/repo@{WORKFLOW_PATH}"],
+)
+async def test_exact_dispatch_accepts_either_verified_workflow_identity_for_target_policy(
+    allowed_target: str,
+) -> None:
     expected = "1" * 40
     current = "2" * 40
-    client = FakeGhClient(
-        [
-            {"id": 17, "path": WORKFLOW_PATH},
-            _ref(current),
-        ]
-    )
+    client = FakeGhClient([_ref(current)])
     ctx = _context(
         client,
         allow_write_commands=True,
         allow_workflow_dispatch=True,
         allowed_repositories="octo/repo",
-        allowed_workflow_dispatch_targets=f"octo/repo@{WORKFLOW_PATH}",
+        allowed_workflow_dispatch_targets=allowed_target,
     )
 
     with pytest.raises(WritePreconditionMismatch, match="no write was attempted"):
         await gh_run_workflow_exact(
             "octo",
             "repo",
+            17,
             WORKFLOW_PATH,
             "heads/main",
             expected,
             ctx=ctx,
         )
 
-    assert len(client.calls) == 2
-    assert client.calls[0][0][1] == "repos/octo/repo/actions/workflows/Release.yml"
+    assert len(client.calls) == 1
     assert not any("dispatches" in argument for args, _ in client.calls for argument in args)
 
 
@@ -267,18 +267,28 @@ async def test_ordinary_repository_policy_ignores_new_target_lists() -> None:
     assert client.calls == []
 
 
-async def test_public_workflow_schema_advertises_bounded_id_or_canonical_path() -> None:
+async def test_public_workflow_schema_requires_numeric_id_and_exact_expected_path() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    for tool_name in ("gh_run_workflow", "gh_run_workflow_exact"):
-        workflow = tools[tool_name].input_schema["properties"]["workflow_id"]
-        branches = workflow["anyOf"]
-        integer = next(branch for branch in branches if branch.get("type") == "integer")
-        path = next(branch for branch in branches if branch.get("type") == "string")
-        assert integer["minimum"] == 1
-        assert path["pattern"] == WORKFLOW_PATH_RE.pattern
-        assert path["maxLength"] == 1024
-        assert "canonical" in workflow["description"]
+    assert "gh_run_workflow" not in tools
+    workflow = tools["gh_run_workflow_exact"]
+    workflow_id = workflow.input_schema["properties"]["workflow_id"]
+    path = workflow.input_schema["properties"]["expected_workflow_path"]
+
+    assert workflow_id["type"] == "integer"
+    assert workflow_id["minimum"] == 1
+    assert path["type"] == "string"
+    assert path["pattern"] == WORKFLOW_PATH_RE.pattern
+    assert path["maxLength"] == 1024
+    assert "case-sensitive" in path["description"]
+    assert set(workflow.input_schema["required"]) >= {
+        "owner",
+        "repo",
+        "workflow_id",
+        "expected_workflow_path",
+        "ref",
+        "expected_ref_sha",
+    }
 
 
 def test_target_parsers_preserve_exact_path_case_and_casefold_repository_identity() -> None:
