@@ -4,13 +4,12 @@ A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
 runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
-Released version 0.7.1 exposes 61 public MCP tools: 40 read-only and 21 write.
-The current unreleased 0.8.0 development surface exposes 58 public MCP tools:
-40 read-only and 18 write after retiring the generic workflow-dispatch, release-
-creation, and legacy label-upsert writes. Package/server/tool-schema versions remain
-0.7.1 until issue #61 integrates and versions the breaking surface; the historical
-0.7.x release gates therefore remain intentionally stricter than the intermediate
-development registry.
+Version 0.8.0 exposes 58 public MCP tools: 40 read-only and 18 write.
+The 0.8.0 release retires the weaker generic workflow-dispatch, release-creation,
+and label-upsert writes, removes obsolete write-compatibility infrastructure, and
+registers every public write exactly once through the canonical host-facing schema
+facade. Historical 0.7.0/0.7.1 release records remain available under `docs/` but do
+not define the current runtime inventory.
 
 ## Tools
 
@@ -73,7 +72,7 @@ development registry.
 - `gh_compare_commits`: compare two exact commit SHAs with explicit merge-base,
   ahead/behind status, independently bounded commit/file evidence, and digests.
 
-### Write (current unreleased surface: 18)
+### Write (18)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
@@ -105,50 +104,42 @@ development registry.
 - `gh_commit_files`: atomically create or replace files in one branch commit
   (destructive write, separately disabled by default).
 
-Released 0.7.1 additionally exposed the weaker generic `gh_run_workflow`,
-`gh_create_release`, and legacy `gh_upsert_label` writes. Issues #55, #56, and #58
-intentionally retire those names from the active development registry.
-`gh_run_workflow_exact` and `gh_create_release_exact` are now the sole public primitives
-for their mutation classes, while label callers must choose explicit `gh_create_label`
-or `gh_edit_label` semantics. Issue #61 owns physical compatibility cleanup, the 0.8.0
-version bump, and final release-authority normalization. Do not restore retired tools or
-lower historical 0.7.x release-gate counts merely to make an intermediate child-issue
-branch green.
+Historical 0.7.1 additionally exposed the weaker generic `gh_run_workflow`,
+`gh_create_release`, and `gh_upsert_label` writes. They are retired in 0.8.0 rather
+than preserved as aliases. `gh_run_workflow_exact` and `gh_create_release_exact` are
+the sole public primitives for their mutation classes, while label callers choose
+explicit `gh_create_label` or `gh_edit_label` semantics. Do not restore retired tools
+or reinterpret historical 0.7.x inventory records as current runtime authority.
 
-## 0.7.1 architecture and evidence contract
+## 0.8.0 architecture and evidence contract
 
-`src/mcp_gh_server/server.py` is the composition root; public tool implementations live in
-cohesive domain modules under `src/mcp_gh_server/tools/`. GitHub request execution is
-centralized through the shared `GitHubRequestGovernor` rather than duplicated in individual
-tools.
+`src/mcp_gh_server/server.py` is the composition root; public read implementations live
+in cohesive domain modules under `src/mcp_gh_server/tools/`, while the 18 public writes
+are registered exactly once from `src/mcp_gh_server/write_tool_schema.py`. GitHub
+request execution is centralized through the shared `GitHubRequestGovernor` rather
+than duplicated in individual tools.
 
-Writes remain default-off. Exact-state tools preserve expected state/SHA preconditions where
-applicable, perform one mutation attempt, and require authoritative readback before reporting
-verified success. Ambiguous or partial writes are not blindly retried. Canonical metadata-
-aware write paths rely on structured `GitHubRequestError` ambiguity metadata produced by
-`GhClient`; text-based inference from bare `RuntimeError` messages is restricted to frozen
-`legacy_write_support.py` handling for non-`GhClient` compatibility test doubles. Those
-doubles retain their established duck-typed `run_with_metadata()` routing when present;
-real `GhClient` failures are never reclassified from exception message text.
+Writes remain default-off. Exact-state tools preserve expected state/SHA preconditions
+where applicable, perform one mutation attempt, and require authoritative readback
+before reporting verified success. Ambiguous or partial writes are not blindly retried.
+Canonical metadata-aware write paths rely on structured `GitHubRequestError` ambiguity
+metadata produced by `GhClient`; bare `RuntimeError` message text is not upgraded into
+an invented transport classification.
 
 Evidence reads remain explicitly bounded. Callers must preserve truncation/completeness
-metadata, byte counts, digests, and warnings rather than presenting partial artifact, log,
-or comparison evidence as complete.
+metadata, byte counts, digests, and warnings rather than presenting partial artifact,
+log, or comparison evidence as complete.
 
-The 0.7.1 inspection surface adds conservative exact-state evidence rather than new mutation
-paths. `gh_get_merge_requirements` discards readiness evidence when PR identity moves and
-reports unavailable or unmodeled policy as incomplete. `gh_compare_commits` accepts only
-exact commit SHAs and independently bounds commit and file collections. Artifact-content
-inspection operates on exact unexpired artifact IDs, never extracts ZIPs, constrains normalized
-paths and sizes, rejects symlinks/special/encrypted or binary content, and returns bounded
-text/JSON evidence with digests. `gh_get_api_rate_status` keeps GitHub-provided primary-rate
-observations separate from local governor state and uses a local refresh interval only as
-anti-polling policy. See the focused documents under `docs/` for each contract.
+The conservative read surface includes exact-state evidence such as
+`gh_get_merge_requirements`, `gh_compare_commits`, artifact-content inspection, and
+`gh_get_api_rate_status`. These tools fail closed or report incomplete evidence when
+identity, policy, or bounded-source completeness cannot be established. See the
+focused documents under `docs/` for each contract.
 
-0.7.1 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public `gh api`,
-a generic shell/subprocess MCP tool, administrator bypasses, automatic repeated workflow
-rerun/dispatch, artifact/log deletion, or branch-protection/ruleset mutation. See
-`docs/release_gate_0_7_1.md` for the final release acceptance mapping.
+0.8.0 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public
+`gh api`, a generic shell/subprocess MCP tool, administrator bypasses, automatic
+mutation replay, artifact/log deletion, or branch-protection/ruleset mutation. See
+`docs/release_gate_0_8_0.md` for the current release acceptance mapping.
 
 ## Install
 
@@ -225,8 +216,8 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.7.1`, but availability in
-ChatGPT depends on the account plan and integration surface:
+The action surface is version `0.8.0`, but availability in ChatGPT depends on the
+account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
   to Business and Enterprise/Edu workspaces.
@@ -311,7 +302,7 @@ MCP tool invocation reached server: tool=gh_get_pr
 ```
 
 After deploying the current release, delete and reinstall the Plus custom plugin and
-verify `gh_server_info` reports both versions as 0.7.1. An immediate namespace-disabled
+verify `gh_server_info` reports both versions as 0.8.0. An immediate namespace-disabled
 response with no `gh_get_pr` marker still proves rejection occurred in the host before
 the revised server operation. It does not indicate GitHub authentication, repository,
 PR, or readback failure and must not be retried as though a GitHub write partially ran.
@@ -600,29 +591,29 @@ must not be retried automatically.
 ## Validation
 
 ```bash
+uv run pytest tests/test_release_gate_0_8_0.py
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 uv run pytest
+git diff --check
 ```
 
-For intermediate 0.8.x child issues such as #55, #56, and #58, the focused invariant,
-schema, Ruff, format, and type checks should pass. The full `uv run pytest` is still
-required evidence, but while package authority remains 0.7.1 it is expected to retain
-the immutable 0.7.0/0.7.1 release-inventory gate failures caused by the intentional
-58/18 development registry. Those failures belong to #61; do not hide them by lowering
-released-version counts. Any other failing check remains a defect requiring diagnosis.
+The 0.8.0 release passes only when package/server/tool-schema/lock versions, the exact
+58/40/18 executable inventory, schema snapshots, canonical registration invariants,
+compatibility-path absence, focused negative/fail-closed regressions, static checks,
+and the full test suite agree on the same exact candidate SHA. Any source change
+invalidates affected validation and requires rerunning it.
 
-The final 0.7.1 release mapping and immutable inventory authority are documented in
-`docs/release_gate_0_7_1.md`; #61 owns the superseding 0.8.0 release authority.
+Historical 0.7.0 and 0.7.1 release mappings remain under `docs/`; current release
+authority is `docs/release_gate_0_8_0.md` and `tests/test_release_gate_0_8_0.py`.
 
 ## Known boundaries
 
 - The server runs `gh` as a subprocess, including allowlisted REST and GraphQL
   calls inside focused tools; it does not expose a generic command or API executor.
-  Rate limits, authentication, and permission
-  scoping are governed by the `gh` CLI and the token in `GITHUB_TOKEN`.
-- Commands like `gh release create` that require file uploads or complex
-  multi-step flows are intentionally out of scope — they would need a
-  dedicated maintenance tool.
+  Rate limits, authentication, and permission scoping are governed by the `gh` CLI
+  and the token in `GITHUB_TOKEN`.
+- Commands like `gh release create` that require file uploads or complex multi-step
+  flows are intentionally out of scope — they would need a dedicated maintenance tool.
 - The `gh` CLI must be installed and available on PATH.
