@@ -1,8 +1,10 @@
 # Public write-schema and host-legibility contract
 
-This document defines the public MCP contract for the 21 GitHub write tools. It is a
-schema and metadata contract only: it does not replace or relax the existing execution,
-authorization, exact-state, mutation-attempt, or readback semantics.
+This document defines the current unreleased 0.8.0-development public MCP contract for the
+19 GitHub write tools. It is a schema and metadata contract only: it does not replace or
+relax the existing execution, authorization, exact-state, mutation-attempt, or readback
+semantics. Released 0.7.x inventory counts remain governed by their immutable release-gate
+documents and tests.
 
 ## Composition boundary
 
@@ -40,7 +42,8 @@ bounded, typed parameters appropriate to the operation, including:
 - assignee elements limited to a canonical GitHub login or the exact compatibility
   selector `@me`, while reviewer elements remain canonical GitHub logins only;
 - bounded nested commit-file path/content/mode fields;
-- an explicit `REPO` or `OWNER/REPO` shape for repository creation; and
+- separate canonical `owner` and `repo` inputs for repository creation, identifying one
+  exact prospective `OWNER/REPO` target before any GitHub request; and
 - for workflow dispatch, one exact positive workflow ID or a bounded canonical,
   case-sensitive `.github/workflows/<file>.yml|yaml` path.
 
@@ -82,7 +85,7 @@ self-describing to the host.
 
 Annotations remain semantic rather than host-policy workarounds:
 
-- all 21 writes have `readOnlyHint=false`;
+- all 19 current writes have `readOnlyHint=false`;
 - additive writes have `destructiveHint=false`;
 - state-changing/destructive writes have `destructiveHint=true`;
 - writes do not claim idempotence; and
@@ -108,6 +111,13 @@ invariants continue to apply, including:
 - one governed mutation attempt for no-blind-retry operations;
 - authoritative readback where a stable identity exists; and
 - explicit ambiguous/partial-write reporting instead of automatic replay.
+
+Repository creation requires explicit authoritative readback evidence for repository
+identity (`nameWithOwner`), visibility (`isPrivate`), and description. An explicit JSON
+`null` description is authoritative evidence for a repository with no description; an
+absent `description` field is incomplete evidence and must not be treated as equivalent to
+`null`. Initialization is the sole requested property that may remain unknown when GitHub
+does not expose boolean `isEmpty` evidence.
 
 Repository creation and workflow dispatch therefore require both their ordinary repository
 policy and their operation-specific exact target policy. The exact target lists default to
@@ -135,10 +145,10 @@ subsequent action.
 
 The contract is enforced by complementary tests:
 
-- `tests/test_tool_schema_snapshot.py` pins the 61-tool public surface and intentional
-  schema/description snapshots;
-- `tests/test_write_surface_contract.py` pins all 21 public write facades and their module
-  provenance;
+- `tests/test_tool_schema_snapshot.py` pins the current 59-tool development surface and
+  intentional schema/description snapshots;
+- `tests/test_write_surface_contract.py` pins all 19 current public write facades and their
+  module provenance;
 - `tests/test_write_schema_policy.py` independently enumerates the write surface, checks
   canonical metadata/annotations, recursively audits bounded schema leaves and nested
   objects, rejects generic executor/bypass fields, pins the narrow `@me` assignee-selector
@@ -150,6 +160,11 @@ The contract is enforced by complementary tests:
   ordinary repository policy; and
 - write-wrapper tests verify that facade calls still delegate to the existing execution
   implementations, including symbolic-assignee readback semantics.
+
+Repository-creation regression coverage additionally distinguishes required readback fields
+from optional initialization evidence: missing identity, visibility, or description must
+produce a semantic mismatch, while missing initialization evidence leaves `initialized`
+unknown rather than inventing state.
 
 Async schema-policy and target-policy tests follow the repository's
 `asyncio_mode = "auto"` convention and do not carry explicit `@pytest.mark.asyncio`

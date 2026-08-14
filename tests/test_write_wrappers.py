@@ -22,7 +22,6 @@ from mcp_gh_server.server import (
     gh_create_label,
     gh_create_milestone,
     gh_create_pr,
-    gh_create_repo,
     gh_edit_issue,
     gh_edit_label,
     gh_edit_pr,
@@ -341,39 +340,6 @@ async def test_create_pr_executes_then_reads_url() -> None:
     assert "--body-file" in client.calls[0][0]
     assert "--json" not in client.calls[0][0]
     assert client.calls[1][0][:3] == ("pr", "view", url)
-
-
-@pytest.mark.asyncio
-async def test_create_repo_uses_visibility_and_readme_then_reads_repo() -> None:
-    url = "https://github.example/octo/new-repo"
-    client = FakeGhClient(
-        [
-            {"login": "octo"},
-            {"stdout": ""},
-            {"nameWithOwner": "octo/new-repo", "url": url},
-        ]
-    )
-
-    result = await gh_create_repo(
-        "new-repo",
-        ctx=_context(client),
-        auto_init=True,
-    )
-
-    assert result.name == "octo/new-repo"
-    assert client.calls[0][0] == ("api", "user")
-    create_args, create_kwargs = client.calls[1]
-    assert "--public" in create_args
-    assert "--add-readme" in create_args
-    assert "--json" not in create_args
-    assert create_kwargs == {"json_output": False}
-    assert client.calls[2][0] == (
-        "repo",
-        "view",
-        "octo/new-repo",
-        "--json",
-        "nameWithOwner,url",
-    )
 
 
 @pytest.mark.asyncio

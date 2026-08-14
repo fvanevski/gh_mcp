@@ -54,7 +54,6 @@ OBJECT_SHA_PATTERN = r"^[0-9A-Fa-f]{40}$"
 OWNER_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
 ASSIGNEE_SELECTOR_PATTERN = r"^(?:@me|[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))$"
 REPOSITORY_PATTERN = r"^[A-Za-z0-9_.-]{1,100}$"
-REPOSITORY_CREATE_PATTERN = r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/)?[A-Za-z0-9_.-]{1,100}$"
 REF_PATTERN = r"^(?:heads|tags)/.+$"
 LABEL_COLOR_PATTERN = r"^[0-9A-Fa-f]{6}$"
 
@@ -213,9 +212,8 @@ async def test_high_risk_write_descriptions_name_required_fine_gate() -> None:
 
 async def test_repository_target_schemas_are_canonical() -> None:
     tools = await _tools()
-    owner_repo_tools = PUBLIC_WRITE_TOOLS - {"gh_create_repo"}
 
-    for name in owner_repo_tools:
+    for name in PUBLIC_WRITE_TOOLS:
         properties = tools[name].input_schema["properties"]
         owner = properties["owner"]
         repo = properties["repo"]
@@ -224,12 +222,9 @@ async def test_repository_target_schemas_are_canonical() -> None:
         assert repo["pattern"] == REPOSITORY_PATTERN
         assert repo["maxLength"] == 100
 
-    create_name = tools["gh_create_repo"].input_schema["properties"]["name"]
-    assert create_name["pattern"] == REPOSITORY_CREATE_PATTERN
-    assert create_name["maxLength"] == 140
-    assert re.fullmatch(create_name["pattern"], "repo")
-    assert re.fullmatch(create_name["pattern"], "owner/repo")
-    assert re.fullmatch(create_name["pattern"], "owner/repo/extra") is None
+    create_properties = tools["gh_create_repo"].input_schema["properties"]
+    assert "name" not in create_properties
+    assert set(tools["gh_create_repo"].input_schema["required"]) >= {"owner", "repo"}
 
 
 async def test_assignee_selectors_preserve_me_without_loosening_reviewers() -> None:

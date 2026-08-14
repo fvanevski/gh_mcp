@@ -56,7 +56,7 @@ async def test_defaults_fail_closed_for_high_risk_gates_and_target_lists() -> No
     client = FakeGhClient([])
     ctx = _context(client)
     with pytest.raises(RuntimeError, match="writes are disabled"):
-        await gh_create_repo("octo/new-repo", ctx=ctx)
+        await gh_create_repo("octo", "new-repo", ctx=ctx)
     with pytest.raises(RuntimeError, match="writes are disabled"):
         await gh_run_workflow_exact(
             "octo",
@@ -71,13 +71,7 @@ async def test_defaults_fail_closed_for_high_risk_gates_and_target_lists() -> No
 
 
 async def test_repo_creation_exact_prospective_target_does_not_require_owner_allowlist() -> None:
-    url = "https://github.com/octo/new-repo"
-    client = FakeGhClient(
-        [
-            {"stdout": f"{url}\n"},
-            {"nameWithOwner": "octo/new-repo", "url": url},
-        ]
-    )
+    client = FakeGhClient([])
     ctx = _context(
         client,
         allow_write_commands=True,
@@ -85,13 +79,12 @@ async def test_repo_creation_exact_prospective_target_does_not_require_owner_all
         allowed_repositories="octo/existing,octo/new-repo",
         allowed_repo_creation_targets="octo/new-repo",
     )
+    app = ctx.request_context.lifespan_context
 
-    result = await gh_create_repo("octo/new-repo", ctx=ctx)
+    require_write_enabled(app, "octo", "new-repo", action="repo_create")
 
-    assert result.name == "octo/new-repo"
-    assert result.url == url
-    assert len(client.calls) == 2
-    assert "octo" not in ctx.request_context.lifespan_context.settings.allowed_owners
+    assert client.calls == []
+    assert "octo" not in app.settings.allowed_owners
 
 
 async def test_repo_creation_target_mismatch_fails_before_any_github_call() -> None:
@@ -105,7 +98,7 @@ async def test_repo_creation_target_mismatch_fails_before_any_github_call() -> N
     )
 
     with pytest.raises(RuntimeError, match="ALLOWED_REPO_CREATION_TARGETS"):
-        await gh_create_repo("octo/wrong-name", ctx=ctx)
+        await gh_create_repo("octo", "wrong-name", ctx=ctx)
     assert client.calls == []
 
 

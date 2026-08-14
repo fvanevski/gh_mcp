@@ -11,22 +11,19 @@ from pydantic import Field
 
 from .legacy_write_support import (
     execute_atomic_write_readback,
-    raise_known_unapplied,
     run_json_write_with_metadata,
-    run_write_with_metadata,
 )
-from .models import CommitFile, CommitFilesResult, RepoCreate
+from .models import CommitFile, CommitFilesResult
 from .request_governor import GitHubRequestResult
 from .tooling import (
     OBJECT_SHA_RE,
     AppContext,
     app_from_context,
-    require_action_enabled,
     require_write_enabled,
     validate_branch,
     validate_repo_path,
 )
-from .write_contracts import combine_warnings, execute_write_readback, legacy_write_status
+from .write_contracts import combine_warnings, legacy_write_status
 
 logger = logging.getLogger("mcp_gh_server.server")
 
@@ -290,83 +287,5 @@ async def gh_commit_files(
         write_completed=status.write_completed,
         readback_completed=status.readback_completed,
         warning=warning,
-        message=message,
-    )
-
-
-async def gh_create_repo(
-    name: str,
-    *,
-    ctx: Context[AppContext],
-    description: str | None = None,
-    private: bool = False,
-    auto_init: bool = False,
-) -> RepoCreate:
-    """Create a new repository.
-
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true. The MCP host
-    is responsible for user-facing approval.
-    """
-
-    app = app_from_context(ctx)
-    require_action_enabled(app, "repo_create")
-    if name.count("/") > 1:
-        raise ValueError("repository name must be REPO or OWNER/REPO")
-    if "/" in name:
-        owner, repo_name = name.split("/", 1)
-    else:
-        account = await app.client.run("api", "user")
-        owner_login = account.get("login") if isinstance(account, dict) else None
-        if not isinstance(owner_login, str) or not owner_login:
-            raise RuntimeError(
-                "Unable to determine the authenticated owner before repository creation"
-            )
-        owner = owner_login
-        repo_name = name
-    require_write_enabled(app, owner, repo_name, action="repo_create")
-    full_name = f"{owner}/{repo_name}"
-
-    args = ["repo", "create", full_name, "--private" if private else "--public"]
-    if description:
-        args.extend(["--description", description])
-    if auto_init:
-        args.append("--add-readme")
-
-    async def write() -> GitHubRequestResult[Any]:
-        return await run_write_with_metadata(app.client, *args, json_output=False)
-
-    async def readback() -> dict[str, Any]:
-        value = await app.client.run(
-            "repo",
-            "view",
-            full_name,
-            "--json",
-            "nameWithOwner,url",
-        )
-        if not isinstance(value, dict):
-            raise RuntimeError("GitHub returned a non-object repository readback")
-        return value
-
-    def matches(value: dict[str, Any]) -> bool:
-        # The frozen 0.6.x repository readback exposes only canonical identity.
-        # New 0.7.x create tools must expose and verify every requested property.
-        return value.get("nameWithOwner") == full_name and bool(value.get("url"))
-
-    execution = await execute_write_readback(
-        resource="Repository creation",
-        write=write,
-        readback=readback,
-        state_matches_requested=matches,
-    )
-    raise_known_unapplied(execution)
-    status = legacy_write_status(execution.outcome)
-    value = execution.readback_value or {}
-    message = status.warning or "Repository created successfully."
-    return RepoCreate(
-        name=str(value.get("nameWithOwner") or full_name),
-        url=str(value.get("url") or ""),
-        write_completed=status.write_completed,
-        readback_completed=status.readback_completed,
-        warning=status.warning,
         message=message,
     )
