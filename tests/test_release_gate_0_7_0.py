@@ -10,9 +10,9 @@ from mcp_gh_server.server import mcp
 
 ROOT = Path(__file__).resolve().parents[1]
 HISTORICAL_VERSION = (0, 7, 0)
-MINIMUM_TOOL_COUNT = 54
+MINIMUM_TOOL_COUNT = 56
 MINIMUM_READ_ONLY_COUNT = 35
-EXPECTED_WRITE_COUNT = 19
+EXPECTED_WRITE_COUNT = 21
 RELEASE_NEW_TOOLS = {
     "gh_get_ref",
     "gh_get_commit",
@@ -72,9 +72,9 @@ async def test_release_tool_inventory_floor_and_non_goals() -> None:
         if tool.annotations is not None and tool.annotations.read_only_hint is True
     }
 
-    # 0.7.0 established a historical release floor, not a permanent ceiling on
-    # additive tools developed before later version gates. The exact current
-    # inventory remains enforced separately by test_tool_schema_snapshot.py.
+    # This is immutable released-version authority. Breaking 0.8.x child issues may
+    # intentionally make this inventory assertion fail until the 0.8.0 integration
+    # gate versions the new surface; child issues must not lower these historical counts.
     assert len(tools) >= MINIMUM_TOOL_COUNT
     assert len(read_only) >= MINIMUM_READ_ONLY_COUNT
     assert len(tools) - len(read_only) == EXPECTED_WRITE_COUNT
