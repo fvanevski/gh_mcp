@@ -64,7 +64,7 @@ async def resolve_workflow_id(
         raise RuntimeError("GitHub returned no positive workflow ID during selector resolution")
     if not isinstance(path, str) or path != selector:
         raise RuntimeError(
-            f"GitHub workflow selector resolved to path {path!r}, expected exact path {selector!r}; "
-            "no write was attempted"
+            f"GitHub workflow selector resolved to path {path!r}, "
+            f"expected exact path {selector!r}; no write was attempted"
         )
     return workflow_id

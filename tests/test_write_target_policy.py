@@ -22,7 +22,7 @@ from mcp_gh_server.tooling import (
 )
 from mcp_gh_server.workflow_selector import WORKFLOW_PATH_RE, resolve_workflow_id
 from mcp_gh_server.write_contracts import WritePreconditionMismatch
-from test_write_wrappers import FakeGhClient
+from tests.test_write_wrappers import FakeGhClient
 
 WORKFLOW_PATH = ".github/workflows/Release.yml"
 OTHER_WORKFLOW_PATH = ".github/workflows/Other.yml"
@@ -292,9 +292,7 @@ async def test_public_workflow_schema_requires_numeric_id_and_exact_expected_pat
 
 
 def test_target_parsers_preserve_exact_path_case_and_casefold_repository_identity() -> None:
-    assert _configured_repository_targets("Octo/New-Repo", env_name="TEST") == {
-        "octo/new-repo"
-    }
+    assert _configured_repository_targets("Octo/New-Repo", env_name="TEST") == {"octo/new-repo"}
     targets = _configured_workflow_targets(
         f"Octo/Repo@{WORKFLOW_PATH}",
         env_name="TEST",
