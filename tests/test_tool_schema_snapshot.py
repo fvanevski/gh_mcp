@@ -132,8 +132,8 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "branch", "expected_head_sha", "files", "commit_message"},
     ),
     "gh_create_repo": (
-        {"name", "description", "private", "auto_init"},
-        {"name"},
+        {"owner", "repo", "description", "private", "auto_init"},
+        {"owner", "repo"},
     ),
     "gh_list_releases": (
         {"owner", "repo", "per_page"},
@@ -428,9 +428,29 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert {"github", "governor"} == set(rate_output)
 
     repo_create_schema = tools["gh_create_repo"].input_schema["properties"]
-    assert repo_create_schema["name"]["pattern"] == (
-        r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/)?[A-Za-z0-9_.-]{1,100}$"
+    assert "name" not in repo_create_schema
+    assert repo_create_schema["owner"]["pattern"] == (
+        r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
     )
+    assert repo_create_schema["owner"]["maxLength"] == 39
+    assert repo_create_schema["repo"]["pattern"] == r"^[A-Za-z0-9_.-]{1,100}$"
+    assert repo_create_schema["repo"]["maxLength"] == 100
+    repo_create_output = tools["gh_create_repo"].output_schema["properties"]
+    assert {
+        "precondition_checked",
+        "write_completed",
+        "readback_completed",
+        "state_matches_requested",
+        "warning",
+        "request_id",
+        "owner",
+        "repo",
+        "name_with_owner",
+        "url",
+        "is_private",
+        "description",
+        "initialized",
+    } == set(repo_create_output)
 
     compare_schema = tools["gh_compare_commits"].input_schema["properties"]
     assert compare_schema["base_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
