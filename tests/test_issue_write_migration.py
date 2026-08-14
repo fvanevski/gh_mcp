@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-import mcp_gh_server.issue_write_schema as issue_write_schema
 import mcp_gh_server.legacy_issue_write_adapters as legacy_issue_writes
+import mcp_gh_server.write_tool_schema as write_tool_schema
 from mcp_gh_server.issue_write_models import (
     IssueCreateResult,
     IssueEditResult,
@@ -315,11 +315,11 @@ async def test_upsert_label_is_absent_from_public_registry() -> None:
 
 def test_public_facade_delegates_migrated_writes_to_canonical_module() -> None:
     for implementation in (
-        issue_write_schema._gh_create_issue,
-        issue_write_schema._gh_edit_issue,
-        issue_write_schema._gh_create_label,
-        issue_write_schema._gh_edit_label,
-        issue_write_schema._gh_create_milestone,
+        write_tool_schema._gh_create_issue,
+        write_tool_schema._gh_edit_issue,
+        write_tool_schema._gh_create_label,
+        write_tool_schema._gh_edit_label,
+        write_tool_schema._gh_create_milestone,
     ):
         assert implementation.__module__ == "mcp_gh_server.tools.issue_writes"
 

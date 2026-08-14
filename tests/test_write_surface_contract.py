@@ -82,12 +82,12 @@ def _context(client: MetadataAwareClient) -> Any:
 
 def test_all_public_writes_are_bound_to_active_schema_modules() -> None:
     expected = {
-        gh_create_issue: "mcp_gh_server.issue_write_schema",
-        gh_edit_issue: "mcp_gh_server.issue_write_schema",
+        gh_create_issue: "mcp_gh_server.write_tool_schema",
+        gh_edit_issue: "mcp_gh_server.write_tool_schema",
         gh_set_issue_state: "mcp_gh_server.write_tool_schema",
-        gh_create_label: "mcp_gh_server.issue_write_schema",
-        gh_edit_label: "mcp_gh_server.issue_write_schema",
-        gh_create_milestone: "mcp_gh_server.issue_write_schema",
+        gh_create_label: "mcp_gh_server.write_tool_schema",
+        gh_edit_label: "mcp_gh_server.write_tool_schema",
+        gh_create_milestone: "mcp_gh_server.write_tool_schema",
         gh_create_comment: "mcp_gh_server.write_tool_schema",
         gh_create_pr: "mcp_gh_server.write_tool_schema",
         gh_edit_pr: "mcp_gh_server.write_tool_schema",
