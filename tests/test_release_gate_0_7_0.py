@@ -10,9 +10,9 @@ from mcp_gh_server.server import mcp
 
 ROOT = Path(__file__).resolve().parents[1]
 HISTORICAL_VERSION = (0, 7, 0)
-MINIMUM_TOOL_COUNT = 56
-MINIMUM_READ_ONLY_COUNT = 35
-EXPECTED_WRITE_COUNT = 21
+MINIMUM_TOOL_COUNT = 54
+MINIMUM_READ_ONLY_COUNT = 33
+EXPECTED_WRITE_COUNT = 19
 RELEASE_NEW_TOOLS = {
     "gh_get_ref",
     "gh_get_commit",

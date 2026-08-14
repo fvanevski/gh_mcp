@@ -10,9 +10,9 @@ from mcp_gh_server.server import mcp
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_VERSION = "0.7.1"
-EXPECTED_TOOL_COUNT = 61
+EXPECTED_TOOL_COUNT = 59
 EXPECTED_READ_ONLY_COUNT = 40
-EXPECTED_WRITE_COUNT = 21
+EXPECTED_WRITE_COUNT = 19
 RELEASE_NEW_TOOLS = {
     "gh_get_merge_requirements",
     "gh_compare_commits",

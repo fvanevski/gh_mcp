@@ -104,6 +104,7 @@ async def test_known_release_write_failure_is_read_back_once_without_retry() -> 
         read_results=[
             _commit(expected),
             GitHubRequestError("missing ref", status_code=404),
+            [],
             _permissions(),
             [],
             _commit(expected),

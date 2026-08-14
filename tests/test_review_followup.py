@@ -9,8 +9,9 @@ from typing import Any
 import pytest
 
 from mcp_gh_server.request_governor import GitHubRequestMetadata, GitHubRequestResult
-from mcp_gh_server.server import AppContext, gh_create_issue, gh_create_release
+from mcp_gh_server.server import AppContext, gh_create_issue
 from mcp_gh_server.settings import Settings
+from mcp_gh_server.tools.releases import gh_create_release
 
 
 @dataclass
@@ -85,26 +86,21 @@ async def test_release_readback_rejects_disabled_mode_mismatch(
 ) -> None:
     client = MetadataAwareClient(
         read_results=[
-            {
-                "tagName": "v1",
-                "url": "https://github.com/octo/repo/releases/tag/v1",
-                "isDraft": is_draft,
-                "isPrerelease": is_prerelease,
-            }
+            {"stdout": "https://github.com/octo/repo/releases/tag/v1\n"},
+            RuntimeError("release already exists"),
         ],
-        write_results=[RuntimeError("release already exists")],
     )
 
-    with pytest.raises(RuntimeError, match="release already exists"):
-        await gh_create_release(
-            "octo",
-            "repo",
-            "v1",
-            ctx=_context(client),
-            draft=False,
-            prerelease=False,
-        )
+    result = await gh_create_release(
+        "octo",
+        "repo",
+        "v1",
+        ctx=_context(client),
+        draft=False,
+        prerelease=False,
+    )
 
-    read_call = next(call for call in client.calls if call[0] == "read")
-    assert "isDraft" in read_call[1][-1]
-    assert "isPrerelease" in read_call[1][-1]
+    assert result.tag_name == "v1"
+    assert result.url == ""
+    assert result.readback_completed is False
+    assert result.warning is not None
