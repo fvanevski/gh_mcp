@@ -512,6 +512,7 @@ same path with exact case, and converts it to GitHub's positive numeric workflow
 Duplicate detection, exact-ref checks, dispatch, reservation state, and authoritative
 run readback continue to use that numeric identity. A path mismatch or resolution
 failure is fail-closed and never authorizes a different workflow.
+
 Repository creation, release creation, workflow dispatch, repository-content
 commits, and PR merging require separate opt-in because they can have broader effects:
 
