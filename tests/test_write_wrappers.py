@@ -400,7 +400,7 @@ async def test_create_release_executes_then_reads_tag() -> None:
     )
 
     assert result.tag_name == "v1"
-    assert client.calls[0][1] == {"json_output": false, "stdin_text": "Notes"}
+    assert client.calls[0][1] == {"json_output": False, "stdin_text": "Notes"}
     assert "--notes-file" in client.calls[0][0]
     assert "--json" not in client.calls[0][0]
     assert client.calls[1][0] == (
@@ -605,7 +605,7 @@ async def test_branch_and_pr_edit_use_raw_writes() -> None:
     )
     assert result.title == "Updated PR"
     assert pr_client.calls[0][1] == {"json_output": False, "stdin_text": None}
-    assert pr_client.calls[1][0][:3] == ("pr", "view", "9")
+    assert client.calls[1][0][:3] == ("pr", "view", "9")
 
 
 @pytest.mark.asyncio
