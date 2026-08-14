@@ -106,6 +106,17 @@ def _registered_tool_function_names(path: Path) -> set[str]:
     return registered
 
 
+def _legacy_imports(path: Path) -> list[str]:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and "legacy_" in node.module:
+            imports.append(node.module)
+        elif isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names if "legacy_" in alias.name)
+    return imports
+
+
 def test_public_writes_have_one_canonical_registration_path() -> None:
     facade_names = [tool.__name__ for tool in PUBLIC_WRITE_TOOLS]
     assert len(facade_names) == EXPECTED_WRITE_COUNT
@@ -125,7 +136,7 @@ def test_public_writes_have_one_canonical_registration_path() -> None:
     assert EXPECTED_WRITE_TOOLS.isdisjoint(directly_registered)
 
 
-def test_obsolete_write_compatibility_paths_are_absent() -> None:
+def test_obsolete_write_compatibility_paths_and_imports_are_absent() -> None:
     package = ROOT / "src" / "mcp_gh_server"
     legacy_paths = sorted(path.name for path in package.glob("legacy_*write*.py"))
     assert legacy_paths == []
@@ -135,6 +146,13 @@ def test_obsolete_write_compatibility_paths_are_absent() -> None:
     contracts = (package / "write_contracts.py").read_text()
     assert "LegacyWriteStatus" not in contracts
     assert "legacy_write_status" not in contracts
+
+    stale_imports: dict[str, list[str]] = {}
+    for path in ROOT.rglob("*.py"):
+        imports = _legacy_imports(path)
+        if imports:
+            stale_imports[str(path.relative_to(ROOT))] = imports
+    assert stale_imports == {}
 
 
 def test_high_risk_write_gates_remain_default_off() -> None:
