@@ -1428,7 +1428,11 @@ async def test_commit_files_unknown_ref_outcome_requires_read_before_retry() -> 
             {"sha": "c" * 40},
             {"sha": "d" * 40},
             {"sha": commit},
-            RuntimeError("timeout"),
+            GitHubRequestError(
+                "timeout",
+                ambiguous=True,
+                metadata=GitHubRequestMetadata(request_id="req-content-ambiguous"),
+            ),
             RuntimeError("readback timeout"),
         ]
     )
@@ -1444,7 +1448,7 @@ async def test_commit_files_unknown_ref_outcome_requires_read_before_retry() -> 
     )
 
     assert result.ref_updated is None
-    assert result.write_completed is False
+    assert result.write_completed is None
     assert result.readback_completed is False
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
