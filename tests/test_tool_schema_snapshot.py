@@ -279,10 +279,6 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "name", "color", "description"},
         {"owner", "repo", "name", "color"},
     ),
-    "gh_upsert_label": (
-        {"owner", "repo", "name", "color", "description"},
-        {"owner", "repo", "name", "color"},
-    ),
     "gh_edit_label": (
         {"owner", "repo", "name", "new_name", "color", "description"},
         {"owner", "repo", "name"},
@@ -374,7 +370,6 @@ DESTRUCTIVE_WRITE_TOOLS = {
     "gh_edit_issue",
     "gh_set_issue_state",
     "gh_set_pr_draft_state",
-    "gh_upsert_label",
     "gh_edit_label",
     "gh_edit_pr",
 }
@@ -383,16 +378,18 @@ EXPECTED_DESCRIPTIONS = {
     "gh_create_issue": (
         "Additive write: create exactly one issue in the target repository. "
         "The ordinary write gate and repository policy must allow the target. "
-        "Optional labels and assignees are bounded; authoritative readback verifies "
-        "the created issue when a stable identity is returned. This tool does not "
-        "edit, close, comment on, or delete an existing issue."
+        "Optional labels and assignees are bounded; one mutation attempt is followed "
+        "by authoritative semantic readback when stable identity is available. The "
+        "tool never retries an ambiguous mutation automatically and does not edit, "
+        "close, comment on, or delete an existing issue."
     ),
     "gh_edit_issue": (
         "Destructive write: edit metadata on exactly one existing issue after "
         "ordinary write authorization. The request may change title, body, labels, "
-        "assignees, or milestone; authoritative readback checks requested fields. "
-        "It does not close or reopen the issue, post comments, delete the issue, or "
-        "bypass repository policy."
+        "assignees, or milestone; one mutation attempt is followed by authoritative "
+        "semantic readback of the requested fields. Ambiguous mutations are never "
+        "retried automatically. It does not close or reopen the issue, post comments, "
+        "delete the issue, or bypass repository policy."
     ),
     "gh_list_milestones": (
         "List milestones in a repository via the GitHub API.\n\n"
@@ -401,9 +398,20 @@ EXPECTED_DESCRIPTIONS = {
     "gh_create_milestone": (
         "Additive write: create exactly one repository milestone with bounded title, "
         "description, due date, and explicit open/closed state after ordinary write "
-        "authorization. Authoritative readback verifies the created milestone. It "
-        "does not assign issues to the milestone or edit existing milestones."
+        "authorization. One mutation attempt is followed by authoritative readback "
+        "of the stable milestone number and requested fields; ambiguous creation is "
+        "never retried automatically. It does not assign issues to the milestone or "
+        "edit existing milestones."
     ),
+}
+
+EXACT_OUTCOME_FIELDS = {
+    "precondition_checked",
+    "write_completed",
+    "readback_completed",
+    "state_matches_requested",
+    "warning",
+    "request_id",
 }
 
 
@@ -411,9 +419,10 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 59
+    assert len(tools) == 58
     assert set(tools) == set(EXPECTED_SURFACE)
     assert "gh_create_release" not in tools
+    assert "gh_upsert_label" not in tools
 
     for name, tool in tools.items():
         properties, required = EXPECTED_SURFACE[name]
@@ -423,6 +432,15 @@ async def test_exact_tool_surface_snapshot() -> None:
         assert tool.annotations.destructive_hint is (name in DESTRUCTIVE_WRITE_TOOLS)
         assert tool.annotations.idempotent_hint is (name in READ_ONLY_TOOLS)
         assert tool.annotations.open_world_hint is (name != "gh_server_info")
+
+    for name in (
+        "gh_create_issue",
+        "gh_edit_issue",
+        "gh_create_label",
+        "gh_edit_label",
+        "gh_create_milestone",
+    ):
+        assert EXACT_OUTCOME_FIELDS <= set(tools[name].output_schema["properties"])
 
     rate_output = tools["gh_get_api_rate_status"].output_schema["properties"]
     assert {"github", "governor"} == set(rate_output)
