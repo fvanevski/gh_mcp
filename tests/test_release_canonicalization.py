@@ -6,8 +6,6 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
-
 from mcp_gh_server import server
 from mcp_gh_server.request_governor import (
     GitHubRequestError,
@@ -97,7 +95,13 @@ def test_generic_release_write_is_absent_from_server_public_namespace() -> None:
     assert hasattr(server, "gh_create_release_exact")
 
 
-@pytest.mark.asyncio
+async def test_generic_release_write_is_absent_from_registered_tool_surface() -> None:
+    tools = {tool.name for tool in await server.mcp.list_tools()}
+
+    assert "gh_create_release" not in tools
+    assert "gh_create_release_exact" in tools
+
+
 async def test_known_release_write_failure_is_read_back_once_without_retry() -> None:
     expected = _sha(1)
     client = ReleaseFailureClient(
