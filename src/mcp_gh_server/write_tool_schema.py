@@ -88,6 +88,7 @@ from .tools.pr_draft_state import gh_set_pr_draft_state as _gh_set_pr_draft_stat
 from .tools.release_exact import gh_create_release_exact as _gh_create_release_exact
 from .tools.workflow_dispatch import gh_run_workflow_exact as _gh_run_workflow_exact
 from .workflow_dispatch_models import WorkflowDispatchExactResult
+from .workflow_selector import WORKFLOW_PATH_RE
 
 Owner = Annotated[
     str,
@@ -146,6 +147,26 @@ RefName = Annotated[
         min_length=6,
         max_length=1024,
         pattern=r"^(?:heads|tags)/.+$",
+    ),
+]
+WorkflowSelector = Annotated[
+    Annotated[
+        int,
+        Field(ge=1),
+    ]
+    | Annotated[
+        str,
+        Field(
+            min_length=23,
+            max_length=1024,
+            pattern=WORKFLOW_PATH_RE.pattern,
+        ),
+    ],
+    Field(
+        description=(
+            "Exact positive workflow ID or canonical case-sensitive path under "
+            ".github/workflows/ ending in .yml or .yaml."
+        )
     ),
 ]
 WorkflowField = Annotated[
@@ -764,10 +785,7 @@ async def gh_create_release_exact(
 async def gh_run_workflow(
     owner: Owner,
     repo: Repository,
-    workflow_id: Annotated[
-        PositiveNumber,
-        Field(description="Positive workflow identifier."),
-    ],
+    workflow_id: WorkflowSelector,
     ref: Annotated[
         BranchName,
         Field(description="Branch or tag name to dispatch; defaults to main."),
@@ -792,10 +810,7 @@ async def gh_run_workflow(
 async def gh_run_workflow_exact(
     owner: Owner,
     repo: Repository,
-    workflow_id: Annotated[
-        PositiveNumber,
-        Field(description="Exact positive workflow identifier."),
-    ],
+    workflow_id: WorkflowSelector,
     ref: Annotated[
         RefName,
         Field(description=("Exact ref path relative to refs/, as heads/<branch> or tags/<tag>.")),
@@ -1024,10 +1039,10 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         "Create repository",
         (
             "Additive write: create exactly one repository named REPO or OWNER/REPO after "
-            "the ordinary write policy and separate repository-creation fine gate allow "
-            "it. The request may set description, visibility, and initial README only. "
-            "It cannot delete, rename, transfer, or otherwise administer an existing "
-            "repository."
+            "the ordinary write policy, exact prospective-repository target policy, and "
+            "separate repository-creation fine gate allow it. The request may set description, "
+            "visibility, and initial README only. It cannot delete, rename, transfer, or "
+            "otherwise administer an existing repository."
         ),
         ADD_EXTERNAL,
     ),
@@ -1069,25 +1084,27 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
     "gh_run_workflow": WriteToolMetadata(
         "Dispatch workflow",
         (
-            "Destructive write: issue exactly one workflow_dispatch request for the "
-            "specified workflow and bounded branch/tag ref after ordinary write "
-            "authorization and the workflow-dispatch fine gate. Inputs are bounded "
-            "key=value entries. This compatibility surface has no exact ref-SHA "
-            "precondition; use gh_run_workflow_exact when immutable identity is required. "
-            "It cannot rerun, cancel, or automatically repeat a dispatch."
+            "Destructive write: issue exactly one workflow_dispatch request for the exact "
+            "authorized workflow ID or canonical workflow path and bounded branch/tag ref "
+            "after ordinary write authorization, exact workflow-target policy, and the "
+            "workflow-dispatch fine gate. Inputs are bounded key=value entries. This "
+            "compatibility surface has no exact ref-SHA precondition; use "
+            "gh_run_workflow_exact when immutable identity is required. It cannot rerun, "
+            "cancel, or automatically repeat a dispatch."
         ),
         MUTATE_EXTERNAL,
     ),
     "gh_run_workflow_exact": WriteToolMetadata(
         "Dispatch workflow at exact ref",
         (
-            "Destructive write: after ordinary write authorization and the separate "
-            "workflow-dispatch fine gate, verify under one server-local critical section an "
-            "exact canonical branch/tag ref against expected_ref_sha, reject same-name "
-            "branch/tag ambiguity, and reject an existing workflow_dispatch run for the "
-            "workflow/head before one dispatch. Returned run details and authoritative "
-            "readback bind the result to an exact run ID; the tool never redispatches "
-            "automatically."
+            "Destructive write: after ordinary write authorization, exact workflow-target "
+            "policy, and the separate workflow-dispatch fine gate, resolve an authorized "
+            "workflow ID or canonical path to its numeric GitHub identity, then verify under "
+            "one server-local critical section an exact canonical branch/tag ref against "
+            "expected_ref_sha, reject same-name branch/tag ambiguity, and reject an existing "
+            "workflow_dispatch run for the workflow/head before one dispatch. Returned run "
+            "details and authoritative readback bind the result to an exact run ID; the tool "
+            "never redispatches automatically."
         ),
         MUTATE_EXTERNAL,
     ),

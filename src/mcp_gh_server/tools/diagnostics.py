@@ -73,6 +73,9 @@ async def gh_server_info(ctx: Context[AppContext]) -> ServerInfo:
         write_commands_enabled=app.settings.allow_write_commands,
         content_commits_enabled=app.settings.allow_content_commits,
         pr_merge_enabled=app.settings.allow_pr_merge,
+        repo_creation_enabled=app.settings.allow_repo_creation,
+        release_creation_enabled=app.settings.allow_release_creation,
+        workflow_dispatch_enabled=app.settings.allow_workflow_dispatch,
     )
 
 

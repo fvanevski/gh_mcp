@@ -16,13 +16,14 @@ from .tooling import (
     require_write_enabled,
     workflow_run_id,
 )
+from .workflow_selector import resolve_workflow_id
 from .write_contracts import execute_write_readback, legacy_write_status
 
 
 async def gh_run_workflow(
     owner: str,
     repo: str,
-    workflow_id: int,
+    workflow_id: int | str,
     ref: str = "main",
     *,
     ctx: Context[AppContext],
@@ -36,11 +37,18 @@ async def gh_run_workflow(
     """
 
     app = app_from_context(ctx)
-    require_write_enabled(app, owner, repo, action="workflow_dispatch")
+    require_write_enabled(
+        app,
+        owner,
+        repo,
+        action="workflow_dispatch",
+        workflow=workflow_id,
+    )
+    resolved_workflow_id = await resolve_workflow_id(app, owner, repo, workflow_id)
     args = [
         "workflow",
         "run",
-        str(workflow_id),
+        str(resolved_workflow_id),
         "--repo",
         f"{owner}/{repo}",
         "--ref",

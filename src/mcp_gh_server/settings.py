@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     allow_write_commands: bool = False
     allowed_repositories: str = ""
     allowed_owners: str = ""
+    allowed_repo_creation_targets: str = ""
+    allowed_workflow_dispatch_targets: str = ""
     allow_repo_creation: bool = False
     allow_release_creation: bool = False
     allow_workflow_dispatch: bool = False

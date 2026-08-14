@@ -1,27 +1,54 @@
 # Exact workflow dispatch contract
 
 `gh_run_workflow_exact` is the release-grade workflow-dispatch primitive introduced for issue
-#16. It remains separate from the compatibility-oriented `gh_run_workflow` tool.
+#16. Issue #54 adds an exact deployment target policy without weakening the existing exact-ref,
+mutation-attempt, ambiguity, reservation, or readback semantics. The tool remains separate from
+the compatibility-oriented `gh_run_workflow` tool.
+
+## Workflow selector and authorization
+
+The public `workflow_id` field accepts exactly one of:
+
+- a positive numeric GitHub workflow ID; or
+- a bounded, case-sensitive canonical path of the form
+  `.github/workflows/<file>.yml` or `.github/workflows/<file>.yaml`.
+
+Before any workflow-resolution read or mutation request, the server enforces the master write
+gate, normal repository/owner policy, `MCP_GH_ALLOW_WORKFLOW_DISPATCH`, and an exact
+`MCP_GH_ALLOWED_WORKFLOW_DISPATCH_TARGETS` entry for the caller-supplied repository/selector.
+The exact target list defaults to empty and therefore fails closed.
+
+A numeric selector is already the execution identity. A path selector is resolved through the
+read-only GitHub workflow endpoint using the workflow file name. GitHub's returned workflow
+metadata must contain a positive numeric ID and the exact requested path with identical case.
+Only then is the numeric ID admitted into duplicate detection, the local reservation key,
+dispatch endpoint construction, and authoritative run readback. A path mismatch or failed
+resolution performs no mutation and cannot silently authorize another workflow.
 
 ## Safety sequence
 
-For one `(owner, repo, workflow_id, expected_ref_sha)` dispatch key, the tool:
+For one authorized caller selector that resolves to numeric
+`(owner, repo, resolved_workflow_id, expected_ref_sha)`, the tool:
 
-1. enforces the existing master write gate, repository/owner allowlist, and
-   `MCP_GH_ALLOW_WORKFLOW_DISPATCH` fine gate;
-2. enters a server-local critical section so two concurrent invocations in the same MCP server
+1. enforces the master write gate, repository/owner allowlist,
+   `MCP_GH_ALLOW_WORKFLOW_DISPATCH`, and exact repository/workflow-selector target policy;
+2. resolves an authorized canonical workflow path to a positive numeric workflow ID when the
+   caller did not already supply an ID;
+3. enters a server-local critical section so two concurrent invocations in the same MCP server
    cannot both pass the duplicate check and POST;
-3. reconciles any prior same-process reservation before a new attempt;
-4. resolves the exact canonical `heads/...` or `tags/...` ref and requires its peeled commit SHA
+4. reconciles any prior same-process reservation before a new attempt;
+5. resolves the exact canonical `heads/...` or `tags/...` ref and requires its peeled commit SHA
    to equal `expected_ref_sha`;
-5. queries `gh_list_runs` using the exact workflow ID, head SHA, and `workflow_dispatch` event;
-6. rejects a same-name branch/tag counterpart because GitHub's dispatch API accepts only the
+6. queries `gh_list_runs` using the resolved exact workflow ID, head SHA, and
+   `workflow_dispatch` event;
+7. rejects a same-name branch/tag counterpart because GitHub's dispatch API accepts only the
    short branch-or-tag name and cannot otherwise preserve the caller's namespace identity;
-7. re-resolves the requested exact ref immediately before mutation;
-8. sends one POST with `return_run_details=true` and never retries that mutation automatically;
-9. when GitHub returns run details, reads back exactly the returned workflow-run ID and verifies
-   its workflow ID, head SHA, and event;
-10. when transport fails before a run ID is available, uses the exact filtered run query only as
+8. re-resolves the requested exact ref immediately before mutation;
+9. sends one POST using the resolved numeric workflow ID with `return_run_details=true` and
+   never retries that mutation automatically;
+10. when GitHub returns run details, reads back exactly the returned workflow-run ID and verifies
+    its workflow ID, head SHA, and event; and
+11. when transport fails before a run ID is available, uses the exact filtered run query only as
     ambiguity readback and preserves `write_completed=None` when the transport outcome is unknown.
 
 A successful or transport-ambiguous local attempt leaves a same-process reservation. This closes
@@ -54,16 +81,21 @@ mutations or workflow-specific cooperation, both of which are outside issue #16'
 
 The authoritative remote duplicate identity is:
 
-- exact workflow ID;
+- exact resolved numeric workflow ID;
 - exact expected head SHA;
 - `workflow_dispatch` event;
 - any run status.
 
-The server-local reservation uses the same workflow/head identity. It is an additional fail-closed
-coordination layer, not a replacement for the authoritative `gh_list_runs` query. Coordination is
-process-local; independently running MCP server processes and unrelated GitHub actors do not share
-this in-memory reservation. Once GitHub exposes a run, the exact remote duplicate query provides
-the cross-process evidence available from the public API.
+The server-local reservation uses the same resolved workflow/head identity. It is an additional
+fail-closed coordination layer, not a replacement for the authoritative `gh_list_runs` query.
+Coordination is process-local; independently running MCP server processes and unrelated GitHub
+actors do not share this in-memory reservation. Once GitHub exposes a run, the exact remote
+duplicate query provides the cross-process evidence available from the public API.
+
+Using the resolved numeric ID here is deliberate: a path selector is an authorization/discovery
+identity at the public boundary, while GitHub's workflow ID is the stable workflow identity used
+by the existing exact-dispatch and run-readback contracts. Issue #54 does not change dispatch
+payload or run-readback semantics after that resolution step.
 
 ## Readback and ambiguity
 
@@ -81,10 +113,19 @@ second POST. The standardized exact-write fields retain their existing meanings:
 - `state_matches_requested` — readback verified the requested semantic state;
 - `warning` / `request_id` — ambiguity and GitHub request evidence.
 
+The result's `workflow_id` is always the resolved positive numeric workflow identity, including
+when the caller authorized the operation using a canonical path.
+
 ## Regression requirements
 
-Issue #16 coverage must include stale refs, existing duplicates, same-name branch/tag ambiguity,
-annotated-tag peeling, successful returned-run readback, returned-run identity mismatch,
-post-dispatch head mismatch, known dispatch failure, delayed readback, malformed run-detail
-responses, transport ambiguity, multiple fallback matches, concurrent same-key invocation, write
-fine-gate denial, duplicate workflow inputs, and the no-double-dispatch invariant.
+Issue #16 coverage continues to require stale refs, existing duplicates, same-name branch/tag
+ambiguity, annotated-tag peeling, successful returned-run readback, returned-run identity
+mismatch, post-dispatch head mismatch, known dispatch failure, delayed readback, malformed
+run-detail responses, transport ambiguity, multiple fallback matches, concurrent same-key
+invocation, write fine-gate denial, duplicate workflow inputs, and the no-double-dispatch
+invariant.
+
+Issue #54 additionally requires public numeric-ID/canonical-path schema coverage, exact target
+mismatch with no GitHub call, case-sensitive path resolution, conversion to numeric identity
+before exact-ref execution, default-empty target denial, and preservation of the existing
+no-blind-retry/readback sequence.
