@@ -79,6 +79,11 @@ mcp.add_tool(
     annotations=READ_EXTERNAL,
 )
 
+# tools.actions still self-registers the historical generic dispatch during module
+# import. Issue #55 removes that public contract; the 0.8.0 integration gate owns
+# the later source-level cleanup of obsolete compatibility registrations.
+mcp.remove_tool("gh_run_workflow")
+
 # Rebind every public write to the schema facade. The facade owns host-facing
 # schema/metadata only; the wrappers delegate execution to the existing write
 # implementations without changing mutation, gate, or readback semantics.
