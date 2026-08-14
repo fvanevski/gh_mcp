@@ -22,6 +22,7 @@ from ..tooling import (
     require_write_enabled,
 )
 from ..workflow_dispatch_models import WorkflowDispatchExactResult
+from ..workflow_selector import WORKFLOW_PATH_RE, resolve_workflow_id
 from ..write_contracts import (
     WritePrecondition,
     combine_warnings,
@@ -422,7 +423,18 @@ async def gh_run_workflow_exact(
             pattern=REPO_RE.pattern,
         ),
     ],
-    workflow_id: Annotated[int, Field(description="Exact positive workflow identifier.", ge=1)],
+    workflow_id: (
+        Annotated[int, Field(description="Exact positive workflow identifier.", ge=1)]
+        | Annotated[
+            str,
+            Field(
+                description="Exact canonical workflow path under .github/workflows/.",
+                min_length=23,
+                max_length=1024,
+                pattern=WORKFLOW_PATH_RE.pattern,
+            ),
+        ]
+    ),
     ref: Annotated[
         str,
         Field(
@@ -448,8 +460,6 @@ async def gh_run_workflow_exact(
     """Perform one exact-ref guarded workflow dispatch and verify exact run readback."""
 
     logger.info("MCP tool invocation reached server: tool=gh_run_workflow_exact")
-    if workflow_id < 1:
-        raise ValueError("workflow_id must be positive")
     if not OBJECT_SHA_RE.fullmatch(expected_ref_sha):
         raise ValueError("expected_ref_sha must be exactly 40 hexadecimal characters")
 
@@ -461,6 +471,7 @@ async def gh_run_workflow_exact(
         action="workflow_dispatch",
         workflow=workflow_id,
     )
+    workflow_id = await resolve_workflow_id(app, owner, repo, workflow_id)
     inputs = _workflow_inputs(fields)
     normalized_expected_sha = expected_ref_sha.casefold()
     dispatch_ref = ref.split("/", 1)[1] if "/" in ref else ""
