@@ -15,7 +15,15 @@ The authoritative sources are:
 - exact public input/output schema snapshot: `tests/test_tool_schema_snapshot.py` and `tests/test_tool_return_models.py`;
 - final release integration assertions: `tests/test_release_gate_0_7_1.py`.
 
-All version sources must report `0.7.1`. Documentation counts are descriptive and must agree with the executable registry; they are not an independent source of truth.
+All version sources must report `0.7.1`. Documentation counts are descriptive and must agree with the executable registry for the released 0.7.1 candidate; they are not an independent source of truth.
+
+### Unreleased 0.8.0 transition
+
+This file remains an immutable 0.7.1 release record while 0.8.x child issues are developed. After issue #55 retires generic workflow dispatch and issue #56 retires generic release creation, the current unreleased development registry contains **59 public MCP tools: 40 read-only and 19 write** even though package/server/tool-schema versions still report 0.7.1.
+
+That temporary mismatch is intentional evidence that a breaking public-surface transition has not yet been versioned. Issue #61 owns the 0.8.0 integration gate: it must remove remaining obsolete compatibility infrastructure, bump package/server/tool-schema authority, normalize release documentation and registry snapshots, and make the full version gate green on one exact candidate head. Child issues must not lower the 0.7.0 or 0.7.1 release counts merely to hide the intermediate mismatch.
+
+Current-development documentation such as `README.md` and `QWEN.md` may separately describe the active 59/19 registry, but this historical gate continues to state and enforce the released 61/40/21 surface until #61 supersedes it with 0.8.0 authority.
 
 ## 0.7.1 additions
 
@@ -79,4 +87,4 @@ uv run pytest
 git diff --check
 ```
 
-The release gate passes only when package/server/tool-schema/lock versions agree at 0.7.1, the executable registry remains exactly 61/40/21, documentation matches that registry, the final schema/protocol regressions pass, and the full repository gate passes on the same exact SHA.
+The released 0.7.1 gate passes only when package/server/tool-schema/lock versions agree at 0.7.1, the executable registry remains exactly 61/40/21, documentation matches that released registry, the final schema/protocol regressions pass, and the full repository gate passes on the same exact SHA. During the unreleased 0.8.x child-issue transition, failure of the immutable inventory assertions is expected until #61 establishes the new versioned authority; it must not be converted into a passing result by rewriting historical counts.
