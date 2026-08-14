@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,496 +9,285 @@ import pytest
 
 from mcp_gh_server.server import (
     AppContext,
+    gh_create_release,
     gh_create_repo,
     gh_run_workflow,
     gh_run_workflow_exact,
+    mcp,
 )
 from mcp_gh_server.settings import Settings
 from mcp_gh_server.tooling import (
     _configured_repository_targets,
     _configured_workflow_targets,
-    _normalize_workflow_selector,
+    require_write_enabled,
 )
+from mcp_gh_server.workflow_selector import WORKFLOW_PATH_RE, resolve_workflow_id
+from mcp_gh_server.write_contracts import WritePreconditionMismatch
+from test_write_wrappers import FakeGhClient
+
+WORKFLOW_PATH = ".github/workflows/Release.yml"
+OTHER_WORKFLOW_PATH = ".github/workflows/Other.yml"
 
 
-@dataclass
-class RaiseOnCallClient:
-    """Fake client that records nothing and raises on any unexpected call."""
-
-    calls: list[tuple[tuple[str, ...], dict[str, Any]]] = field(default_factory=list)
-    results: list[Any] = field(default_factory=list)
-
-    async def run(self, *args: str, **kwargs: Any) -> Any:
-        self.calls.append((args, kwargs))
-        if not self.results:
-            raise RuntimeError("unexpected GitHub call — authorization should have blocked")
-        result = self.results.pop(0)
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    def clamp_max_results(self, requested: int | None) -> int:
-        return requested if requested is not None else 30
-
-
-def _make_context(
-    *,
-    allow_write_commands: bool = False,
-    allow_repo_creation: bool = False,
-    allow_release_creation: bool = False,
-    allow_workflow_dispatch: bool = False,
-    allow_content_commits: bool = False,
-    allow_pr_merge: bool = False,
-    allowed_repositories: str = "",
-    allowed_owners: str = "",
-    allowed_repo_creation_targets: str = "",
-    allowed_workflow_dispatch_targets: str = "",
-) -> Any:
-    settings = Settings(
-        allow_write_commands=allow_write_commands,
-        allow_repo_creation=allow_repo_creation,
-        allow_release_creation=allow_release_creation,
-        allow_workflow_dispatch=allow_workflow_dispatch,
-        allow_content_commits=allow_content_commits,
-        allow_pr_merge=allow_pr_merge,
-        allowed_repositories=allowed_repositories,
-        allowed_owners=allowed_owners,
-        allowed_repo_creation_targets=allowed_repo_creation_targets,
-        allowed_workflow_dispatch_targets=allowed_workflow_dispatch_targets,
-    )
-    client = RaiseOnCallClient()
+def _context(client: FakeGhClient, **overrides: Any) -> Any:
+    settings = Settings(**overrides)
     app = AppContext(client=client, settings=settings)  # type: ignore[arg-type]
-    return SimpleNamespace(
-        request_context=SimpleNamespace(lifespan_context=app),
-    ), client
+    return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=app))
 
 
-# ---------------------------------------------------------------------------
-# Defaults
-# ---------------------------------------------------------------------------
+def _ref(sha: str) -> dict[str, Any]:
+    return {
+        "ref": "refs/heads/main",
+        "object": {
+            "type": "commit",
+            "sha": sha,
+            "url": f"https://api.github.com/repos/octo/repo/git/commits/{sha}",
+        },
+    }
 
 
-@pytest.mark.asyncio
-async def test_defaults_fail_closed_for_new_fine_gates() -> None:
-    ctx, client = _make_context()
-    assert ctx.request_context.lifespan_context.settings.allow_repo_creation is False
-    assert ctx.request_context.lifespan_context.settings.allow_release_creation is False
-    assert ctx.request_context.lifespan_context.settings.allow_workflow_dispatch is False
-    assert ctx.request_context.lifespan_context.settings.allowed_repo_creation_targets == ""
-    assert ctx.request_context.lifespan_context.settings.allowed_workflow_dispatch_targets == ""
+async def test_defaults_fail_closed_for_high_risk_gates_and_target_lists() -> None:
+    settings = Settings()
+    assert settings.allow_repo_creation is False
+    assert settings.allow_release_creation is False
+    assert settings.allow_workflow_dispatch is False
+    assert settings.allowed_repo_creation_targets == ""
+    assert settings.allowed_workflow_dispatch_targets == ""
 
+    client = FakeGhClient([])
+    ctx = _context(client)
     with pytest.raises(RuntimeError, match="writes are disabled"):
-        await gh_create_repo("octo/repo", ctx=ctx)
-    assert client.calls == []
-
+        await gh_create_repo("octo/new-repo", ctx=ctx)
     with pytest.raises(RuntimeError, match="writes are disabled"):
-        await gh_run_workflow("octo", "repo", 1, ctx=ctx)
+        await gh_run_workflow("octo", "repo", 17, ctx=ctx)
     assert client.calls == []
 
 
-# ---------------------------------------------------------------------------
-# Repository creation target policy
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_repo_creation_requires_master_gate_first() -> None:
-    ctx, client = _make_context(allow_repo_creation=True)
-    with pytest.raises(RuntimeError, match="writes are disabled"):
-        await gh_create_repo("octo/repo", ctx=ctx)
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_repo_creation_requires_target_allowlist() -> None:
-    ctx, client = _make_context(
-        allow_write_commands=True,
-        allow_repo_creation=True,
-    )
-    with pytest.raises(RuntimeError, match="ALLOWED_REPO_CREATION_TARGETS"):
-        await gh_create_repo("octo/repo", ctx=ctx)
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_repo_creation_accepts_exact_prospective_target() -> None:
-    ctx, client = _make_context(
-        allow_write_commands=True,
-        allow_repo_creation=True,
-        allowed_repo_creation_targets="octo/new-repo",
-        allowed_repositories="octo/new-repo",
-    )
+async def test_repo_creation_exact_prospective_target_does_not_require_owner_allowlist() -> None:
     url = "https://github.com/octo/new-repo"
-    ctx.request_context.lifespan_context.client.results = [
-        {"nameWithOwner": "octo/new-repo", "url": url},
-    ]
-    result = await gh_create_repo("octo/new-repo", ctx=ctx)
-    assert result.name == "octo/new-repo"
-    assert len(client.calls) > 0
-
-
-@pytest.mark.asyncio
-async def test_repo_creation_mismatch_before_any_client_call() -> None:
-    ctx, client = _make_context(
+    client = FakeGhClient(
+        [
+            {"stdout": f"{url}\n"},
+            {"nameWithOwner": "octo/new-repo", "url": url},
+        ]
+    )
+    ctx = _context(
+        client,
         allow_write_commands=True,
         allow_repo_creation=True,
+        allowed_repositories="octo/existing,octo/new-repo",
+        allowed_repo_creation_targets="octo/new-repo",
+    )
+
+    result = await gh_create_repo("octo/new-repo", ctx=ctx)
+
+    assert result.name == "octo/new-repo"
+    assert result.url == url
+    assert len(client.calls) == 2
+    assert "octo" not in ctx.request_context.lifespan_context.settings.allowed_owners
+
+
+async def test_repo_creation_target_mismatch_fails_before_any_github_call() -> None:
+    client = FakeGhClient([])
+    ctx = _context(
+        client,
+        allow_write_commands=True,
+        allow_repo_creation=True,
+        allowed_repositories="octo/wrong-name",
         allowed_repo_creation_targets="octo/exact-repo",
     )
+
     with pytest.raises(RuntimeError, match="ALLOWED_REPO_CREATION_TARGETS"):
         await gh_create_repo("octo/wrong-name", ctx=ctx)
     assert client.calls == []
 
 
-@pytest.mark.asyncio
-async def test_repo_creation_case_folded_target_match() -> None:
-    ctx, _client = _make_context(
-        allow_write_commands=True,
-        allow_repo_creation=True,
-        allowed_repo_creation_targets="octo/new-repo",
-    )
-    url = "https://github.com/octo/new-repo"
-    ctx.request_context.lifespan_context.client.results = [
-        {"nameWithOwner": "octo/new-repo", "url": url},
-    ]
-    result = await gh_create_repo("octo/new-repo", ctx=ctx)
-    assert result.name == "octo/new-repo"
-
-
-# ---------------------------------------------------------------------------
-# Empty repository-creation target allowlist
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_empty_repo_creation_targets_fails_closed() -> None:
-    ctx, client = _make_context(
-        allow_write_commands=True,
-        allow_repo_creation=True,
-        allowed_repo_creation_targets="",
-    )
-    with pytest.raises(RuntimeError, match="ALLOWED_REPO_CREATION_TARGETS"):
-        await gh_create_repo("octo/repo", ctx=ctx)
-    assert client.calls == []
-
-
-# ---------------------------------------------------------------------------
-# Workflow dispatch target policy
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_workflow_dispatch_legacy_requires_master_gate() -> None:
-    ctx, client = _make_context(allow_workflow_dispatch=True)
-    with pytest.raises(RuntimeError, match="writes are disabled"):
-        await gh_run_workflow("octo", "repo", 1, ctx=ctx)
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_workflow_dispatch_legacy_requires_target_allowlist() -> None:
-    ctx, client = _make_context(
+async def test_workflow_dispatch_numeric_target_mismatch_fails_before_any_github_call() -> None:
+    client = FakeGhClient([])
+    ctx = _context(
+        client,
         allow_write_commands=True,
         allow_workflow_dispatch=True,
-    )
-    with pytest.raises(RuntimeError, match="ALLOWED_WORKFLOW_DISPATCH_TARGETS"):
-        await gh_run_workflow("octo", "repo", 1, ctx=ctx)
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_workflow_dispatch_exact_requires_master_gate() -> None:
-    ctx, client = _make_context(allow_workflow_dispatch=True)
-    with pytest.raises(RuntimeError, match="writes are disabled"):
-        await gh_run_workflow_exact("octo", "repo", 1, "heads/main", "a" * 40, ctx=ctx)
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_workflow_dispatch_exact_requires_target_allowlist() -> None:
-    ctx, client = _make_context(
-        allow_write_commands=True,
-        allow_workflow_dispatch=True,
-    )
-    with pytest.raises(RuntimeError, match="ALLOWED_WORKFLOW_DISPATCH_TARGETS"):
-        await gh_run_workflow_exact("octo", "repo", 1, "heads/main", "a" * 40, ctx=ctx)
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_workflow_dispatch_legacy_target_mismatch_before_call() -> None:
-    ctx, client = _make_context(
-        allow_write_commands=True,
-        allow_workflow_dispatch=True,
+        allowed_repositories="octo/repo",
         allowed_workflow_dispatch_targets="octo/repo@99",
     )
+
     with pytest.raises(RuntimeError, match="ALLOWED_WORKFLOW_DISPATCH_TARGETS"):
-        await gh_run_workflow("octo", "repo", 7, ctx=ctx)
+        await gh_run_workflow("octo", "repo", 17, ctx=ctx)
     assert client.calls == []
 
 
-@pytest.mark.asyncio
-async def test_workflow_dispatch_exact_target_mismatch_before_call() -> None:
-    ctx, client = _make_context(
+async def test_workflow_dispatch_path_target_mismatch_fails_before_resolution() -> None:
+    client = FakeGhClient([])
+    ctx = _context(
+        client,
         allow_write_commands=True,
         allow_workflow_dispatch=True,
-        allowed_workflow_dispatch_targets="octo/repo@99",
+        allowed_repositories="octo/repo",
+        allowed_workflow_dispatch_targets=f"octo/repo@{OTHER_WORKFLOW_PATH}",
     )
+
     with pytest.raises(RuntimeError, match="ALLOWED_WORKFLOW_DISPATCH_TARGETS"):
-        await gh_run_workflow_exact("octo", "repo", 7, "heads/main", "a" * 40, ctx=ctx)
+        await gh_run_workflow("octo", "repo", WORKFLOW_PATH, ctx=ctx)
     assert client.calls == []
 
 
-# ---------------------------------------------------------------------------
-# Empty workflow-dispatch target allowlist
-# ---------------------------------------------------------------------------
+async def test_workflow_path_resolves_by_file_and_preserves_exact_case() -> None:
+    client = FakeGhClient([{"id": 17, "path": WORKFLOW_PATH}])
+    ctx = _context(client)
+    app = ctx.request_context.lifespan_context
 
+    workflow_id = await resolve_workflow_id(app, "octo", "repo", WORKFLOW_PATH)
 
-@pytest.mark.asyncio
-async def test_empty_workflow_dispatch_targets_fails_closed_legacy() -> None:
-    ctx, client = _make_context(
-        allow_write_commands=True,
-        allow_workflow_dispatch=True,
-        allowed_workflow_dispatch_targets="",
-    )
-    with pytest.raises(RuntimeError, match="ALLOWED_WORKFLOW_DISPATCH_TARGETS"):
-        await gh_run_workflow("octo", "repo", 1, ctx=ctx)
-    assert client.calls == []
-
-
-@pytest.mark.asyncio
-async def test_empty_workflow_dispatch_targets_fails_closed_exact() -> None:
-    ctx, client = _make_context(
-        allow_write_commands=True,
-        allow_workflow_dispatch=True,
-        allowed_workflow_dispatch_targets="",
-    )
-    with pytest.raises(RuntimeError, match="ALLOWED_WORKFLOW_DISPATCH_TARGETS"):
-        await gh_run_workflow_exact("octo", "repo", 1, "heads/main", "a" * 40, ctx=ctx)
-    assert client.calls == []
-
-
-# ---------------------------------------------------------------------------
-# Positive exact-target cases
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_positive_exact_repo_creation_accepted() -> None:
-    url = "https://github.com/octo/new-repo"
-    ctx, client = _make_context(
-        allow_write_commands=True,
-        allow_repo_creation=True,
-        allowed_repo_creation_targets="octo/new-repo",
-        allowed_repositories="octo/new-repo",
-    )
-    # Provide the responses the tool needs after authorization passes:
-    #   1. api user lookup
-    #   2. repo create stdout
-    #   3. repo view readback
-    ctx.request_context.lifespan_context.client.results = [
-        {"login": "octo"},
-        {"stdout": ""},
-        {"nameWithOwner": "octo/new-repo", "url": url},
+    assert workflow_id == 17
+    assert client.calls == [
+        (
+            (
+                "api",
+                "repos/octo/repo/actions/workflows/Release.yml",
+                "-X",
+                "GET",
+            ),
+            {},
+        )
     ]
-    result = await gh_create_repo("new-repo", ctx=ctx)
-    assert result.name == "octo/new-repo"
-    assert result.url == url
-    assert len(client.calls) > 0  # authorization passed and called GitHub
 
 
-@pytest.mark.asyncio
-async def test_positive_exact_workflow_dispatch_id_accepted() -> None:
+async def test_workflow_path_resolution_rejects_case_mismatch() -> None:
+    client = FakeGhClient([{"id": 17, "path": WORKFLOW_PATH.lower()}])
+    ctx = _context(client)
+    app = ctx.request_context.lifespan_context
+
+    with pytest.raises(RuntimeError, match="expected exact path"):
+        await resolve_workflow_id(app, "octo", "repo", WORKFLOW_PATH)
+    assert len(client.calls) == 1
+
+
+async def test_legacy_workflow_dispatch_accepts_exact_authorized_path() -> None:
     url = "https://github.com/octo/repo/actions/runs/123"
-    ctx, client = _make_context(
+    client = FakeGhClient(
+        [
+            {"id": 17, "path": WORKFLOW_PATH},
+            {"stdout": f"Workflow dispatched: {url}\n"},
+            {"databaseId": 123, "url": url},
+        ]
+    )
+    ctx = _context(
+        client,
         allow_write_commands=True,
         allow_workflow_dispatch=True,
-        allowed_workflow_dispatch_targets="octo/repo@99",
         allowed_repositories="octo/repo",
+        allowed_workflow_dispatch_targets=f"octo/repo@{WORKFLOW_PATH}",
     )
-    ctx.request_context.lifespan_context.client.results = [
-        {"stdout": f"Workflow dispatched: {url}\n"},
-        {"databaseId": 123, "url": url},
-    ]
-    result = await gh_run_workflow("octo", "repo", 99, ctx=ctx)
+
+    result = await gh_run_workflow("octo", "repo", WORKFLOW_PATH, ctx=ctx)
+
     assert result.run_id == 123
-    assert len(client.calls) > 0
+    assert client.calls[0][0][1] == "repos/octo/repo/actions/workflows/Release.yml"
+    assert client.calls[1][0][:3] == ("workflow", "run", "17")
 
 
-@pytest.mark.asyncio
-async def test_numeric_workflow_id_normalizes_canonically() -> None:
-    url = "https://github.com/octo/repo/actions/runs/42"
-    ctx, _client = _make_context(
+async def test_exact_workflow_path_resolves_before_exact_ref_precondition() -> None:
+    expected = "1" * 40
+    current = "2" * 40
+    client = FakeGhClient(
+        [
+            {"id": 17, "path": WORKFLOW_PATH},
+            _ref(current),
+        ]
+    )
+    ctx = _context(
+        client,
         allow_write_commands=True,
         allow_workflow_dispatch=True,
-        allowed_workflow_dispatch_targets="octo/repo@42",
         allowed_repositories="octo/repo",
+        allowed_workflow_dispatch_targets=f"octo/repo@{WORKFLOW_PATH}",
     )
-    ctx.request_context.lifespan_context.client.results = [
-        {"stdout": f"Workflow dispatched: {url}\n"},
-        {"databaseId": 42, "url": url},
-    ]
-    result = await gh_run_workflow("octo", "repo", 42, ctx=ctx)
-    assert result.run_id == 42
+
+    with pytest.raises(WritePreconditionMismatch, match="no write was attempted"):
+        await gh_run_workflow_exact(
+            "octo",
+            "repo",
+            WORKFLOW_PATH,
+            "heads/main",
+            expected,
+            ctx=ctx,
+        )
+
+    assert len(client.calls) == 2
+    assert client.calls[0][0][1] == "repos/octo/repo/actions/workflows/Release.yml"
+    assert not any("dispatches" in argument for args, _ in client.calls for argument in args)
 
 
-@pytest.mark.asyncio
-async def test_workflow_path_preserves_case() -> None:
-    url = "https://github.com/octo/repo/actions/runs/1"
-    ctx, _client = _make_context(
-        allow_write_commands=True,
-        allow_workflow_dispatch=True,
-        allowed_workflow_dispatch_targets="octo/repo@ci/pipeline.yml",
-        allowed_repositories="octo/repo",
+async def test_release_preserves_master_fine_gate_and_repository_policy() -> None:
+    url = "https://github.com/octo/repo/releases/tag/v1"
+    client = FakeGhClient(
+        [
+            {"stdout": f"{url}\n"},
+            {"tagName": "v1", "url": url, "isDraft": False, "isPrerelease": False},
+        ]
     )
-    ctx.request_context.lifespan_context.client.results = [
-        {"stdout": f"Workflow dispatched: {url}\n"},
-        {"databaseId": 1, "url": url},
-    ]
-    result = await gh_run_workflow("octo", "repo", "ci/pipeline.yml", ctx=ctx)
-    assert result.run_id == 1
-
-
-def test_helper_normalize_workflow_selector() -> None:
-    assert _normalize_workflow_selector(1) == "1"
-    assert _normalize_workflow_selector(99) == "99"
-    assert _normalize_workflow_selector("ci/build.yml") == "ci/build.yml"
-    with pytest.raises(ValueError, match="exact workflow path"):
-        _normalize_workflow_selector("  ci/build.yml  ")
-    with pytest.raises(ValueError, match="positive ID"):
-        _normalize_workflow_selector(0)
-    with pytest.raises(ValueError, match="positive ID"):
-        _normalize_workflow_selector(-1)
-    with pytest.raises(ValueError, match="workflow selector"):
-        _normalize_workflow_selector(True)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="exact workflow path"):
-        _normalize_workflow_selector("")
-    with pytest.raises(ValueError, match="exact workflow path"):
-        _normalize_workflow_selector("  ")
-
-
-# ---------------------------------------------------------------------------
-# Release regression
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_release_uses_master_and_release_gate_not_target_policy() -> None:
-    ctx, client = _make_context(
+    ctx = _context(
+        client,
         allow_write_commands=True,
         allow_release_creation=True,
         allowed_repositories="octo/repo",
     )
-    # Release does NOT require allowed_release_creation_targets because that
-    # setting does not exist; it only checks master + release gate + repo list.
-    url = "https://github.com/octo/repo/releases/tag/v1"
-    client.results = [
-        {"stdout": url},
-        {"tagName": "v1", "url": url, "isDraft": False, "isPrerelease": False},
-    ]
-    from mcp_gh_server.server import gh_create_release
 
-    result = await gh_create_release(
-        "octo",
-        "repo",
-        tag_name="v1",
-        ctx=ctx,
-    )
+    result = await gh_create_release("octo", "repo", tag_name="v1", ctx=ctx)
     assert result.tag_name == "v1"
-    assert len(client.calls) > 0
+    assert len(client.calls) == 2
 
-
-@pytest.mark.asyncio
-async def test_release_still_requires_master_gate() -> None:
-    ctx, client = _make_context(allow_release_creation=True)
-    with pytest.raises(RuntimeError, match="writes are disabled"):
-        from mcp_gh_server.server import gh_create_release
-
-        await gh_create_release("octo", "repo", tag_name="v1", ctx=ctx)
-    assert client.calls == []
-
-
-# ---------------------------------------------------------------------------
-# Ordinary write regression
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_ordinary_write_ignores_high_risk_target_policy() -> None:
-    ctx, client = _make_context(
+    blocked_client = FakeGhClient([])
+    blocked_ctx = _context(
+        blocked_client,
         allow_write_commands=True,
-        allow_content_commits=True,
+        allow_release_creation=False,
+        allowed_repositories="octo/repo",
+    )
+    with pytest.raises(RuntimeError, match="ALLOW_RELEASE_CREATION"):
+        await gh_create_release("octo", "repo", tag_name="v1", ctx=blocked_ctx)
+    assert blocked_client.calls == []
+
+
+async def test_ordinary_repository_policy_ignores_new_target_lists() -> None:
+    client = FakeGhClient([])
+    ctx = _context(
+        client,
+        allow_write_commands=True,
         allowed_repositories="octo/repo",
         allowed_repo_creation_targets="",
         allowed_workflow_dispatch_targets="",
     )
-    head = "a" * 40
-    client.results = [
-        {"object": {"sha": head}},
-        {"node_id": "R_repo"},
-        {"tree": {"sha": head}},
-        {"sha": "b" * 40},
-        {"sha": "c" * 40},
-        {"sha": "d" * 40},
-        {"sha": "e" * 40, "html_url": f"https://github.com/octo/repo/commit/{'e' * 40}"},
-        {"data": {"updateRefs": {"clientMutationId": None}}},
-        {"object": {"sha": "e" * 40}},
-    ]
-    from mcp_gh_server.models import CommitFile
-    from mcp_gh_server.server import gh_commit_files
+    app = ctx.request_context.lifespan_context
 
-    result = await gh_commit_files(
-        "octo",
-        "repo",
-        branch="main",
-        expected_head_sha=head,
-        files=[CommitFile(path="f.txt", content="x")],
-        commit_message="m",
-        ctx=ctx,
+    require_write_enabled(app, "octo", "repo", action="issue_edit")
+    with pytest.raises(RuntimeError, match="not allowed for repository"):
+        require_write_enabled(app, "octo", "other", action="issue_edit")
+    assert client.calls == []
+
+
+async def test_public_workflow_schema_advertises_bounded_id_or_canonical_path() -> None:
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+
+    for tool_name in ("gh_run_workflow", "gh_run_workflow_exact"):
+        workflow = tools[tool_name].input_schema["properties"]["workflow_id"]
+        branches = workflow["anyOf"]
+        integer = next(branch for branch in branches if branch.get("type") == "integer")
+        path = next(branch for branch in branches if branch.get("type") == "string")
+        assert integer["minimum"] == 1
+        assert path["pattern"] == WORKFLOW_PATH_RE.pattern
+        assert path["maxLength"] == 1024
+        assert "canonical" in workflow["description"]
+
+
+def test_target_parsers_preserve_exact_path_case_and_casefold_repository_identity() -> None:
+    assert _configured_repository_targets("Octo/New-Repo", env_name="TEST") == {
+        "octo/new-repo"
+    }
+    targets = _configured_workflow_targets(
+        f"Octo/Repo@{WORKFLOW_PATH}",
+        env_name="TEST",
     )
-    assert result.write_completed is True
-    assert len(client.calls) > 0
-
-
-# ---------------------------------------------------------------------------
-# Target-list helpers
-# ---------------------------------------------------------------------------
-
-
-def test_configured_repository_targets_parses_comma_separated() -> None:
-    targets = _configured_repository_targets("octo/a, other/b", env_name="TEST")
-    assert targets == {"octo/a", "other/b"}
-
-
-def test_configured_repository_targets_handles_whitespace() -> None:
-    targets = _configured_repository_targets("  octo/a  ,  other/b  ", env_name="TEST")
-    assert targets == {"octo/a", "other/b"}
-
-
-def test_configured_repository_targets_ignores_empty_entries() -> None:
-    targets = _configured_repository_targets("octo/a,,  ,other/b", env_name="TEST")
-    assert targets == {"octo/a", "other/b"}
-
-
-def test_configured_repository_targets_rejects_missing_slash() -> None:
-    with pytest.raises(RuntimeError, match="invalid repository target"):
-        _configured_repository_targets("octo", env_name="TEST")
-
-
-def test_configured_repository_targets_rejects_bad_name() -> None:
-    with pytest.raises(RuntimeError, match="invalid repository target"):
-        _configured_repository_targets("octo/x/y", env_name="TEST")
-
-
-def test_configured_workflow_targets_parses_comma_separated() -> None:
-    targets = _configured_workflow_targets("octo/a@1, other/b@ci.yml", env_name="TEST")
-    assert targets == {("octo/a", "1"), ("other/b", "ci.yml")}
-
-
-def test_configured_workflow_targets_rejects_missing_at() -> None:
-    with pytest.raises(RuntimeError, match="invalid workflow target"):
-        _configured_workflow_targets("octo/a1", env_name="TEST")
-
-
-def test_configured_workflow_targets_rejects_bad_repo() -> None:
-    with pytest.raises(RuntimeError, match="invalid workflow target"):
-        _configured_workflow_targets("octo x@1", env_name="TEST")
+    assert targets == {("octo/repo", WORKFLOW_PATH)}
+    assert ("octo/repo", WORKFLOW_PATH.lower()) not in targets
