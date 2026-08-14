@@ -918,7 +918,7 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
             "Destructive write: merge exactly one pull request using the explicit merge "
             "strategy only while its head matches expected_head_sha. Ordinary write "
             "authorization and the separate PR-merge fine gate are required. The tool "
-            "cannot perform a privileged head rewrite, delete the branch, force a changed "
+            "cannot use administrator bypass, delete the branch, force a changed "
             "revision, or blindly retry an ambiguous merge."
         ),
         MUTATE_EXTERNAL,
