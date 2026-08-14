@@ -15,28 +15,19 @@ from mcp_types import ToolAnnotations
 from pydantic import Field
 
 from .issue_state_models import IssueState, IssueStateReason, IssueStateTransitionResult
+from .issue_write_models import (
+    IssueCreateResult,
+    IssueEditResult,
+    LabelCreateResult,
+    LabelEditResult,
+    MilestoneCreateResult,
+)
 from .legacy_git_write_adapter import (
     gh_create_branch as _gh_create_branch,
 )
 from .legacy_git_write_adapter import (
     gh_create_branch_from_sha as _gh_create_branch_from_sha,
 )
-from .legacy_issue_core_write_adapter import (
-    gh_create_issue as _gh_create_issue,
-)
-from .legacy_issue_core_write_adapter import (
-    gh_edit_issue as _gh_edit_issue,
-)
-from .legacy_label_write_adapter import (
-    gh_create_label as _gh_create_label,
-)
-from .legacy_label_write_adapter import (
-    gh_edit_label as _gh_edit_label,
-)
-from .legacy_label_write_adapter import (
-    gh_upsert_label as _gh_upsert_label,
-)
-from .legacy_milestone_write_adapter import gh_create_milestone as _gh_create_milestone
 from .legacy_pr_merge_write_adapter import gh_merge_pr as _gh_merge_pr
 from .legacy_pr_metadata_write_adapter import (
     gh_create_pr as _gh_create_pr,
@@ -54,11 +45,6 @@ from .models import (
     CommentCreate,
     CommitFile,
     CommitFilesResult,
-    IssueCreate,
-    IssueEdit,
-    LabelCreate,
-    LabelEdit,
-    MilestoneCreate,
     PullRequestCreate,
     PullRequestEdit,
     PullRequestMerge,
@@ -76,6 +62,13 @@ from .tooling import (
     AppContext,
 )
 from .tools.issue_state import gh_set_issue_state as _gh_set_issue_state
+from .tools.issue_writes import (
+    gh_create_issue as _gh_create_issue,
+    gh_create_label as _gh_create_label,
+    gh_create_milestone as _gh_create_milestone,
+    gh_edit_issue as _gh_edit_issue,
+    gh_edit_label as _gh_edit_label,
+)
 from .tools.issues import gh_create_comment as _gh_create_comment
 from .tools.pr_draft_state import gh_set_pr_draft_state as _gh_set_pr_draft_state
 from .tools.release_exact import gh_create_release_exact as _gh_create_release_exact
@@ -195,7 +188,7 @@ async def gh_create_issue(
     ] = None,
     *,
     ctx: Context[AppContext],
-) -> IssueCreate:
+) -> IssueCreateResult:
     return await _gh_create_issue(
         owner,
         repo,
@@ -242,7 +235,7 @@ async def gh_edit_issue(
         Field(description="Milestone number to set."),
     ] = None,
     remove_milestone: bool = False,
-) -> IssueEdit:
+) -> IssueEditResult:
     return await _gh_edit_issue(
         owner,
         repo,
@@ -303,33 +296,8 @@ async def gh_create_label(
         Description | None,
         Field(description="Optional label description."),
     ] = None,
-) -> LabelCreate:
+) -> LabelCreateResult:
     return await _gh_create_label(
-        owner,
-        repo,
-        name,
-        color,
-        ctx=ctx,
-        description=description,
-    )
-
-
-async def gh_upsert_label(
-    owner: Owner,
-    repo: Repository,
-    name: Annotated[LabelName, Field(description="Label name to create or overwrite.")],
-    color: Annotated[
-        LabelColor,
-        Field(description="Six-character hexadecimal label color."),
-    ],
-    *,
-    ctx: Context[AppContext],
-    description: Annotated[
-        Description | None,
-        Field(description="Optional label description."),
-    ] = None,
-) -> LabelCreate:
-    return await _gh_upsert_label(
         owner,
         repo,
         name,
@@ -357,7 +325,7 @@ async def gh_edit_label(
         Description | None,
         Field(description="Replacement label description."),
     ] = None,
-) -> LabelEdit:
+) -> LabelEditResult:
     return await _gh_edit_label(
         owner,
         repo,
@@ -387,7 +355,7 @@ async def gh_create_milestone(
         Literal["open", "closed"],
         Field(description="Initial milestone state."),
     ] = "open",
-) -> MilestoneCreate:
+) -> MilestoneCreateResult:
     return await _gh_create_milestone(
         owner,
         repo,
@@ -821,9 +789,10 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         (
             "Additive write: create exactly one issue in the target repository. "
             "The ordinary write gate and repository policy must allow the target. "
-            "Optional labels and assignees are bounded; authoritative readback verifies "
-            "the created issue when a stable identity is returned. This tool does not "
-            "edit, close, comment on, or delete an existing issue."
+            "Optional labels and assignees are bounded; one mutation attempt is followed "
+            "by authoritative semantic readback when stable identity is available. The "
+            "tool never retries an ambiguous mutation automatically and does not edit, "
+            "close, comment on, or delete an existing issue."
         ),
         ADD_EXTERNAL,
     ),
@@ -832,9 +801,10 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         (
             "Destructive write: edit metadata on exactly one existing issue after "
             "ordinary write authorization. The request may change title, body, labels, "
-            "assignees, or milestone; authoritative readback checks requested fields. "
-            "It does not close or reopen the issue, post comments, delete the issue, or "
-            "bypass repository policy."
+            "assignees, or milestone; one mutation attempt is followed by authoritative "
+            "semantic readback of the requested fields. Ambiguous mutations are never "
+            "retried automatically. It does not close or reopen the issue, post comments, "
+            "delete the issue, or bypass repository policy."
         ),
         MUTATE_EXTERNAL,
     ),
@@ -853,28 +823,21 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         "Create label",
         (
             "Additive write: create exactly one new repository label after ordinary "
-            "write authorization. Name, color, and description are explicitly bounded "
-            "and read back. The operation does not overwrite an existing label, edit "
-            "issues, or delete labels."
+            "write authorization. Name, color, and description are explicitly bounded; "
+            "one mutation attempt is followed by authoritative semantic readback. The "
+            "operation never overwrites an existing label or retries an ambiguous create "
+            "automatically, and it does not edit issues or delete labels."
         ),
         ADD_EXTERNAL,
-    ),
-    "gh_upsert_label": WriteToolMetadata(
-        "Upsert label",
-        (
-            "Destructive write: create one label or overwrite that label's color and "
-            "description after ordinary write authorization. Readback verifies the "
-            "requested label state. The operation does not delete labels or change "
-            "issue assignments."
-        ),
-        MUTATE_EXTERNAL,
     ),
     "gh_edit_label": WriteToolMetadata(
         "Edit label",
         (
             "Destructive write: edit exactly one existing label's name, color, or "
-            "description after ordinary write authorization, then verify the resulting "
-            "label. It does not delete labels or mutate issue content."
+            "description after ordinary write authorization. One mutation attempt is "
+            "followed by authoritative semantic readback of the resulting label; an "
+            "ambiguous edit is never retried automatically. It does not delete labels or "
+            "mutate issue content."
         ),
         MUTATE_EXTERNAL,
     ),
@@ -883,8 +846,10 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         (
             "Additive write: create exactly one repository milestone with bounded title, "
             "description, due date, and explicit open/closed state after ordinary write "
-            "authorization. Authoritative readback verifies the created milestone. It "
-            "does not assign issues to the milestone or edit existing milestones."
+            "authorization. One mutation attempt is followed by authoritative readback "
+            "of the stable milestone number and requested fields; ambiguous creation is "
+            "never retried automatically. It does not assign issues to the milestone or "
+            "edit existing milestones."
         ),
         ADD_EXTERNAL,
     ),
@@ -1034,7 +999,6 @@ PUBLIC_WRITE_TOOLS: tuple[PublicWriteTool, ...] = (
     gh_edit_issue,
     gh_set_issue_state,
     gh_create_label,
-    gh_upsert_label,
     gh_edit_label,
     gh_create_milestone,
     gh_create_comment,
