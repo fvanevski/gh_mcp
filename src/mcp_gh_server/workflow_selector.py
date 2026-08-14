@@ -19,7 +19,11 @@ def validate_workflow_selector(workflow: int | str) -> int | str:
         if workflow < 1:
             raise ValueError("workflow selector must be a positive ID or canonical workflow path")
         return workflow
-    if not isinstance(workflow, str) or not WORKFLOW_PATH_RE.fullmatch(workflow):
+    if (
+        not isinstance(workflow, str)
+        or len(workflow.encode()) > 1024
+        or not WORKFLOW_PATH_RE.fullmatch(workflow)
+    ):
         raise ValueError(
             "workflow selector must be a positive ID or canonical .github/workflows/*.yml path"
         )
@@ -51,7 +55,9 @@ async def resolve_workflow_id(
         "GET",
     )
     if not isinstance(raw, dict):
-        raise RuntimeError("GitHub returned non-object workflow metadata during selector resolution")
+        raise RuntimeError(
+            "GitHub returned non-object workflow metadata during selector resolution"
+        )
     workflow_id = raw.get("id")
     path = raw.get("path")
     if not isinstance(workflow_id, int) or workflow_id < 1:
