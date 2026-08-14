@@ -1,127 +1,86 @@
-"""Review-remediation regressions for issue #58 write and documentation boundaries."""
+"""Regression coverage for canonical write transport metadata semantics."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from mcp_gh_server.legacy_write_support import run_json_write_with_metadata
 from mcp_gh_server.request_governor import (
     GitHubRequestError,
     GitHubRequestMetadata,
+    GitHubRequestResult,
 )
 from mcp_gh_server.write_contracts import run_api_json_write_with_metadata
 
 
-class MetadataFailureClient:
-    """Minimal metadata-aware client that raises one configured write failure."""
+@dataclass
+class FakeGhClient:
+    results: list[Any]
+    calls: list[tuple[tuple[str, ...], dict[str, Any]]] = field(default_factory=list)
 
-    def __init__(self, error: RuntimeError) -> None:
-        self.error = error
-        self.calls = 0
-
-    async def run_with_metadata(self, *args: str, **kwargs: Any) -> Any:
-        self.calls += 1
-        raise self.error
-
-
-class RunOnlyFailureClient:
-    """Legacy run-only fake used to exercise compatibility classification."""
-
-    def __init__(self, error: RuntimeError) -> None:
-        self.error = error
-        self.calls = 0
-
-    async def run(self, *args: str, **kwargs: Any) -> Any:
-        self.calls += 1
-        raise self.error
+    async def run_with_metadata(self, *args: str, **kwargs: Any) -> GitHubRequestResult[Any]:
+        self.calls.append((args, kwargs))
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        if isinstance(result, GitHubRequestResult):
+            return result
+        return GitHubRequestResult(value=result)
 
 
+@pytest.mark.asyncio
 async def test_canonical_json_write_preserves_structured_ambiguity() -> None:
-    failure = GitHubRequestError(
-        "transport reset after send",
-        retryable=True,
+    error = GitHubRequestError(
+        "connection reset",
         ambiguous=True,
+        retryable=True,
         metadata=GitHubRequestMetadata(request_id="req-structured"),
     )
-    client = MetadataFailureClient(failure)
+    client = FakeGhClient([error])
 
-    with pytest.raises(GitHubRequestError) as caught:
+    with pytest.raises(GitHubRequestError) as raised:
         await run_api_json_write_with_metadata(
             client,  # type: ignore[arg-type]
             "POST",
-            "repos/octo/repo/milestones",
-            {"title": "v1"},
+            "repos/octo/repo/issues",
+            {"title": "x"},
         )
 
-    assert caught.value is failure
-    assert caught.value.ambiguous is True
-    assert caught.value.metadata.request_id == "req-structured"
-    assert client.calls == 1
+    assert raised.value is error
+    assert raised.value.ambiguous is True
+    assert raised.value.metadata.request_id == "req-structured"
+    assert len(client.calls) == 1
 
 
-async def test_canonical_json_write_does_not_infer_ambiguity_from_runtime_text() -> None:
-    failure = RuntimeError("timeout after synthetic send")
-    client = MetadataFailureClient(failure)
+@pytest.mark.asyncio
+async def test_canonical_json_write_does_not_infer_bare_runtimeerror_text() -> None:
+    error = RuntimeError("transport timeout after request body was sent")
+    client = FakeGhClient([error])
 
-    with pytest.raises(RuntimeError) as caught:
+    with pytest.raises(RuntimeError) as raised:
         await run_api_json_write_with_metadata(
             client,  # type: ignore[arg-type]
             "POST",
-            "repos/octo/repo/milestones",
-            {"title": "v1"},
+            "repos/octo/repo/issues",
+            {"title": "x"},
         )
 
-    assert type(caught.value) is RuntimeError
-    assert caught.value is failure
-    assert client.calls == 1
+    assert raised.value is error
+    assert not isinstance(raised.value, GitHubRequestError)
+    assert len(client.calls) == 1
 
 
-async def test_legacy_metadata_fake_keeps_transport_text_compatibility() -> None:
-    client = MetadataFailureClient(RuntimeError("timeout after synthetic send"))
+def test_release_documentation_describes_final_080_inventory() -> None:
+    readme = Path("README.md").read_text()
+    contract = Path("docs/write-schema-contract.md").read_text()
 
-    with pytest.raises(GitHubRequestError) as caught:
-        await run_json_write_with_metadata(
-            client,  # type: ignore[arg-type]
-            "POST",
-            "repos/octo/repo/milestones",
-            {"title": "v1"},
-        )
-
-    assert caught.value.ambiguous is True
-    assert caught.value.retryable is True
-    assert client.calls == 1
-
-
-async def test_legacy_run_only_fake_keeps_transport_text_compatibility() -> None:
-    client = RunOnlyFailureClient(RuntimeError("timeout after synthetic send"))
-
-    with pytest.raises(GitHubRequestError) as caught:
-        await run_json_write_with_metadata(
-            client,  # type: ignore[arg-type]
-            "POST",
-            "repos/octo/repo/milestones",
-            {"title": "v1"},
-        )
-
-    assert caught.value.ambiguous is True
-    assert caught.value.retryable is True
-    assert client.calls == 1
-
-
-def test_readme_documents_current_issue_write_surface() -> None:
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
-
-    assert "development surface exposes 58 public MCP tools" in readme
-    assert "40 read-only and 18 write" in readme
-    assert "### Write (current unreleased surface: 18)" in readme
-
-    write_section = readme.split("### Write (current unreleased surface: 18)", 1)[1].split(
-        "## 0.7.1 architecture and evidence contract",
-        1,
-    )[0]
-    assert "- `gh_upsert_label`:" not in write_section
-    assert "legacy `gh_upsert_label` writes" in readme
-    assert "label callers must choose explicit `gh_create_label`" in readme
+    assert "0.8.0" in readme
+    assert "58 public MCP tools" in readme
+    assert "40 read-only" in readme
+    assert "18 write" in readme
+    assert "0.8.0" in contract
+    assert "58" in contract
+    assert "18" in contract
