@@ -5,11 +5,12 @@ runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
 Released version 0.7.1 exposes 61 public MCP tools: 40 read-only and 21 write.
-The current unreleased 0.8.0 development surface exposes 59 public MCP tools:
-40 read-only and 19 write after retiring the generic workflow-dispatch and release-
-creation writes. Package/server/tool-schema versions remain 0.7.1 until issue #61
-integrates and versions the breaking surface; the historical 0.7.x release gates
-therefore remain intentionally stricter than the intermediate development registry.
+The current unreleased 0.8.0 development surface exposes 58 public MCP tools:
+40 read-only and 18 write after retiring the generic workflow-dispatch, release-
+creation, and legacy label-upsert writes. Package/server/tool-schema versions remain
+0.7.1 until issue #61 integrates and versions the breaking surface; the historical
+0.7.x release gates therefore remain intentionally stricter than the intermediate
+development registry.
 
 ## Tools
 
@@ -72,7 +73,7 @@ therefore remain intentionally stricter than the intermediate development regist
 - `gh_compare_commits`: compare two exact commit SHAs with explicit merge-base,
   ahead/behind status, independently bounded commit/file evidence, and digests.
 
-### Write (current unreleased surface: 19)
+### Write (current unreleased surface: 18)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
@@ -87,7 +88,6 @@ therefore remain intentionally stricter than the intermediate development regist
 - `gh_set_issue_state`: change issue state only from the caller-declared expected state
   and verify the resulting state by readback (write, disabled by default).
 - `gh_create_label`: create a new label (write, disabled by default).
-- `gh_upsert_label`: create or overwrite a label (destructive write, disabled by default).
 - `gh_edit_label`: edit an existing label (write, disabled by default).
 - `gh_create_milestone`: create a new milestone (write, disabled by default).
 - `gh_create_comment`: create a comment on an issue or PR (write, disabled by default).
@@ -105,13 +105,15 @@ therefore remain intentionally stricter than the intermediate development regist
 - `gh_commit_files`: atomically create or replace files in one branch commit
   (destructive write, separately disabled by default).
 
-Released 0.7.1 additionally exposed the weaker generic `gh_run_workflow` and
-`gh_create_release` writes. Issues #55 and #56 intentionally retire those names from
-the active development registry; `gh_run_workflow_exact` and `gh_create_release_exact`
-are now the sole public primitives for those mutation classes. Issue #61 owns physical
-compatibility cleanup, the 0.8.0 version bump, and final release-authority normalization.
-Do not restore the generic tools or lower historical 0.7.x release-gate counts merely
-to make an intermediate child-issue branch green.
+Released 0.7.1 additionally exposed the weaker generic `gh_run_workflow`,
+`gh_create_release`, and legacy `gh_upsert_label` writes. Issues #55, #56, and #58
+intentionally retire those names from the active development registry.
+`gh_run_workflow_exact` and `gh_create_release_exact` are now the sole public primitives
+for their mutation classes, while label callers must choose explicit `gh_create_label`
+or `gh_edit_label` semantics. Issue #61 owns physical compatibility cleanup, the 0.8.0
+version bump, and final release-authority normalization. Do not restore retired tools or
+lower historical 0.7.x release-gate counts merely to make an intermediate child-issue
+branch green.
 
 ## 0.7.1 architecture and evidence contract
 
@@ -122,7 +124,10 @@ tools.
 
 Writes remain default-off. Exact-state tools preserve expected state/SHA preconditions where
 applicable, perform one mutation attempt, and require authoritative readback before reporting
-verified success. Ambiguous or partial writes are not blindly retried.
+verified success. Ambiguous or partial writes are not blindly retried. Canonical metadata-
+aware write paths rely on structured `GitHubRequestError` ambiguity metadata produced by
+`GhClient`; text-based inference from bare `RuntimeError` messages is restricted to the
+frozen `legacy_write_support.py` run-only test-double compatibility fallback.
 
 Evidence reads remain explicitly bounded. Callers must preserve truncation/completeness
 metadata, byte counts, digests, and warnings rather than presenting partial artifact, log,
@@ -507,7 +512,6 @@ same path with exact case, and converts it to GitHub's positive numeric workflow
 Duplicate detection, exact-ref checks, dispatch, reservation state, and authoritative
 run readback continue to use that numeric identity. A path mismatch or resolution
 failure is fail-closed and never authorizes a different workflow.
-
 Repository creation, release creation, workflow dispatch, repository-content
 commits, and PR merging require separate opt-in because they can have broader effects:
 
@@ -599,11 +603,11 @@ uv run mypy
 uv run pytest
 ```
 
-For intermediate 0.8.x child issues such as #55 and #56, the focused invariant,
+For intermediate 0.8.x child issues such as #55, #56, and #58, the focused invariant,
 schema, Ruff, format, and type checks should pass. The full `uv run pytest` is still
 required evidence, but while package authority remains 0.7.1 it is expected to retain
 the immutable 0.7.0/0.7.1 release-inventory gate failures caused by the intentional
-59/19 development registry. Those failures belong to #61; do not hide them by lowering
+58/18 development registry. Those failures belong to #61; do not hide them by lowering
 released-version counts. Any other failing check remains a defect requiring diagnosis.
 
 The final 0.7.1 release mapping and immutable inventory authority are documented in
