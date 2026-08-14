@@ -45,7 +45,6 @@ from .legacy_pr_metadata_write_adapter import (
     gh_edit_pr as _gh_edit_pr,
 )
 from .legacy_pr_review_write_adapter import gh_submit_pr_review as _gh_submit_pr_review
-from .legacy_release_write_adapter import gh_create_release as _gh_create_release
 from .legacy_repository_write_adapters import (
     gh_commit_files as _gh_commit_files,
 )
@@ -67,7 +66,6 @@ from .models import (
     PullRequestEdit,
     PullRequestMerge,
     PullRequestReviewSubmission,
-    ReleaseCreate,
     RepoCreate,
 )
 from .pr_draft_state_models import PullRequestDraftStateTransitionResult
@@ -176,14 +174,6 @@ RepositoryCreateName = Annotated[
 ]
 CommitMessage = Annotated[str, Field(min_length=1, max_length=65_536)]
 ReleaseName = Annotated[str, Field(max_length=256)]
-MovingTarget = Annotated[
-    str,
-    Field(
-        min_length=1,
-        max_length=1024,
-        description="Branch, tag, or commit-ish target accepted by GitHub release creation.",
-    ),
-]
 
 
 class PublicCommitFile(CommitFile):
@@ -684,42 +674,6 @@ async def gh_commit_files(
         normalized_files,
         commit_message,
         ctx=ctx,
-    )
-
-
-async def gh_create_release(
-    owner: Owner,
-    repo: Repository,
-    tag_name: Annotated[TagName, Field(description="Git tag name for the release.")],
-    *,
-    ctx: Context[AppContext],
-    name: Annotated[
-        ReleaseName | None,
-        Field(description="Optional release display name."),
-    ] = None,
-    body: Annotated[
-        Body | None,
-        Field(description="Optional Markdown release notes."),
-    ] = None,
-    draft: bool = False,
-    prerelease: bool = False,
-    target: Annotated[
-        MovingTarget | None,
-        Field(description="Optional branch, tag, or commit-ish target."),
-    ] = None,
-) -> ReleaseCreate:
-    """Private 0.7.x compatibility callable; not registered as a public MCP tool."""
-
-    return await _gh_create_release(
-        owner,
-        repo,
-        tag_name,
-        ctx=ctx,
-        name=name,
-        body=body,
-        draft=draft,
-        prerelease=prerelease,
-        target=target,
     )
 
 
