@@ -27,13 +27,9 @@ from mcp_gh_server.models import (
     IssueInfo,
     PullRequestChecks,
     PullRequestCommitsPage,
-    PullRequestCreate,
     PullRequestDiff,
-    PullRequestEdit,
     PullRequestFilesPage,
     PullRequestInfo,
-    PullRequestMerge,
-    PullRequestReviewSubmission,
     ReleaseInfo,
     RepoInfo,
     RepositoryFile,
@@ -50,6 +46,12 @@ from mcp_gh_server.models import (
 )
 from mcp_gh_server.pr_draft_state_models import PullRequestDraftStateTransitionResult
 from mcp_gh_server.pr_review_models import PullRequestReviewsPage, PullRequestReviewState
+from mcp_gh_server.pr_write_models import (
+    PullRequestCreate,
+    PullRequestEdit,
+    PullRequestMerge,
+    PullRequestReviewSubmission,
+)
 from mcp_gh_server.rate_status_models import ApiRateStatus
 from mcp_gh_server.release_exact_models import ReleaseExactResult
 from mcp_gh_server.repository_create_models import RepositoryCreateResult
