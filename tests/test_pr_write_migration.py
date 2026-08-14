@@ -1,4 +1,4 @@
-"""Focused regressions for issue #59 canonical pull-request write migration."""
+"""Focused regressions for canonical pull-request write migration."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import mcp_gh_server.legacy_pr_write_adapters as legacy_pr_writes
 import mcp_gh_server.write_tool_schema as write_tool_schema
 from mcp_gh_server.pr_write_models import (
     PullRequestCreate,
@@ -346,9 +345,3 @@ def test_public_facade_delegates_migrated_pr_writes_to_canonical_module() -> Non
         write_tool_schema._gh_merge_pr,
     ):
         assert implementation.__module__ == "mcp_gh_server.tools.pr_writes"
-
-
-def test_legacy_pr_write_aggregate_no_longer_reexports_migrated_writes() -> None:
-    assert legacy_pr_writes.__all__ == []
-    for name in ("gh_create_pr", "gh_edit_pr", "gh_submit_pr_review", "gh_merge_pr"):
-        assert not hasattr(legacy_pr_writes, name)
