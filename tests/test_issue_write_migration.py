@@ -1,4 +1,4 @@
-"""Focused regressions for issue #58 canonical issue-domain write migration."""
+"""Focused regressions for canonical issue-domain write migration."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-import mcp_gh_server.legacy_issue_write_adapters as legacy_issue_writes
 import mcp_gh_server.write_tool_schema as write_tool_schema
 from mcp_gh_server.issue_write_models import (
     IssueCreateResult,
@@ -322,16 +321,3 @@ def test_public_facade_delegates_migrated_writes_to_canonical_module() -> None:
         write_tool_schema._gh_create_milestone,
     ):
         assert implementation.__module__ == "mcp_gh_server.tools.issue_writes"
-
-
-def test_legacy_issue_write_aggregate_no_longer_reexports_migrated_writes() -> None:
-    assert legacy_issue_writes.__all__ == []
-    for name in (
-        "gh_create_issue",
-        "gh_edit_issue",
-        "gh_create_label",
-        "gh_edit_label",
-        "gh_create_milestone",
-        "gh_upsert_label",
-    ):
-        assert not hasattr(legacy_issue_writes, name)
