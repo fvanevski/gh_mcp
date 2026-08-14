@@ -53,10 +53,17 @@ def _context(client: MetadataAwareClient) -> Any:
     return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=app))
 
 
-def _linked_branch_page(issue_id: str, name: str, sha: str) -> dict[str, Any]:
+def _linked_branch_page(
+    issue_id: str,
+    name: str,
+    sha: str,
+    *,
+    linked_repository_id: str = "R_repo",
+) -> dict[str, Any]:
     return {
         "data": {
             "repository": {
+                "id": "R_repo",
                 "issue": {
                     "id": issue_id,
                     "linkedBranches": {
@@ -67,18 +74,18 @@ def _linked_branch_page(issue_id: str, name: str, sha: str) -> dict[str, Any]:
                                 "ref": {
                                     "name": name,
                                     "prefix": "refs/heads/",
+                                    "repository": {"id": linked_repository_id},
                                     "target": {"oid": sha},
                                 },
                             }
                         ],
                     },
-                }
+                },
             }
         }
     }
 
 
-@pytest.mark.asyncio
 async def test_issue_branch_uses_exact_base_and_authoritative_link_readback() -> None:
     sha = "a" * 40
     client = MetadataAwareClient(
@@ -118,7 +125,6 @@ async def test_issue_branch_uses_exact_base_and_authoritative_link_readback() ->
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
 
 
-@pytest.mark.asyncio
 async def test_issue_branch_ambiguous_write_is_not_replayed_and_readback_remains_authoritative(
 ) -> None:
     sha = "a" * 40
@@ -153,7 +159,45 @@ async def test_issue_branch_ambiguous_write_is_not_replayed_and_readback_remains
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
 
 
-@pytest.mark.asyncio
+async def test_issue_branch_ambiguous_wrong_repository_readback_is_not_verified() -> None:
+    sha = "a" * 40
+    client = MetadataAwareClient(
+        read_results=[
+            {"node_id": "R_repo", "default_branch": "main"},
+            {"node_id": "I_issue"},
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            _linked_branch_page(
+                "I_issue",
+                "feature",
+                sha,
+                linked_repository_id="R_other",
+            ),
+        ],
+        write_results=[
+            GitHubRequestError(
+                "transport reset",
+                retryable=True,
+                ambiguous=True,
+                metadata=GitHubRequestMetadata(request_id="req-linked-wrong-repo"),
+            )
+        ],
+    )
+
+    result = await gh_create_branch("octo", "repo", 60, "feature", ctx=_context(client))
+
+    assert result.created is False
+    assert result.write_completed is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.linked_branch_id is None
+    assert result.request_id == "req-linked-wrong-repo"
+    assert result.warning is not None
+    assert "outcome is unknown" in result.warning
+    assert "does not match the requested state" in result.warning
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 1
+
+
 async def test_content_commit_stale_head_fails_before_any_mutation() -> None:
     expected = "a" * 40
     actual = "b" * 40
@@ -174,7 +218,6 @@ async def test_content_commit_stale_head_fails_before_any_mutation() -> None:
     assert client.write_results == []
 
 
-@pytest.mark.asyncio
 async def test_content_commit_ambiguous_cas_preserves_unknown_write_outcome() -> None:
     head = "a" * 40
     base_tree = "b" * 40
@@ -223,7 +266,6 @@ async def test_content_commit_ambiguous_cas_preserves_unknown_write_outcome() ->
     assert sum(kind == "write" for kind, _, _ in client.calls) == 4
 
 
-@pytest.mark.asyncio
 async def test_issue_branch_graphql_error_is_ambiguous_until_readback() -> None:
     sha = "a" * 40
     client = MetadataAwareClient(
@@ -251,7 +293,6 @@ async def test_issue_branch_graphql_error_is_ambiguous_until_readback() -> None:
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
 
 
-@pytest.mark.asyncio
 async def test_content_commit_graphql_error_is_ambiguous_until_ref_readback() -> None:
     head = "a" * 40
     base_tree = "b" * 40
