@@ -20,9 +20,8 @@ def _looks_transport_ambiguous(error: RuntimeError) -> bool:
     """Recognize transport-like failures only for lightweight protocol fakes.
 
     Real ``GhClient`` executions already raise ``GitHubRequestError`` with an
-    authoritative ambiguity classification. Non-``GhClient`` compatibility doubles
-    are deliberately treated as historical run-only fakes even if they happen to
-    expose a ``run_with_metadata`` convenience method.
+    authoritative ambiguity classification. The fallback exists only for frozen
+    compatibility test doubles that still surface bare ``RuntimeError`` values.
     """
 
     detail = str(error).casefold()
@@ -45,8 +44,9 @@ async def run_write_with_metadata(
 ) -> GitHubRequestResult[Any]:
     """Run one governed write while preserving request metadata."""
 
-    if isinstance(client, GhClient):
-        return await client.run_with_metadata(*args, **kwargs)
+    runner = getattr(client, "run_with_metadata", None)
+    if callable(runner):
+        return await runner(*args, **kwargs)
     try:
         value = await client.run(*args, **kwargs)
     except GitHubRequestError:
@@ -70,8 +70,20 @@ async def run_json_write_with_metadata(
 ) -> GitHubRequestResult[Any]:
     """Send one governed JSON mutation without discarding request metadata."""
 
-    if isinstance(client, GhClient):
-        return await run_api_json_write_with_metadata(client, method, endpoint, payload)
+    runner = getattr(client, "run_with_metadata", None)
+    if callable(runner):
+        try:
+            return await run_api_json_write_with_metadata(client, method, endpoint, payload)
+        except GitHubRequestError:
+            raise
+        except RuntimeError as exc:
+            if not isinstance(client, GhClient) and _looks_transport_ambiguous(exc):
+                raise GitHubRequestError(
+                    str(exc),
+                    retryable=True,
+                    ambiguous=True,
+                ) from exc
+            raise
     try:
         value = await api_json_write(client, method, endpoint, payload)
     except GitHubRequestError:
