@@ -15,13 +15,11 @@ from ..issue_state_models import (
 )
 from ..request_governor import GitHubRequestResult
 from ..tooling import (
-    MUTATE_EXTERNAL,
     OWNER_RE,
     REPO_RE,
     AppContext,
     app_from_context,
     logger,
-    mcp,
     require_write_enabled,
 )
 from ..write_contracts import (
@@ -133,17 +131,6 @@ def _validate_transition(
         raise ValueError("reopening an issue requires state_reason='reopened'")
 
 
-@mcp.tool(
-    title="Set issue state with exact precondition",
-    description=(
-        "Destructive write: close or reopen exactly one issue only when its current state "
-        "matches expected_state. Pull requests are rejected. Closing requires completed, "
-        "not_planned, or duplicate; reopening requires reopened. The mutation is attempted "
-        "once, comments remain a separate tool, and authoritative readback verifies the "
-        "final state and reason."
-    ),
-    annotations=MUTATE_EXTERNAL,
-)
 async def gh_set_issue_state(
     owner: Annotated[
         str,
