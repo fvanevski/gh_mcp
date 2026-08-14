@@ -32,7 +32,7 @@ def _matches_requested_repository(
         return False
     if snapshot.get("isPrivate") is not private:
         return False
-    if snapshot.get("description") != description:
+    if "description" not in snapshot or snapshot["description"] != description:
         return False
 
     is_empty = snapshot.get("isEmpty")
