@@ -39,13 +39,14 @@ query IssueLinkedBranches(
   $after: String
 ) {
   repository(owner: $owner, name: $repo) {
+    id
     issue(number: $number) {
       id
       linkedBranches(first: $first, after: $after) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id
-          ref { name prefix target { oid } }
+          ref { name prefix repository { id } target { oid } }
         }
       }
     }
@@ -65,6 +66,7 @@ mutation CreateLinkedBranch($input: CreateLinkedBranchInput!) {
 @dataclass(frozen=True, slots=True)
 class _LinkedBranchReadback:
     linked_branch_id: str | None
+    repository_id: str | None
     ref: str | None
     sha: str | None
 
@@ -102,14 +104,19 @@ def _parse_linked_branch(node: object) -> _LinkedBranchReadback:
         raise RuntimeError("GitHub returned a linked branch without a ref")
     name = ref.get("name")
     prefix = ref.get("prefix")
+    repository = ref.get("repository")
+    repository_id = repository.get("id") if isinstance(repository, dict) else None
     target = ref.get("target")
     sha = target.get("oid") if isinstance(target, dict) else None
     if not isinstance(name, str) or prefix != "refs/heads/":
         raise RuntimeError("GitHub returned a linked branch with a malformed branch ref")
+    if not isinstance(repository_id, str) or not repository_id:
+        raise RuntimeError("GitHub returned a linked branch without repository identity")
     if not isinstance(sha, str) or not OBJECT_SHA_RE.fullmatch(sha):
         raise RuntimeError("GitHub returned a linked branch without an exact target SHA")
     return _LinkedBranchReadback(
         linked_branch_id=linked_branch_id,
+        repository_id=repository_id,
         ref=f"{prefix}{name}",
         sha=sha.casefold(),
     )
@@ -121,6 +128,7 @@ async def _read_issue_linked_branch(
     repo: str,
     issue_number: int,
     *,
+    repository_node_id: str,
     issue_node_id: str,
     branch_ref: str,
 ) -> _LinkedBranchReadback:
@@ -148,7 +156,9 @@ async def _read_issue_linked_branch(
             raise RuntimeError("GitHub GraphQL linked-branch readback failed")
         data = result.get("data")
         repository = data.get("repository") if isinstance(data, dict) else None
-        issue = repository.get("issue") if isinstance(repository, dict) else None
+        if not isinstance(repository, dict) or repository.get("id") != repository_node_id:
+            raise RuntimeError("GitHub GraphQL did not preserve exact repository identity")
+        issue = repository.get("issue")
         if not isinstance(issue, dict) or issue.get("id") != issue_node_id:
             raise RuntimeError("GitHub GraphQL did not preserve exact issue identity")
         connection = issue.get("linkedBranches")
@@ -162,7 +172,7 @@ async def _read_issue_linked_branch(
             raise RuntimeError("GitHub exceeded the linked-branch readback page bound")
         for node in nodes:
             parsed = _parse_linked_branch(node)
-            if parsed.ref == branch_ref:
+            if parsed.ref == branch_ref and parsed.repository_id == repository_node_id:
                 matching.append(parsed)
         if len(matching) > 1:
             raise RuntimeError("GitHub returned multiple issue-linked branches for one exact ref")
@@ -171,7 +181,11 @@ async def _read_issue_linked_branch(
         if not isinstance(has_next_page, bool):
             raise RuntimeError("GitHub returned malformed linked-branch page information")
         if not has_next_page:
-            return matching[0] if matching else _LinkedBranchReadback(None, None, None)
+            return (
+                matching[0]
+                if matching
+                else _LinkedBranchReadback(None, None, None, None)
+            )
         if not isinstance(end_cursor, str) or not end_cursor:
             raise RuntimeError("GitHub linked-branch pagination omitted the next cursor")
         after = end_cursor
@@ -270,6 +284,7 @@ async def gh_create_branch(
             owner,
             repo,
             issue_number,
+            repository_node_id=repository_node_id,
             issue_node_id=issue_node_id,
             branch_ref=branch_ref,
         )
@@ -280,7 +295,9 @@ async def gh_create_branch(
         write=write,
         readback=readback,
         state_matches_requested=lambda value: (
-            value.ref == branch_ref and value.sha == expected_base_sha
+            value.repository_id == repository_node_id
+            and value.ref == branch_ref
+            and value.sha == expected_base_sha
         ),
     )
     outcome = execution.outcome
