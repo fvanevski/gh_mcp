@@ -55,7 +55,7 @@ def _context(client: MetadataAwareClient) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_successful_request_id_is_projected_without_governor_warning() -> None:
+async def test_successful_request_id_is_returned_without_governor_warning() -> None:
     url = "https://github.com/octo/repo/issues/43"
     client = MetadataAwareClient(
         read_results=[{"number": 43, "title": "Identity", "url": url}],
@@ -66,10 +66,9 @@ async def test_successful_request_id_is_projected_without_governor_warning() -> 
             )
         ],
     )
-
     result = await gh_create_issue("octo", "repo", "Identity", ctx=_context(client))
-
     assert result.write_completed is True
     assert result.readback_completed is True
-    assert result.warning == "GitHub request id: req-success-only."
-
+    assert result.state_matches_requested is True
+    assert result.request_id == "req-success-only"
+    assert result.warning is None

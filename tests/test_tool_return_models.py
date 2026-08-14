@@ -9,6 +9,13 @@ from mcp_gh_server.action_log_models import WorkflowJobLogs, WorkflowRunLogs
 from mcp_gh_server.artifact_content_models import ArtifactFileContent, ArtifactFilesPage
 from mcp_gh_server.compare_commits_models import CommitComparisonResult
 from mcp_gh_server.issue_state_models import IssueStateTransitionResult
+from mcp_gh_server.issue_write_models import (
+    IssueCreateResult,
+    IssueEditResult,
+    LabelCreateResult,
+    LabelEditResult,
+    MilestoneCreateResult,
+)
 from mcp_gh_server.merge_requirements_models import PullRequestMergeRequirements
 from mcp_gh_server.models import (
     BranchCreate,
@@ -17,12 +24,7 @@ from mcp_gh_server.models import (
     CommitFilesResult,
     GitCommitInfo,
     GitRefInfo,
-    IssueCreate,
-    IssueEdit,
     IssueInfo,
-    LabelCreate,
-    LabelEdit,
-    MilestoneCreate,
     PullRequestChecks,
     PullRequestCommitsPage,
     PullRequestCreate,
@@ -62,7 +64,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_search_code": SearchResults,
     "gh_list_issues": SearchResults,
     "gh_get_issue": IssueInfo,
-    "gh_create_issue": IssueCreate,
+    "gh_create_issue": IssueCreateResult,
     "gh_set_issue_state": IssueStateTransitionResult,
     "gh_set_pr_draft_state": PullRequestDraftStateTransitionResult,
     "gh_list_prs": SearchResults,
@@ -102,13 +104,12 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_get_job_logs": WorkflowJobLogs,
     "gh_get_run_logs": WorkflowRunLogs,
     "gh_watch_run": WorkflowRunWatchResult,
-    "gh_edit_issue": IssueEdit,
+    "gh_edit_issue": IssueEditResult,
     "gh_list_labels": SearchResults,
-    "gh_create_label": LabelCreate,
-    "gh_upsert_label": LabelCreate,
-    "gh_edit_label": LabelEdit,
+    "gh_create_label": LabelCreateResult,
+    "gh_edit_label": LabelEditResult,
     "gh_list_milestones": SearchResults,
-    "gh_create_milestone": MilestoneCreate,
+    "gh_create_milestone": MilestoneCreateResult,
     "gh_create_comment": CommentCreate,
     "gh_create_branch": BranchCreate,
     "gh_create_branch_from_sha": BranchCreateFromSha,
@@ -117,8 +118,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 59
-
+    assert len(EXPECTED_RETURN_MODELS) == 58
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)
         assert get_type_hints(function)["return"] == expected

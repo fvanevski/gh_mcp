@@ -33,7 +33,6 @@ from mcp_gh_server.server import (
     gh_set_issue_state,
     gh_set_pr_draft_state,
     gh_submit_pr_review,
-    gh_upsert_label,
 )
 from mcp_gh_server.settings import Settings
 
@@ -81,15 +80,14 @@ def _context(client: MetadataAwareClient) -> Any:
     return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=app))
 
 
-def test_all_public_writes_are_bound_to_issue9_compatibility_modules() -> None:
+def test_all_public_writes_are_bound_to_active_schema_modules() -> None:
     expected = {
-        gh_create_issue: "mcp_gh_server.write_tool_schema",
-        gh_edit_issue: "mcp_gh_server.write_tool_schema",
+        gh_create_issue: "mcp_gh_server.issue_write_schema",
+        gh_edit_issue: "mcp_gh_server.issue_write_schema",
         gh_set_issue_state: "mcp_gh_server.write_tool_schema",
-        gh_create_label: "mcp_gh_server.write_tool_schema",
-        gh_upsert_label: "mcp_gh_server.write_tool_schema",
-        gh_edit_label: "mcp_gh_server.write_tool_schema",
-        gh_create_milestone: "mcp_gh_server.write_tool_schema",
+        gh_create_label: "mcp_gh_server.issue_write_schema",
+        gh_edit_label: "mcp_gh_server.issue_write_schema",
+        gh_create_milestone: "mcp_gh_server.issue_write_schema",
         gh_create_comment: "mcp_gh_server.write_tool_schema",
         gh_create_pr: "mcp_gh_server.write_tool_schema",
         gh_edit_pr: "mcp_gh_server.write_tool_schema",
@@ -103,14 +101,13 @@ def test_all_public_writes_are_bound_to_issue9_compatibility_modules() -> None:
         gh_create_branch: "mcp_gh_server.write_tool_schema",
         gh_create_branch_from_sha: "mcp_gh_server.write_tool_schema",
     }
-
-    assert len(expected) == 19
+    assert len(expected) == 18
     for function, module in expected.items():
         assert function.__module__ == module
 
 
 @pytest.mark.asyncio
-async def test_legacy_create_issue_preserves_successful_governor_metadata() -> None:
+async def test_canonical_create_issue_preserves_successful_governor_metadata() -> None:
     url = "https://github.com/octo/repo/issues/42"
     client = MetadataAwareClient(
         read_results=[{"number": 42, "title": "Contract", "url": url}],
@@ -124,14 +121,12 @@ async def test_legacy_create_issue_preserves_successful_governor_metadata() -> N
             )
         ],
     )
-
     result = await gh_create_issue("octo", "repo", "Contract", ctx=_context(client))
-
     assert result.write_completed is True
     assert result.readback_completed is True
-    assert result.warning is not None
-    assert "Governor supplied a transport warning." in result.warning
-    assert "req-create-42" in result.warning
+    assert result.state_matches_requested is True
+    assert result.request_id == "req-create-42"
+    assert result.warning == "Governor supplied a transport warning."
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
 
 
@@ -162,16 +157,7 @@ async def test_merge_success_preserves_request_identity_and_warning() -> None:
             )
         ],
     )
-
-    result = await gh_merge_pr(
-        "octo",
-        "repo",
-        9,
-        head,
-        "squash",
-        ctx=_context(client),
-    )
-
+    result = await gh_merge_pr("octo", "repo", 9, head, "squash", ctx=_context(client))
     assert result.merged is True
     assert result.readback_completed is True
     assert result.warning is not None
@@ -205,16 +191,7 @@ async def test_merge_ambiguous_failure_rejects_wrong_auto_merge_method() -> None
             )
         ],
     )
-
-    result = await gh_merge_pr(
-        "octo",
-        "repo",
-        9,
-        head,
-        "squash",
-        ctx=_context(client),
-    )
-
+    result = await gh_merge_pr("octo", "repo", 9, head, "squash", ctx=_context(client))
     assert result.write_completed is False
     assert result.readback_completed is False
     assert result.auto_merge_enabled is True
@@ -231,29 +208,14 @@ async def test_legacy_writes_without_structured_readback_do_not_claim_verificati
     comment_client = MetadataAwareClient(
         write_results=[GitHubRequestResult(value={"stdout": comment_url})]
     )
-
-    comment = await gh_create_comment(
-        "octo",
-        "repo",
-        4,
-        "Hello",
-        ctx=_context(comment_client),
-    )
-
+    comment = await gh_create_comment("octo", "repo", 4, "Hello", ctx=_context(comment_client))
     assert comment.write_completed is True
     assert comment.readback_completed is False
     assert comment.warning is not None
     assert "Do not retry automatically" in comment.warning
 
     branch_client = MetadataAwareClient(write_results=[GitHubRequestResult(value={"stdout": ""})])
-    branch = await gh_create_branch(
-        "octo",
-        "repo",
-        4,
-        "feature",
-        ctx=_context(branch_client),
-    )
-
+    branch = await gh_create_branch("octo", "repo", 4, "feature", ctx=_context(branch_client))
     assert branch.write_completed is True
     assert branch.readback_completed is False
     assert branch.warning is not None
