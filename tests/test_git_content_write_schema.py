@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from mcp_gh_server.server import mcp
 
 
-@pytest.mark.asyncio
 async def test_migrated_public_outputs_expose_shared_exact_outcome_fields() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
     exact_outcome_fields = {
