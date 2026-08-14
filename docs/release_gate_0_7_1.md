@@ -1,33 +1,31 @@
 # Release gate 0.7.1
 
-This document records the repository-authoritative acceptance contract for the final 0.7.1 public MCP surface. It supplements, rather than rewrites, the historical 0.7.0 gate in `docs/release_gate_0_7_0.md`.
+This document is the immutable historical acceptance record for the shipped 0.7.1 public MCP surface. It supplements, rather than rewrites, the historical 0.7.0 gate in `docs/release_gate_0_7_0.md`. Current runtime/release authority is defined separately by the active release gate.
 
 ## Version and inventory authority
 
-The 0.7.1 release surface is exactly **61 public MCP tools: 40 read-only and 21 write**.
+Version 0.7.1 exposes 61 public MCP tools: 40 read-only and 21 write.
 
-The authoritative sources are:
+For the released 0.7.1 candidate, the authoritative sources were:
 
 - package version: `pyproject.toml`;
 - server/tool-schema version: `src/mcp_gh_server/__init__.py`, consumed by `gh_server_info`;
 - locked editable package version: `uv.lock`;
 - executable tool inventory: `src/mcp_gh_server/server.py` / `mcp.list_tools()`;
-- exact public input/output schema snapshot: `tests/test_tool_schema_snapshot.py` and `tests/test_tool_return_models.py`;
-- final release integration assertions: `tests/test_release_gate_0_7_1.py`.
+- exact public input/output schema snapshot: `tests/test_tool_schema_snapshot.py` and `tests/test_tool_return_models.py`; and
+- release integration assertions in the then-current `tests/test_release_gate_0_7_1.py`.
 
-All version sources must report `0.7.1`. Documentation counts are descriptive and must agree with the executable registry for the released 0.7.1 candidate; they are not an independent source of truth.
+Those sources all reported `0.7.1` for the released candidate. This document records that historical state; it does not require later releases to retain the same runtime version or public inventory.
 
-### Unreleased 0.8.0 transition
+## Historical 0.8.0 transition note
 
-This file remains an immutable 0.7.1 release record while 0.8.x child issues are developed. After issue #55 retires generic workflow dispatch and issue #56 retires generic release creation, the current unreleased development registry contains **59 public MCP tools: 40 read-only and 19 write** even though package/server/tool-schema versions still report 0.7.1.
+During development of the breaking 0.8.0 write-contract remediation, child issues intentionally retired weaker public writes before package/server/tool-schema authority advanced. That intermediate mismatch was treated as evidence that the breaking surface had not yet passed its version gate, not as authority to rewrite 0.7.1 history.
 
-That temporary mismatch is intentional evidence that a breaking public-surface transition has not yet been versioned. Issue #61 owns the 0.8.0 integration gate: it must remove remaining obsolete compatibility infrastructure, bump package/server/tool-schema authority, normalize release documentation and registry snapshots, and make the full version gate green on one exact candidate head. Child issues must not lower the 0.7.0 or 0.7.1 release counts merely to hide the intermediate mismatch.
-
-Current-development documentation such as `README.md` and `QWEN.md` may separately describe the active 59/19 registry, but this historical gate continues to state and enforce the released 61/40/21 surface until #61 supersedes it with 0.8.0 authority.
+Issue #61 subsequently owns the separate 0.8.0 release authority in `docs/release_gate_0_8_0.md`. Historical 0.7.0/0.7.1 counts remain unchanged while current runtime assertions move to the 0.8.0 gate.
 
 ## 0.7.1 additions
 
-The final surface adds five read-only tools to the established 0.7.0 release surface:
+The final 0.7.1 surface added five read-only tools to the established 0.7.0 release surface:
 
 ### `gh_get_merge_requirements`
 
@@ -45,13 +43,11 @@ Inspect one exact unexpired Actions artifact without exposing arbitrary archive 
 
 Reports GitHub-provided primary rate-limit observations separately from local `GitHubRequestGovernor` state. The diagnostic route itself remains governed and coalesces repeated/concurrent calls behind a local minimum refresh interval so it cannot become a high-frequency polling bypass. The local interval is deployment policy, not a hard-coded GitHub secondary-limit threshold. See `docs/gh_get_api_rate_status.md`.
 
-## Final public-surface invariants
+## Historical public-surface invariants
 
-The exact schema snapshot must continue to prove all 61 registered names, required/optional input fields, read-only/destructive/idempotent/open-world annotations, and the focused schema details encoded by `tests/test_tool_schema_snapshot.py`. The return-model regression must continue to account for every registered tool.
+The shipped 0.7.1 schema snapshot established all 61 registered names, required/optional input fields, read-only/destructive/idempotent/open-world annotations, and the focused schema details for that release. The then-current return-model regression accounted for every registered tool.
 
-`tests/exercise_tools.py --inventory-only` must resolve the server and assert the exact 61-tool inventory, including all five 0.7.1 additions, without performing GitHub I/O. The optional live exercise remains non-destructive and is not a substitute for the protocol/schema tests.
-
-Existing 0.7.0 behavior and write safety remain intact. In particular, the final release does not weaken exact-state/SHA preconditions, default-off write gating, write/readback semantics, request-governor mediation, bounded-evidence completeness handling, or stderr-only logging.
+The 0.7.1 release preserved existing 0.7.0 behavior and write safety. In particular, it did not weaken exact-state/SHA preconditions, default-off write gating, write/readback semantics, request-governor mediation, bounded-evidence completeness handling, or stderr-only logging.
 
 ## Explicit non-goals
 
@@ -62,29 +58,13 @@ The 0.7.1 public MCP surface does **not** expose:
 - generic shell or subprocess execution;
 - administrator merge/protected-branch bypass;
 - automatic rerun-on-failure or repeated workflow dispatch;
-- artifact deletion or workflow-log deletion;
+- artifact deletion or workflow-log deletion; or
 - branch-protection or ruleset mutation.
 
-The deferred workflow rerun/cancellation issue is not part of the 0.7.1 release surface.
+The deferred workflow rerun/cancellation issue was not part of the 0.7.1 release surface.
 
-## Required validation
+## Historical validation record
 
-Run against the exact final candidate SHA, with a clean working tree before and after:
+The 0.7.1 release gate required its package/server/tool-schema/lock versions to agree at 0.7.1, the executable registry to be exactly 61/40/21, documentation to match that released registry, and the schema/protocol/static/full-suite gates to pass on the same exact candidate SHA.
 
-```bash
-uv run pytest \
-  tests/test_release_gate_0_7_1.py \
-  tests/test_tool_schema_snapshot.py \
-  tests/test_mcp_protocol.py \
-  tests/test_tool_return_models.py \
-  tests/test_mcp_schema.py \
-  tests/test_write_wrappers.py
-python tests/exercise_tools.py --inventory-only
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest
-git diff --check
-```
-
-The released 0.7.1 gate passes only when package/server/tool-schema/lock versions agree at 0.7.1, the executable registry remains exactly 61/40/21, documentation matches that released registry, the final schema/protocol regressions pass, and the full repository gate passes on the same exact SHA. During the unreleased 0.8.x child-issue transition, failure of the immutable inventory assertions is expected until #61 establishes the new versioned authority; it must not be converted into a passing result by rewriting historical counts.
+Later releases must validate against their own release gate rather than mutating this record. For 0.8.0, use `docs/release_gate_0_8_0.md` and `tests/test_release_gate_0_8_0.py`.
