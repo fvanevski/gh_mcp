@@ -543,7 +543,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     exact_dispatch_schema = tools["gh_run_workflow_exact"].input_schema["properties"]
     assert exact_dispatch_schema["workflow_id"]["minimum"] == 1
     assert exact_dispatch_schema["expected_workflow_path"]["pattern"] == (
-        r"^\.github/workflows/(?:[^/\x00-\x1f\x7f]+/)*[^/\x00-\x1f\x7f]+\.(?:yml|yaml)$"
+        r"^\.github/workflows/[^/\x00-\x1f\x7f]+\.ya?ml$"
     )
     assert exact_dispatch_schema["ref"]["pattern"] == r"^(?:heads|tags)/.+$"
     assert exact_dispatch_schema["expected_ref_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
