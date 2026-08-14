@@ -29,11 +29,10 @@ remain an explicit separate operation.
 
 Canonical metadata-aware mutation helpers trust structured `GitHubRequestError` ambiguity
 metadata emitted by the real `GhClient`; they do not infer ambiguity from bare exception
-message text. Frozen legacy adapters may still normalize transport-like bare `RuntimeError`
-messages for non-`GhClient` compatibility test doubles. Those doubles are deliberately
-exercised through their historical `run()` interface even when they expose a convenience
-`run_with_metadata()` method, so test compatibility cannot alter the production `GhClient`
-contract.
+message text. Frozen `legacy_write_support.py` compatibility helpers retain duck-typed
+`run_with_metadata()` routing for historical test doubles, but any transport-text
+normalization is restricted to non-`GhClient` doubles. A real `GhClient` therefore remains
+authoritative even when a legacy adapter calls through the compatibility helper.
 
 `src/mcp_gh_server/server.py` registers all public writes uniformly from
 `PUBLIC_WRITE_TOOLS` and `WRITE_TOOL_METADATA`. Public write descriptions are not
