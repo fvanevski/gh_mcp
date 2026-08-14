@@ -126,9 +126,10 @@ Writes remain default-off. Exact-state tools preserve expected state/SHA precond
 applicable, perform one mutation attempt, and require authoritative readback before reporting
 verified success. Ambiguous or partial writes are not blindly retried. Canonical metadata-
 aware write paths rely on structured `GitHubRequestError` ambiguity metadata produced by
-`GhClient`; text-based inference from bare `RuntimeError` messages is restricted to the
-frozen `legacy_write_support.py` fallback for non-`GhClient` compatibility test doubles,
-which are deliberately exercised through their historical run-only interface.
+`GhClient`; text-based inference from bare `RuntimeError` messages is restricted to frozen
+`legacy_write_support.py` handling for non-`GhClient` compatibility test doubles. Those
+doubles retain their established duck-typed `run_with_metadata()` routing when present;
+real `GhClient` failures are never reclassified from exception message text.
 
 Evidence reads remain explicitly bounded. Callers must preserve truncation/completeness
 metadata, byte counts, digests, and warnings rather than presenting partial artifact, log,
