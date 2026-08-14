@@ -605,7 +605,7 @@ async def test_branch_and_pr_edit_use_raw_writes() -> None:
     )
     assert result.title == "Updated PR"
     assert pr_client.calls[0][1] == {"json_output": False, "stdin_text": None}
-    assert client.calls[1][0][:3] == ("pr", "view", "9")
+    assert pr_client.calls[1][0][:3] == ("pr", "view", "9")
 
 
 @pytest.mark.asyncio
