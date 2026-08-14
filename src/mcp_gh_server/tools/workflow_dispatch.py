@@ -22,7 +22,7 @@ from ..tooling import (
     require_write_enabled,
 )
 from ..workflow_dispatch_models import WorkflowDispatchExactResult
-from ..workflow_selector import WORKFLOW_PATH_RE, resolve_workflow_id
+from ..workflow_selector import WORKFLOW_PATH_RE
 from ..write_contracts import (
     WritePrecondition,
     combine_warnings,
@@ -32,6 +32,9 @@ from ..write_contracts import (
 )
 from .actions import gh_list_runs
 from .git import gh_get_ref
+
+MAX_WORKFLOW_INPUTS = 25
+MAX_WORKFLOW_INPUT_CHARACTERS = 65_535
 
 
 class WorkflowDispatchDuplicateError(RuntimeError):
@@ -80,20 +83,30 @@ _WORKFLOW_DISPATCH_LOCK = asyncio.Lock()
 _WORKFLOW_DISPATCH_RESERVATIONS: dict[_DispatchKey, _WorkflowDispatchReservation] = {}
 
 
-def _workflow_inputs(fields: list[str] | None) -> dict[str, str]:
-    """Convert the established key=value field surface into one deterministic JSON object."""
+def _validate_workflow_inputs(inputs: dict[str, str] | None) -> dict[str, str]:
+    """Validate one bounded typed workflow_dispatch input object."""
 
-    inputs: dict[str, str] = {}
-    for field in fields or []:
-        if "=" not in field:
-            raise ValueError("workflow fields must use non-empty key=value form")
-        key, value = field.split("=", 1)
-        if not key:
-            raise ValueError("workflow fields must use non-empty key=value form")
-        if key in inputs:
-            raise ValueError(f"workflow field {key!r} was supplied more than once")
-        inputs[key] = value
-    return inputs
+    if inputs is None:
+        return {}
+    if not isinstance(inputs, dict):
+        raise ValueError("workflow inputs must be an object mapping string keys to string values")
+    if len(inputs) > MAX_WORKFLOW_INPUTS:
+        raise ValueError(f"workflow inputs must contain at most {MAX_WORKFLOW_INPUTS} entries")
+
+    normalized: dict[str, str] = {}
+    aggregate_characters = 0
+    for key, value in inputs.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError("workflow input keys must be non-empty strings")
+        if not isinstance(value, str):
+            raise ValueError("workflow input values must be strings")
+        aggregate_characters += len(key) + len(value)
+        if aggregate_characters > MAX_WORKFLOW_INPUT_CHARACTERS:
+            raise ValueError(
+                "workflow inputs exceed the 65,535 aggregate key/value character limit"
+            )
+        normalized[key] = value
+    return normalized
 
 
 def _dispatch_key(owner: str, repo: str, workflow_id: int, expected_ref_sha: str) -> _DispatchKey:
@@ -190,6 +203,47 @@ async def _require_no_matching_dispatch(
         "matching workflow_dispatch run already exists for "
         f"workflow {workflow_id} at head {expected_ref_sha}{detail}; no write was attempted"
     )
+
+
+async def _require_active_workflow_identity(
+    app: AppContext,
+    owner: str,
+    repo: str,
+    workflow_id: int,
+    expected_workflow_path: str,
+) -> None:
+    """Verify exact workflow ID/path identity and active state immediately before mutation."""
+
+    raw = await app.client.run(
+        "api",
+        f"repos/{owner}/{repo}/actions/workflows/{workflow_id}",
+        "-X",
+        "GET",
+    )
+    if not isinstance(raw, dict):
+        raise RuntimeError(
+            "GitHub returned non-object workflow metadata immediately before dispatch; "
+            "no write was attempted"
+        )
+
+    actual_id = raw.get("id")
+    actual_path = raw.get("path")
+    state = raw.get("state")
+    if actual_id != workflow_id:
+        raise RuntimeError(
+            f"workflow identity mismatch: expected workflow ID {workflow_id}, got {actual_id!r}; "
+            "no write was attempted"
+        )
+    if actual_path != expected_workflow_path:
+        raise RuntimeError(
+            f"workflow identity mismatch: expected exact path {expected_workflow_path!r}, "
+            f"got {actual_path!r}; no write was attempted"
+        )
+    if state != "active":
+        raise RuntimeError(
+            f"workflow {workflow_id} at {expected_workflow_path!r} is not active "
+            f"(state {state!r}); no write was attempted"
+        )
 
 
 def _parse_dispatch_receipt(raw: object) -> _WorkflowDispatchReceipt:
@@ -395,12 +449,13 @@ async def _require_no_local_reservation(
 @mcp.tool(
     title="Dispatch workflow at exact ref",
     description=(
-        "Destructive write: under one server-local critical section, verify an exact canonical "
-        "branch/tag ref against expected_ref_sha, reject same-name branch/tag ambiguity, and "
-        "reject any existing workflow_dispatch run for the workflow/head before one dispatch. "
-        "GitHub's dispatch API has no atomic ref compare-and-swap, so returned run details are "
-        "required and authoritative readback is bound to that exact run ID; any head mismatch "
-        "is reported fail-closed and the tool never redispatches automatically."
+        "Destructive write: under one server-local critical section, verify the exact active "
+        "workflow ID/path pair and canonical branch/tag ref against expected_ref_sha, reject "
+        "same-name branch/tag ambiguity, and reject any existing workflow_dispatch run for the "
+        "workflow/head before one dispatch. GitHub's dispatch API has no atomic ref compare-and-"
+        "swap, so returned run details are required and authoritative readback is bound to that "
+        "exact run ID; any identity/head mismatch is reported fail-closed and the tool never "
+        "redispatches automatically."
     ),
     annotations=MUTATE_EXTERNAL,
 )
@@ -423,18 +478,16 @@ async def gh_run_workflow_exact(
             pattern=REPO_RE.pattern,
         ),
     ],
-    workflow_id: (
-        Annotated[int, Field(description="Exact positive workflow identifier.", ge=1)]
-        | Annotated[
-            str,
-            Field(
-                description="Exact canonical workflow path under .github/workflows/.",
-                min_length=23,
-                max_length=1024,
-                pattern=WORKFLOW_PATH_RE.pattern,
-            ),
-        ]
-    ),
+    workflow_id: Annotated[int, Field(description="Exact positive workflow identifier.", ge=1)],
+    expected_workflow_path: Annotated[
+        str,
+        Field(
+            description="Exact canonical case-sensitive workflow path under .github/workflows/.",
+            min_length=23,
+            max_length=1024,
+            pattern=WORKFLOW_PATH_RE.pattern,
+        ),
+    ],
     ref: Annotated[
         str,
         Field(
@@ -455,11 +508,21 @@ async def gh_run_workflow_exact(
     ],
     *,
     ctx: Context[AppContext],
-    fields: list[str] | None = None,
+    inputs: dict[str, str] | None = None,
 ) -> WorkflowDispatchExactResult:
     """Perform one exact-ref guarded workflow dispatch and verify exact run readback."""
 
     logger.info("MCP tool invocation reached server: tool=gh_run_workflow_exact")
+    if isinstance(workflow_id, bool) or not isinstance(workflow_id, int) or workflow_id < 1:
+        raise ValueError("workflow_id must be a positive integer")
+    if (
+        not isinstance(expected_workflow_path, str)
+        or len(expected_workflow_path.encode()) > 1024
+        or not WORKFLOW_PATH_RE.fullmatch(expected_workflow_path)
+    ):
+        raise ValueError(
+            "expected_workflow_path must be one exact canonical .github/workflows/*.yml path"
+        )
     if not OBJECT_SHA_RE.fullmatch(expected_ref_sha):
         raise ValueError("expected_ref_sha must be exactly 40 hexadecimal characters")
 
@@ -470,9 +533,9 @@ async def gh_run_workflow_exact(
         repo,
         action="workflow_dispatch",
         workflow=workflow_id,
+        workflow_aliases=(expected_workflow_path,),
     )
-    workflow_id = await resolve_workflow_id(app, owner, repo, workflow_id)
-    inputs = _workflow_inputs(fields)
+    normalized_inputs = _validate_workflow_inputs(inputs)
     normalized_expected_sha = expected_ref_sha.casefold()
     dispatch_ref = ref.split("/", 1)[1] if "/" in ref else ""
     if not dispatch_ref:
@@ -502,11 +565,19 @@ async def gh_run_workflow_exact(
             ctx=ctx,
         )
         await _require_unambiguous_dispatch_name(owner, repo, ref, ctx=ctx)
-        return await require_write_precondition(
+        final_ref_check = await require_write_precondition(
             read_ref_sha,
             normalized_expected_sha,
             label=f"workflow dispatch ref refs/{ref}",
         )
+        await _require_active_workflow_identity(
+            app,
+            owner,
+            repo,
+            workflow_id,
+            expected_workflow_path,
+        )
+        return final_ref_check
 
     async def write() -> GitHubRequestResult[Any]:
         nonlocal dispatch_receipt, receipt_warning
@@ -514,8 +585,8 @@ async def gh_run_workflow_exact(
             "ref": dispatch_ref,
             "return_run_details": True,
         }
-        if inputs:
-            payload["inputs"] = inputs
+        if normalized_inputs:
+            payload["inputs"] = normalized_inputs
 
         # Reserve before starting the mutation. If cancellation or another BaseException
         # interrupts transport, a subsequent same-key call must remain fail-closed.
@@ -618,6 +689,7 @@ async def gh_run_workflow_exact(
         run_url=run.url if run is not None else None,
         run_status=run.status if run is not None else None,
         run_head_sha=run.head_sha if run is not None else None,
+        run_event=run.event if run is not None else None,
         precondition_checked=outcome.precondition_checked,
         write_completed=outcome.write_completed,
         readback_completed=outcome.readback_completed,
