@@ -11,14 +11,12 @@ from pydantic import Field
 
 from ..request_governor import GitHubRequestError, GitHubRequestResult
 from ..tooling import (
-    MUTATE_EXTERNAL,
     OBJECT_SHA_RE,
     OWNER_RE,
     REPO_RE,
     AppContext,
     app_from_context,
     logger,
-    mcp,
     require_write_enabled,
 )
 from ..workflow_dispatch_models import WorkflowDispatchExactResult
@@ -446,19 +444,6 @@ async def _require_no_local_reservation(
     )
 
 
-@mcp.tool(
-    title="Dispatch workflow at exact ref",
-    description=(
-        "Destructive write: under one server-local critical section, verify the exact active "
-        "workflow ID/path pair and canonical branch/tag ref against expected_ref_sha, reject "
-        "same-name branch/tag ambiguity, and reject any existing workflow_dispatch run for the "
-        "workflow/head before one dispatch. GitHub's dispatch API has no atomic ref compare-and-"
-        "swap, so returned run details are required and authoritative readback is bound to that "
-        "exact run ID; any identity/head mismatch is reported fail-closed and the tool never "
-        "redispatches automatically."
-    ),
-    annotations=MUTATE_EXTERNAL,
-)
 async def gh_run_workflow_exact(
     owner: Annotated[
         str,
@@ -588,8 +573,6 @@ async def gh_run_workflow_exact(
         if normalized_inputs:
             payload["inputs"] = normalized_inputs
 
-        # Reserve before starting the mutation. If cancellation or another BaseException
-        # interrupts transport, a subsequent same-key call must remain fail-closed.
         _WORKFLOW_DISPATCH_RESERVATIONS[key] = _WorkflowDispatchReservation(
             run_id=None,
             outcome_unknown=True,
