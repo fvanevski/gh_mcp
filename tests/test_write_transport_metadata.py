@@ -79,6 +79,22 @@ async def test_canonical_json_write_does_not_infer_ambiguity_from_runtime_text()
     assert client.calls == 1
 
 
+async def test_legacy_metadata_fake_keeps_transport_text_compatibility() -> None:
+    client = MetadataFailureClient(RuntimeError("timeout after synthetic send"))
+
+    with pytest.raises(GitHubRequestError) as caught:
+        await run_json_write_with_metadata(
+            client,  # type: ignore[arg-type]
+            "POST",
+            "repos/octo/repo/milestones",
+            {"title": "v1"},
+        )
+
+    assert caught.value.ambiguous is True
+    assert caught.value.retryable is True
+    assert client.calls == 1
+
+
 async def test_legacy_run_only_fake_keeps_transport_text_compatibility() -> None:
     client = RunOnlyFailureClient(RuntimeError("timeout after synthetic send"))
 
