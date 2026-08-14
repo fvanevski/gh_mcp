@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from mcp_gh_server.legacy_release_write_adapter import gh_create_release
 from mcp_gh_server.models import CommitFile
 from mcp_gh_server.request_governor import (
     GitHubRequestError,
@@ -98,8 +97,8 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     result = await gh_server_info(ctx=_context(client))
 
     assert result.server_name == "mcp-gh-server"
-    assert result.server_version == "0.7.1"
-    assert result.tool_schema_version == "0.7.1"
+    assert result.server_version == "0.8.0"
+    assert result.tool_schema_version == "0.8.0"
     assert result.transport == "stdio"
     assert result.tool_count == 58
     assert result.write_commands_enabled is True
@@ -349,44 +348,6 @@ async def test_create_pr_executes_then_reads_url() -> None:
     assert "--body-file" in client.calls[0][0]
     assert "--json" not in client.calls[0][0]
     assert client.calls[1][0][:3] == ("pr", "view", url)
-
-
-@pytest.mark.asyncio
-async def test_create_release_executes_then_reads_tag() -> None:
-    url = "https://github.com/octo/repo/releases/tag/v1"
-    client = FakeGhClient(
-        [
-            {"stdout": url},
-            {
-                "tagName": "v1",
-                "url": url,
-                "isDraft": False,
-                "isPrerelease": False,
-            },
-        ]
-    )
-
-    result = await gh_create_release(
-        "octo",
-        "repo",
-        "v1",
-        ctx=_context(client),
-        body="Notes",
-    )
-
-    assert result.tag_name == "v1"
-    assert client.calls[0][1] == {"json_output": False, "stdin_text": "Notes"}
-    assert "--notes-file" in client.calls[0][0]
-    assert "--json" not in client.calls[0][0]
-    assert client.calls[1][0] == (
-        "release",
-        "view",
-        "v1",
-        "--repo",
-        "octo/repo",
-        "--json",
-        "tagName,url,isDraft,isPrerelease",
-    )
 
 
 @pytest.mark.asyncio
