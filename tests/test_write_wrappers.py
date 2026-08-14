@@ -13,7 +13,11 @@ import pytest
 
 from mcp_gh_server.legacy_release_write_adapter import gh_create_release
 from mcp_gh_server.models import CommitFile
-from mcp_gh_server.request_governor import GitHubRequestResult
+from mcp_gh_server.request_governor import (
+    GitHubRequestError,
+    GitHubRequestMetadata,
+    GitHubRequestResult,
+)
 from mcp_gh_server.server import (
     AppContext,
     gh_commit_files,
@@ -1053,14 +1057,8 @@ async def test_submit_pr_review_requires_body_for_non_approval() -> None:
 
 
 @pytest.mark.asyncio
-async def test_submit_pr_review_preserves_failed_write_validation_detail_without_readback() -> None:
+async def test_submit_pr_review_known_failure_returns_structured_outcome_without_retry() -> None:
     head_sha = "b" * 40
-    detail = (
-        "gh command failed (exit 1): gh: Unprocessable Entity (HTTP 422); "
-        'GitHub response: {"message":"Validation Failed","errors":['
-        '{"resource":"PullRequestReview","code":"custom",'
-        '"message":"Review cannot be requested from pull request author."}]}'
-    )
     client = FakeGhClient(
         [
             {
@@ -1068,21 +1066,31 @@ async def test_submit_pr_review_preserves_failed_write_validation_detail_without
                 "head": {"sha": head_sha},
                 "user": {"login": "author"},
             },
-            RuntimeError(detail),
+            GitHubRequestError(
+                "GitHub rejected the review",
+                status_code=422,
+                ambiguous=False,
+                metadata=GitHubRequestMetadata(request_id="req-review-failed"),
+            ),
         ]
     )
 
-    with pytest.raises(RuntimeError, match="cannot be requested from pull request author"):
-        await gh_submit_pr_review(
-            "octo",
-            "repo",
-            224,
-            head_sha,
-            "request_changes",
-            ctx=_context(client),
-            body="Please revise.",
-        )
+    result = await gh_submit_pr_review(
+        "octo",
+        "repo",
+        224,
+        head_sha,
+        "request_changes",
+        ctx=_context(client),
+        body="Please revise.",
+    )
 
+    assert result.write_completed is False
+    assert result.readback_completed is False
+    assert result.state_matches_requested is None
+    assert result.request_id == "req-review-failed"
+    assert result.warning is not None
+    assert "write failed before confirmed completion" in result.warning
     assert len(client.calls) == 2
     assert len(client.payloads) == 1
 

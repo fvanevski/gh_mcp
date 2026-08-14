@@ -1,7 +1,10 @@
-"""Backward-compatible pull-request write re-exports."""
+"""Retired aggregate compatibility exports for pull-request writes.
 
-from .legacy_pr_merge_write_adapter import gh_merge_pr
-from .legacy_pr_metadata_write_adapter import gh_create_pr, gh_edit_pr
-from .legacy_pr_review_write_adapter import gh_submit_pr_review
+Pull-request write execution migrated to canonical domain implementations in issue #59.
+The individual frozen adapter modules remain only for later 0.8.0 source cleanup and are
+no longer re-exported here.
+"""
 
-__all__ = ["gh_create_pr", "gh_edit_pr", "gh_merge_pr", "gh_submit_pr_review"]
+from __future__ import annotations
+
+__all__: list[str] = []

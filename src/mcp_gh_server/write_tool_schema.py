@@ -28,14 +28,6 @@ from .legacy_git_write_adapter import (
 from .legacy_git_write_adapter import (
     gh_create_branch_from_sha as _gh_create_branch_from_sha,
 )
-from .legacy_pr_merge_write_adapter import gh_merge_pr as _gh_merge_pr
-from .legacy_pr_metadata_write_adapter import (
-    gh_create_pr as _gh_create_pr,
-)
-from .legacy_pr_metadata_write_adapter import (
-    gh_edit_pr as _gh_edit_pr,
-)
-from .legacy_pr_review_write_adapter import gh_submit_pr_review as _gh_submit_pr_review
 from .legacy_repository_write_adapters import (
     gh_commit_files as _gh_commit_files,
 )
@@ -45,12 +37,14 @@ from .models import (
     CommentCreate,
     CommitFile,
     CommitFilesResult,
+)
+from .pr_draft_state_models import PullRequestDraftStateTransitionResult
+from .pr_write_models import (
     PullRequestCreate,
     PullRequestEdit,
     PullRequestMerge,
     PullRequestReviewSubmission,
 )
-from .pr_draft_state_models import PullRequestDraftStateTransitionResult
 from .release_exact_models import ReleaseExactResult
 from .repository_create_models import RepositoryCreateResult
 from .tooling import (
@@ -71,6 +65,12 @@ from .tools.issue_writes import (
 )
 from .tools.issues import gh_create_comment as _gh_create_comment
 from .tools.pr_draft_state import gh_set_pr_draft_state as _gh_set_pr_draft_state
+from .tools.pr_writes import (
+    gh_create_pr as _gh_create_pr,
+    gh_edit_pr as _gh_edit_pr,
+    gh_merge_pr as _gh_merge_pr,
+    gh_submit_pr_review as _gh_submit_pr_review,
+)
 from .tools.release_exact import gh_create_release_exact as _gh_create_release_exact
 from .tools.repository_create import gh_create_repo as _gh_create_repo
 from .tools.workflow_dispatch import gh_run_workflow_exact as _gh_run_workflow_exact

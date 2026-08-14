@@ -280,6 +280,12 @@ class FakeServerClient:
             raise result
         return result
 
+    async def run_with_metadata(self, *args: str, **kwargs: Any) -> GitHubRequestResult[Any]:
+        result = await self.run(*args, **kwargs)
+        if isinstance(result, GitHubRequestResult):
+            return result
+        return GitHubRequestResult(value=result)
+
 
 def _server_context(client: FakeServerClient) -> Any:
     app = AppContext(
@@ -313,7 +319,8 @@ async def test_merge_adapter_rejects_semantic_readback_mismatch() -> None:
 
     assert len(client.calls) == 3
     assert result.write_completed is True
-    assert result.readback_completed is False
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
     assert result.merged is False
     assert result.warning is not None
     assert "does not match the requested state" in result.warning
@@ -348,12 +355,13 @@ async def test_merge_adapter_preserves_unknown_transport_outcome_and_does_not_re
 
     assert len(client.calls) == 3
     assert sum(1 for call, _ in client.calls if call[:2] == ("pr", "merge")) == 1
-    assert result.write_completed is False
+    assert result.write_completed is None
     assert result.readback_completed is True
+    assert result.state_matches_requested is True
     assert result.merged is True
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
-    assert "req-merge-ambiguous" in result.warning
+    assert result.request_id == "req-merge-ambiguous"
 
 
 @pytest.mark.asyncio
@@ -441,7 +449,8 @@ async def test_review_adapter_rejects_semantic_readback_mismatch() -> None:
     )
 
     assert result.write_completed is True
-    assert result.readback_completed is False
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
     assert result.warning is not None
     assert "does not match the requested state" in result.warning
 
@@ -485,8 +494,8 @@ async def test_review_adapter_preserves_ambiguous_write_without_replay() -> None
         )
         == 1
     )
-    assert result.write_completed is False
+    assert result.write_completed is None
     assert result.readback_completed is False
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
-    assert "req-review-ambiguous" in result.warning
+    assert result.request_id == "req-review-ambiguous"

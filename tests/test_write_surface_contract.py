@@ -160,9 +160,9 @@ async def test_merge_success_preserves_request_identity_and_warning() -> None:
     result = await gh_merge_pr("octo", "repo", 9, head, "squash", ctx=_context(client))
     assert result.merged is True
     assert result.readback_completed is True
-    assert result.warning is not None
-    assert "Governor metadata retained." in result.warning
-    assert "req-merge-9" in result.warning
+    assert result.state_matches_requested is True
+    assert result.request_id == "req-merge-9"
+    assert result.warning == "Governor metadata retained."
 
 
 @pytest.mark.asyncio
@@ -192,13 +192,14 @@ async def test_merge_ambiguous_failure_rejects_wrong_auto_merge_method() -> None
         ],
     )
     result = await gh_merge_pr("octo", "repo", 9, head, "squash", ctx=_context(client))
-    assert result.write_completed is False
-    assert result.readback_completed is False
+    assert result.write_completed is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
     assert result.auto_merge_enabled is True
+    assert result.request_id == "req-ambiguous-method"
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
     assert "does not match the requested state" in result.warning
-    assert "req-ambiguous-method" in result.warning
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
 
 
