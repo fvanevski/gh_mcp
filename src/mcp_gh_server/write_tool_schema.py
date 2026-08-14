@@ -708,6 +708,8 @@ async def gh_create_release(
         Field(description="Optional branch, tag, or commit-ish target."),
     ] = None,
 ) -> ReleaseCreate:
+    """Private 0.7.x compatibility callable; not registered as a public MCP tool."""
+
     return await _gh_create_release(
         owner,
         repo,
@@ -1032,18 +1034,6 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         ),
         MUTATE_EXTERNAL,
     ),
-    "gh_create_release": WriteToolMetadata(
-        "Create release",
-        (
-            "Additive write: create exactly one GitHub release for the supplied tag and "
-            "optional branch/tag/commit-ish target after ordinary write authorization and "
-            "the release-creation fine gate. This compatibility surface does not provide "
-            "an exact target precondition; use gh_create_release_exact for immutable "
-            "target identity. It cannot upload assets, delete releases, or retry an "
-            "ambiguous mutation automatically."
-        ),
-        ADD_EXTERNAL,
-    ),
     "gh_create_release_exact": WriteToolMetadata(
         "Create release at exact target",
         (
@@ -1111,7 +1101,6 @@ PUBLIC_WRITE_TOOLS: tuple[PublicWriteTool, ...] = (
     gh_merge_pr,
     gh_create_repo,
     gh_commit_files,
-    gh_create_release,
     gh_create_release_exact,
     gh_run_workflow_exact,
     gh_create_branch,
