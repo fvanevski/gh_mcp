@@ -197,6 +197,23 @@ async def test_repository_readback_mismatch_is_not_reported_as_verified(
     assert len(_read_calls(client)) == 1
 
 
+@pytest.mark.parametrize("field", ["nameWithOwner", "isPrivate", "description"])
+async def test_missing_required_repository_readback_evidence_is_not_verified(field: str) -> None:
+    snapshot = _repository()
+    snapshot.pop(field)
+    client = RepositoryCreateClient(read_results=[snapshot], write_results=[{"stdout": ""}])
+
+    result = await gh_create_repo("octo", "new-repo", ctx=_context(client))
+
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.warning is not None
+    assert "does not match the requested state" in result.warning
+    assert len(_write_calls(client)) == 1
+    assert len(_read_calls(client)) == 1
+
+
 async def test_missing_initialization_evidence_does_not_invent_a_state() -> None:
     snapshot = _repository()
     snapshot.pop("isEmpty")
