@@ -110,6 +110,13 @@ invariants continue to apply, including:
 - authoritative readback where a stable identity exists; and
 - explicit ambiguous/partial-write reporting instead of automatic replay.
 
+Repository creation requires explicit authoritative readback evidence for repository
+identity (`nameWithOwner`), visibility (`isPrivate`), and description. An explicit JSON
+`null` description is authoritative evidence for a repository with no description; an
+absent `description` field is incomplete evidence and must not be treated as equivalent to
+`null`. Initialization is the sole requested property that may remain unknown when GitHub
+does not expose boolean `isEmpty` evidence.
+
 Repository creation and workflow dispatch therefore require both their ordinary repository
 policy and their operation-specific exact target policy. The exact target lists default to
 empty. Enabling a fine gate without a matching exact target remains fail-closed. Release
@@ -151,6 +158,11 @@ The contract is enforced by complementary tests:
   ordinary repository policy; and
 - write-wrapper tests verify that facade calls still delegate to the existing execution
   implementations, including symbolic-assignee readback semantics.
+
+Repository-creation regression coverage additionally distinguishes required readback fields
+from optional initialization evidence: missing identity, visibility, or description must
+produce a semantic mismatch, while missing initialization evidence leaves `initialized`
+unknown rather than inventing state.
 
 Async schema-policy and target-policy tests follow the repository's
 `asyncio_mode = "auto"` convention and do not carry explicit `@pytest.mark.asyncio`
