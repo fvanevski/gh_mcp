@@ -181,11 +181,7 @@ async def _read_issue_linked_branch(
         if not isinstance(has_next_page, bool):
             raise RuntimeError("GitHub returned malformed linked-branch page information")
         if not has_next_page:
-            return (
-                matching[0]
-                if matching
-                else _LinkedBranchReadback(None, None, None, None)
-            )
+            return matching[0] if matching else _LinkedBranchReadback(None, None, None, None)
         if not isinstance(end_cursor, str) or not end_cursor:
             raise RuntimeError("GitHub linked-branch pagination omitted the next cursor")
         after = end_cursor
