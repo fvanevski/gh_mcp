@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from mcp_gh_server import write_tool_schema
 from mcp_gh_server.request_governor import (
     GitHubRequestError,
     GitHubRequestMetadata,
@@ -104,6 +105,14 @@ def test_all_public_writes_are_bound_to_active_schema_modules() -> None:
     assert len(expected) == 18
     for function, module in expected.items():
         assert function.__module__ == module
+
+    assert write_tool_schema._gh_create_branch.__module__ == (
+        "mcp_gh_server.tools.issue_branch_writes"
+    )
+    assert write_tool_schema._gh_create_branch_from_sha.__module__ == (
+        "mcp_gh_server.tools.git_writes"
+    )
+    assert write_tool_schema._gh_commit_files.__module__ == "mcp_gh_server.tools.content_writes"
 
 
 @pytest.mark.asyncio
@@ -204,7 +213,7 @@ async def test_merge_ambiguous_failure_rejects_wrong_auto_merge_method() -> None
 
 
 @pytest.mark.asyncio
-async def test_legacy_writes_without_structured_readback_do_not_claim_verification() -> None:
+async def test_comment_compatibility_and_issue_branch_exact_readback_contracts() -> None:
     comment_url = "https://github.com/octo/repo/issues/4#issuecomment-5"
     comment_client = MetadataAwareClient(
         write_results=[GitHubRequestResult(value={"stdout": comment_url})]
@@ -215,8 +224,53 @@ async def test_legacy_writes_without_structured_readback_do_not_claim_verificati
     assert comment.warning is not None
     assert "Do not retry automatically" in comment.warning
 
-    branch_client = MetadataAwareClient(write_results=[GitHubRequestResult(value={"stdout": ""})])
+    sha = "a" * 40
+    branch_client = MetadataAwareClient(
+        read_results=[
+            {"node_id": "R_repo", "default_branch": "main"},
+            {"node_id": "I_issue"},
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            {
+                "data": {
+                    "repository": {
+                        "issue": {
+                            "id": "I_issue",
+                            "linkedBranches": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [
+                                    {
+                                        "id": "LB_feature",
+                                        "ref": {
+                                            "name": "feature",
+                                            "prefix": "refs/heads/",
+                                            "target": {"oid": sha},
+                                        },
+                                    }
+                                ],
+                            },
+                        }
+                    }
+                }
+            },
+        ],
+        write_results=[
+            GitHubRequestResult(
+                value={
+                    "data": {
+                        "createLinkedBranch": {
+                            "issue": {"id": "I_issue"},
+                            "linkedBranch": {"id": "LB_feature"},
+                        }
+                    }
+                }
+            )
+        ],
+    )
     branch = await gh_create_branch("octo", "repo", 4, "feature", ctx=_context(branch_client))
+    assert branch.precondition_checked is True
     assert branch.write_completed is True
-    assert branch.readback_completed is False
-    assert branch.warning is not None
+    assert branch.readback_completed is True
+    assert branch.state_matches_requested is True
+    assert branch.linked_branch_id == "LB_feature"
+    assert sum(kind == "write" for kind, _, _ in branch_client.calls) == 1

@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 
-from mcp_gh_server.request_governor import GitHubRequestError, GitHubRequestMetadata
+from mcp_gh_server.request_governor import (
+    GitHubRequestError,
+    GitHubRequestMetadata,
+    GitHubRequestResult,
+)
 from mcp_gh_server.server import AppContext, gh_create_branch_from_sha
 from mcp_gh_server.settings import Settings
 
@@ -26,6 +30,15 @@ class FakeGhClient:
         if isinstance(result, Exception):
             raise result
         return result
+
+    async def run_with_metadata(self, *args: str, **kwargs: Any) -> GitHubRequestResult[Any]:
+        self.calls.append((args, kwargs))
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        if isinstance(result, GitHubRequestResult):
+            return result
+        return GitHubRequestResult(value=result)
 
 
 def _context(client: FakeGhClient) -> Any:
@@ -72,8 +85,10 @@ async def test_exact_branch_success_uses_independent_authoritative_readback() ->
         "GET",
     )
     assert result.created is True
+    assert result.precondition_checked is True
     assert result.write_completed is True
     assert result.readback_completed is True
+    assert result.state_matches_requested is True
     assert result.warning is None
 
 
@@ -94,7 +109,8 @@ async def test_exact_branch_success_with_mismatched_readback_is_not_verified_suc
 
     assert result.created is True
     assert result.write_completed is True
-    assert result.readback_completed is False
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
     assert result.warning is not None
     assert "does not match the requested state" in result.warning
 
@@ -128,11 +144,12 @@ async def test_exact_branch_ambiguous_create_is_never_replayed() -> None:
         == 1
     )
     assert result.created is False
-    assert result.write_completed is False
+    assert result.write_completed is None
     assert result.readback_completed is True
+    assert result.state_matches_requested is True
+    assert result.request_id == "req-branch-ambiguous"
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
-    assert "req-branch-ambiguous" in result.warning
     assert "Do not retry the mutation" in result.warning
 
 
