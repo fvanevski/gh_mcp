@@ -64,9 +64,17 @@ from .tooling import (
 from .tools.issue_state import gh_set_issue_state as _gh_set_issue_state
 from .tools.issue_writes import (
     gh_create_issue as _gh_create_issue,
+)
+from .tools.issue_writes import (
     gh_create_label as _gh_create_label,
+)
+from .tools.issue_writes import (
     gh_create_milestone as _gh_create_milestone,
+)
+from .tools.issue_writes import (
     gh_edit_issue as _gh_edit_issue,
+)
+from .tools.issue_writes import (
     gh_edit_label as _gh_edit_label,
 )
 from .tools.issues import gh_create_comment as _gh_create_comment

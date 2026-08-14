@@ -440,16 +440,14 @@ async def test_exact_tool_surface_snapshot() -> None:
         "gh_edit_label",
         "gh_create_milestone",
     ):
-        assert EXACT_OUTCOME_FIELDS <= set(tools[name].output_schema["properties"])
+        assert set(tools[name].output_schema["properties"]) >= EXACT_OUTCOME_FIELDS
 
     rate_output = tools["gh_get_api_rate_status"].output_schema["properties"]
     assert {"github", "governor"} == set(rate_output)
 
     repo_create_schema = tools["gh_create_repo"].input_schema["properties"]
     assert "name" not in repo_create_schema
-    assert repo_create_schema["owner"]["pattern"] == (
-        r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
-    )
+    assert repo_create_schema["owner"]["pattern"] == (r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
     assert repo_create_schema["owner"]["maxLength"] == 39
     assert repo_create_schema["repo"]["pattern"] == r"^[A-Za-z0-9_.-]{1,100}$"
     assert repo_create_schema["repo"]["maxLength"] == 100
