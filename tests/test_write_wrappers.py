@@ -582,6 +582,7 @@ async def test_issue_branch_uses_linked_graphql_and_pr_edit_uses_raw_write() -> 
             {
                 "data": {
                     "repository": {
+                        "id": "R_repo",
                         "issue": {
                             "id": "I_issue",
                             "linkedBranches": {
@@ -592,12 +593,13 @@ async def test_issue_branch_uses_linked_graphql_and_pr_edit_uses_raw_write() -> 
                                         "ref": {
                                             "name": "feature",
                                             "prefix": "refs/heads/",
+                                            "repository": {"id": "R_repo"},
                                             "target": {"oid": sha},
                                         },
                                     }
                                 ],
                             },
-                        }
+                        },
                     }
                 }
             },
