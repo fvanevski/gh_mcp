@@ -19,12 +19,16 @@ from mcp_gh_server.request_governor import (
 from mcp_gh_server.server import AppContext
 from mcp_gh_server.settings import Settings
 from mcp_gh_server.tools.workflow_dispatch import (
+    MAX_WORKFLOW_INPUT_CHARACTERS,
+    MAX_WORKFLOW_INPUTS,
     WorkflowDispatchDuplicateError,
     WorkflowDispatchRefAmbiguityError,
     gh_run_workflow_exact,
 )
 from mcp_gh_server.workflow_dispatch_models import WorkflowDispatchExactResult
 from mcp_gh_server.write_contracts import WritePreconditionMismatch
+
+WORKFLOW_PATH = ".github/workflows/release.yml"
 
 
 @dataclass
@@ -155,12 +159,17 @@ def _runs(*runs: dict[str, Any], total_count: int | None = None) -> dict[str, An
     }
 
 
-def _workflow() -> dict[str, Any]:
+def _workflow(
+    *,
+    workflow_id: int = 17,
+    path: str = WORKFLOW_PATH,
+    state: str = "active",
+) -> dict[str, Any]:
     return {
-        "id": 17,
+        "id": workflow_id,
         "name": "Release",
-        "path": ".github/workflows/release.yml",
-        "state": "active",
+        "path": path,
+        "state": state,
     }
 
 
@@ -178,8 +187,13 @@ def _successful_reads(sha: str, run_id: int) -> list[Any]:
         _runs(),
         *_missing_ref(),
         _ref(sha),
+        _workflow(),
         _run(run_id, sha),
     ]
+
+
+def _exact_args(sha: str, *, ref: str = "heads/main") -> tuple[str, str, int, str, str, str]:
+    return "octo", "repo", 17, WORKFLOW_PATH, ref, sha
 
 
 def test_result_model_exposes_standard_exact_write_contract() -> None:
@@ -201,6 +215,7 @@ def test_result_model_exposes_standard_exact_write_contract() -> None:
         "run_url",
         "run_status",
         "run_head_sha",
+        "run_event",
     } == set(schema["properties"])
 
 
@@ -210,14 +225,7 @@ async def test_stale_ref_fails_before_duplicate_query_or_dispatch() -> None:
     client = WorkflowDispatchClient(read_results=[_ref(current)])
 
     with pytest.raises(WritePreconditionMismatch, match="no write was attempted"):
-        await gh_run_workflow_exact(
-            "octo",
-            "repo",
-            17,
-            "heads/main",
-            expected,
-            ctx=_context(client),
-        )
+        await gh_run_workflow_exact(*_exact_args(expected), ctx=_context(client))
 
     assert [kind for kind, _, _ in client.calls] == ["read"]
     assert client.payloads == []
@@ -234,14 +242,7 @@ async def test_existing_matching_dispatch_fails_closed_without_write() -> None:
     )
 
     with pytest.raises(WorkflowDispatchDuplicateError, match="no write was attempted"):
-        await gh_run_workflow_exact(
-            "octo",
-            "repo",
-            17,
-            "heads/main",
-            sha,
-            ctx=_context(client),
-        )
+        await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert [kind for kind, _, _ in client.calls] == ["read", "read", "read"]
     assert client.payloads == []
@@ -263,21 +264,49 @@ async def test_same_name_branch_and_tag_fails_closed_even_at_same_sha() -> None:
     )
 
     with pytest.raises(WorkflowDispatchRefAmbiguityError, match="both refs/heads/main"):
-        await gh_run_workflow_exact(
-            "octo",
-            "repo",
-            17,
-            "heads/main",
-            sha,
-            ctx=_context(client),
-        )
+        await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 0
     assert client.payloads == []
 
 
-async def test_successful_dispatch_uses_returned_run_identity_for_readback() -> None:
+@pytest.mark.parametrize(
+    ("workflow", "message"),
+    [
+        (_workflow(workflow_id=18), "workflow ID 17"),
+        (_workflow(path=".github/workflows/other.yml"), "expected exact path"),
+        (_workflow(state="disabled_manually"), "is not active"),
+    ],
+)
+async def test_workflow_identity_or_state_mismatch_fails_immediately_before_write(
+    workflow: dict[str, Any],
+    message: str,
+) -> None:
     sha = _sha(5)
+    client = WorkflowDispatchClient(
+        read_results=[
+            _ref(sha),
+            _runs(),
+            *_missing_ref(),
+            _ref(sha),
+            workflow,
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 0
+    assert client.calls[-1][1] == (
+        "api",
+        "repos/octo/repo/actions/workflows/17",
+        "-X",
+        "GET",
+    )
+
+
+async def test_successful_dispatch_uses_returned_run_identity_for_readback() -> None:
+    sha = _sha(6)
     client = WorkflowDispatchClient(
         read_results=_successful_reads(sha, 92),
         write_results=[
@@ -289,13 +318,9 @@ async def test_successful_dispatch_uses_returned_run_identity_for_readback() -> 
     )
 
     result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        sha.upper(),
+        *_exact_args(sha.upper()),
         ctx=_context(client),
-        fields=["environment=prod", "force=false"],
+        inputs={"environment": "prod", "force": "false"},
     )
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
@@ -306,7 +331,17 @@ async def test_successful_dispatch_uses_returned_run_identity_for_readback() -> 
             "inputs": {"environment": "prod", "force": "false"},
         }
     ]
-    write_args = next(args for kind, args, _ in client.calls if kind == "write")
+    write_index = next(
+        index for index, (kind, _, _) in enumerate(client.calls) if kind == "write"
+    )
+    workflow_read_args = client.calls[write_index - 1][1]
+    assert workflow_read_args == (
+        "api",
+        "repos/octo/repo/actions/workflows/17",
+        "-X",
+        "GET",
+    )
+    write_args = client.calls[write_index][1]
     assert write_args[:4] == (
         "api",
         "repos/octo/repo/actions/workflows/17/dispatches",
@@ -329,6 +364,7 @@ async def test_successful_dispatch_uses_returned_run_identity_for_readback() -> 
     assert result.run_url == "https://github.com/octo/repo/actions/runs/92"
     assert result.run_status == "queued"
     assert result.run_head_sha == sha
+    assert result.run_event == "workflow_dispatch"
     assert result.precondition_checked is True
     assert result.write_completed is True
     assert result.readback_completed is True
@@ -338,8 +374,8 @@ async def test_successful_dispatch_uses_returned_run_identity_for_readback() -> 
 
 
 async def test_annotated_tag_dispatch_uses_peeled_commit_and_short_tag_name() -> None:
-    commit_sha = _sha(6)
-    tag_sha = _sha(7)
+    commit_sha = _sha(7)
+    tag_sha = _sha(8)
     client = WorkflowDispatchClient(
         read_results=[
             _annotated_ref(tag_sha),
@@ -348,29 +384,27 @@ async def test_annotated_tag_dispatch_uses_peeled_commit_and_short_tag_name() ->
             *_missing_ref(),
             _annotated_ref(tag_sha),
             _tag_object(tag_sha, commit_sha),
+            _workflow(),
             _run(96, commit_sha, head_branch="v1.0.0"),
         ],
         write_results=[GitHubRequestResult(value=_receipt(96))],
     )
 
     result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "tags/v1.0.0",
-        commit_sha,
+        *_exact_args(commit_sha, ref="tags/v1.0.0"),
         ctx=_context(client),
     )
 
     assert client.payloads == [{"ref": "v1.0.0", "return_run_details": True}]
     assert result.run_id == 96
     assert result.run_head_sha == commit_sha
+    assert result.run_event == "workflow_dispatch"
     assert result.state_matches_requested is True
 
 
 async def test_ref_movement_after_duplicate_guard_stops_before_write() -> None:
-    expected = _sha(8)
-    moved = _sha(9)
+    expected = _sha(9)
+    moved = _sha(10)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(expected),
@@ -381,41 +415,28 @@ async def test_ref_movement_after_duplicate_guard_stops_before_write() -> None:
     )
 
     with pytest.raises(WritePreconditionMismatch, match="no write was attempted"):
-        await gh_run_workflow_exact(
-            "octo",
-            "repo",
-            17,
-            "heads/main",
-            expected,
-            ctx=_context(client),
-        )
+        await gh_run_workflow_exact(*_exact_args(expected), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 0
     assert client.payloads == []
 
 
 async def test_post_dispatch_ref_movement_is_bound_to_returned_run_and_fails_closed() -> None:
-    expected = _sha(10)
-    moved = _sha(11)
+    expected = _sha(11)
+    moved = _sha(12)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(expected),
             _runs(),
             *_missing_ref(),
             _ref(expected),
+            _workflow(),
             _run(97, moved),
         ],
         write_results=[GitHubRequestResult(value=_receipt(97))],
     )
 
-    result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        expected,
-        ctx=_context(client),
-    )
+    result = await gh_run_workflow_exact(*_exact_args(expected), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is True
@@ -423,32 +444,27 @@ async def test_post_dispatch_ref_movement_is_bound_to_returned_run_and_fails_clo
     assert result.state_matches_requested is False
     assert result.run_id == 97
     assert result.run_head_sha == moved
+    assert result.run_event == "workflow_dispatch"
     assert result.warning is not None
     assert "ref may have moved" in result.warning
     assert "no retry was attempted" in result.warning
 
 
 async def test_returned_run_id_mismatch_does_not_accept_another_run() -> None:
-    sha = _sha(12)
+    sha = _sha(13)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
             _runs(),
             *_missing_ref(),
             _ref(sha),
+            _workflow(),
             _run(99, sha),
         ],
         write_results=[GitHubRequestResult(value=_receipt(98))],
     )
 
-    result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        sha,
-        ctx=_context(client),
-    )
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert result.write_completed is True
     assert result.readback_completed is False
@@ -459,25 +475,19 @@ async def test_returned_run_id_mismatch_does_not_accept_another_run() -> None:
 
 
 async def test_malformed_success_receipt_never_guesses_created_run_from_discovery() -> None:
-    sha = _sha(13)
+    sha = _sha(14)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
             _runs(),
             *_missing_ref(),
             _ref(sha),
+            _workflow(),
         ],
         write_results=[GitHubRequestResult(value={})],
     )
 
-    result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        sha,
-        ctx=_context(client),
-    )
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is True
@@ -490,13 +500,14 @@ async def test_malformed_success_receipt_never_guesses_created_run_from_discover
 
 
 async def test_known_dispatch_failure_is_not_replayed() -> None:
-    sha = _sha(14)
+    sha = _sha(15)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
             _runs(),
             *_missing_ref(),
             _ref(sha),
+            _workflow(),
             _runs(),
         ],
         write_results=[
@@ -509,14 +520,7 @@ async def test_known_dispatch_failure_is_not_replayed() -> None:
         ],
     )
 
-    result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        sha,
-        ctx=_context(client),
-    )
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is False
@@ -529,13 +533,14 @@ async def test_known_dispatch_failure_is_not_replayed() -> None:
 
 
 async def test_successful_dispatch_with_delayed_exact_run_readback_is_not_replayed() -> None:
-    sha = _sha(15)
+    sha = _sha(16)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
             _runs(),
             *_missing_ref(),
             _ref(sha),
+            _workflow(),
             GitHubRequestError("run not visible yet", status_code=404),
         ],
         write_results=[
@@ -546,14 +551,7 @@ async def test_successful_dispatch_with_delayed_exact_run_readback_is_not_replay
         ],
     )
 
-    result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        sha,
-        ctx=_context(client),
-    )
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is True
@@ -565,13 +563,14 @@ async def test_successful_dispatch_with_delayed_exact_run_readback_is_not_replay
 
 
 async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_once() -> None:
-    sha = _sha(16)
+    sha = _sha(17)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
             _runs(),
             *_missing_ref(),
             _ref(sha),
+            _workflow(),
             _runs(),
         ],
         write_results=[
@@ -584,14 +583,7 @@ async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_on
         ],
     )
 
-    result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        sha,
-        ctx=_context(client),
-    )
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is None
@@ -605,13 +597,14 @@ async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_on
 
 
 async def test_ambiguous_transport_stays_unknown_even_when_fallback_readback_matches() -> None:
-    sha = _sha(17)
+    sha = _sha(18)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
             _runs(),
             *_missing_ref(),
             _ref(sha),
+            _workflow(),
             _runs(_run(101, sha)),
             _workflow(),
         ],
@@ -625,14 +618,7 @@ async def test_ambiguous_transport_stays_unknown_even_when_fallback_readback_mat
         ],
     )
 
-    result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        sha,
-        ctx=_context(client),
-    )
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is None
@@ -640,18 +626,20 @@ async def test_ambiguous_transport_stays_unknown_even_when_fallback_readback_mat
     assert result.state_matches_requested is True
     assert result.matching_run_count == 1
     assert result.run_id == 101
+    assert result.run_event == "workflow_dispatch"
     assert result.warning is not None
     assert "Do not retry the mutation" in result.warning
 
 
 async def test_multiple_fallback_matches_are_ambiguous_and_never_redispatched() -> None:
-    sha = _sha(18)
+    sha = _sha(19)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
             _runs(),
             *_missing_ref(),
             _ref(sha),
+            _workflow(),
             _runs(_run(102, sha), _run(103, sha)),
             _workflow(),
         ],
@@ -664,14 +652,7 @@ async def test_multiple_fallback_matches_are_ambiguous_and_never_redispatched() 
         ],
     )
 
-    result = await gh_run_workflow_exact(
-        "octo",
-        "repo",
-        17,
-        "heads/main",
-        sha,
-        ctx=_context(client),
-    )
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
     assert result.write_completed is None
@@ -684,7 +665,7 @@ async def test_multiple_fallback_matches_are_ambiguous_and_never_redispatched() 
 
 
 async def test_concurrent_same_key_invocations_serialize_and_dispatch_once() -> None:
-    sha = _sha(19)
+    sha = _sha(20)
     write_entered = asyncio.Event()
     release_write = asyncio.Event()
     client = WorkflowDispatchClient(
@@ -698,27 +679,9 @@ async def test_concurrent_same_key_invocations_serialize_and_dispatch_once() -> 
     )
     ctx = _context(client)
 
-    first = asyncio.create_task(
-        gh_run_workflow_exact(
-            "octo",
-            "repo",
-            17,
-            "heads/main",
-            sha,
-            ctx=ctx,
-        )
-    )
+    first = asyncio.create_task(gh_run_workflow_exact(*_exact_args(sha), ctx=ctx))
     await write_entered.wait()
-    second = asyncio.create_task(
-        gh_run_workflow_exact(
-            "octo",
-            "repo",
-            17,
-            "heads/main",
-            sha,
-            ctx=ctx,
-        )
-    )
+    second = asyncio.create_task(gh_run_workflow_exact(*_exact_args(sha), ctx=ctx))
     await asyncio.sleep(0)
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
@@ -736,29 +699,40 @@ async def test_workflow_dispatch_gate_blocks_before_any_github_call() -> None:
 
     with pytest.raises(RuntimeError, match="MCP_GH_ALLOW_WORKFLOW_DISPATCH"):
         await gh_run_workflow_exact(
-            "octo",
-            "repo",
-            17,
-            "heads/main",
-            _sha(20),
+            *_exact_args(_sha(21)),
             ctx=_context(client, workflow_dispatch_enabled=False),
         )
 
     assert client.calls == []
 
 
-async def test_duplicate_input_keys_are_rejected_before_ref_read() -> None:
+@pytest.mark.parametrize(
+    ("inputs", "message"),
+    [
+        (["environment=prod"], "must be an object"),  # type: ignore[list-item]
+        ({"": "prod"}, "keys must be non-empty"),
+        ({"environment": 1}, "values must be strings"),  # type: ignore[dict-item]
+        (
+            {f"key-{index}": "value" for index in range(MAX_WORKFLOW_INPUTS + 1)},
+            "at most 25 entries",
+        ),
+        (
+            {"key": "x" * MAX_WORKFLOW_INPUT_CHARACTERS},
+            "65,535 aggregate",
+        ),
+    ],
+)
+async def test_malformed_or_oversized_inputs_fail_before_github_reads(
+    inputs: Any,
+    message: str,
+) -> None:
     client = WorkflowDispatchClient()
 
-    with pytest.raises(ValueError, match="supplied more than once"):
+    with pytest.raises(ValueError, match=message):
         await gh_run_workflow_exact(
-            "octo",
-            "repo",
-            17,
-            "heads/main",
-            _sha(21),
+            *_exact_args(_sha(22)),
             ctx=_context(client),
-            fields=["environment=prod", "environment=staging"],
+            inputs=inputs,
         )
 
     assert client.calls == []
