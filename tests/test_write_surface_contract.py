@@ -234,6 +234,7 @@ async def test_comment_compatibility_and_issue_branch_exact_readback_contracts()
             {
                 "data": {
                     "repository": {
+                        "id": "R_repo",
                         "issue": {
                             "id": "I_issue",
                             "linkedBranches": {
@@ -244,12 +245,13 @@ async def test_comment_compatibility_and_issue_branch_exact_readback_contracts()
                                         "ref": {
                                             "name": "feature",
                                             "prefix": "refs/heads/",
+                                            "repository": {"id": "R_repo"},
                                             "target": {"oid": sha},
                                         },
                                     }
                                 ],
                             },
-                        }
+                        },
                     }
                 }
             },
