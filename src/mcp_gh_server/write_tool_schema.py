@@ -14,6 +14,7 @@ from mcp.server.mcpserver import Context
 from mcp_types import ToolAnnotations
 from pydantic import Field
 
+from .git_write_models import BranchCreate, BranchCreateFromSha, CommitFilesResult
 from .issue_state_models import IssueState, IssueStateReason, IssueStateTransitionResult
 from .issue_write_models import (
     IssueCreateResult,
@@ -22,22 +23,7 @@ from .issue_write_models import (
     LabelEditResult,
     MilestoneCreateResult,
 )
-from .legacy_git_write_adapter import (
-    gh_create_branch as _gh_create_branch,
-)
-from .legacy_git_write_adapter import (
-    gh_create_branch_from_sha as _gh_create_branch_from_sha,
-)
-from .legacy_repository_write_adapters import (
-    gh_commit_files as _gh_commit_files,
-)
-from .models import (
-    BranchCreate,
-    BranchCreateFromSha,
-    CommentCreate,
-    CommitFile,
-    CommitFilesResult,
-)
+from .models import CommentCreate, CommitFile
 from .pr_draft_state_models import PullRequestDraftStateTransitionResult
 from .pr_write_models import (
     PullRequestCreate,
@@ -55,6 +41,9 @@ from .tooling import (
     REPO_RE,
     AppContext,
 )
+from .tools.content_writes import gh_commit_files as _gh_commit_files
+from .tools.git_writes import gh_create_branch_from_sha as _gh_create_branch_from_sha
+from .tools.issue_branch_writes import gh_create_branch as _gh_create_branch
 from .tools.issue_state import gh_set_issue_state as _gh_set_issue_state
 from .tools.issue_writes import (
     gh_create_issue as _gh_create_issue,
@@ -729,7 +718,7 @@ async def gh_create_branch(
     repo: Repository,
     issue_number: Annotated[
         PositiveNumber,
-        Field(description="Positive issue number used by GitHub issue develop."),
+        Field(description="Positive issue number to link to the new development branch."),
     ],
     name: Annotated[
         BranchName,
@@ -741,7 +730,8 @@ async def gh_create_branch(
         BranchName | None,
         Field(
             description=(
-                "Existing branch-name base; full commit SHAs are rejected by the implementation."
+                "Existing branch-name base resolved to an exact commit immediately before "
+                "creation; full commit SHAs are rejected."
             )
         ),
     ] = None,
@@ -938,8 +928,9 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
             "Destructive write: create or replace bounded UTF-8 file contents in one Git "
             "commit and conditionally advance exactly one existing branch only when its "
             "head matches expected_head_sha. Ordinary write authorization and the "
-            "content-commit fine gate are required. The operation cannot delete files, "
-            "force-update the ref, or blindly retry an ambiguous branch update."
+            "content-commit fine gate are required. The branch advance uses one exact "
+            "compare-and-swap attempt followed by authoritative ref readback; it cannot "
+            "delete files, force-update the ref, or blindly retry an ambiguous update."
         ),
         MUTATE_EXTERNAL,
     ),
@@ -972,11 +963,13 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
     "gh_create_branch": WriteToolMetadata(
         "Create issue development branch",
         (
-            "Additive write: create exactly one issue development branch using a bounded "
-            "branch-name base after ordinary write authorization. The base parameter "
-            "rejects full commit SHAs; use gh_create_branch_from_sha for an immutable "
-            "base. This compatibility surface does not claim exact semantic readback "
-            "identity and cannot move or delete refs."
+            "Additive write: create exactly one branch linked to the specified issue after "
+            "ordinary write authorization. The requested or default branch-name base is "
+            "resolved to an exact commit and rechecked immediately before one mutation. "
+            "Authoritative bounded readback verifies the exact issue association, branch "
+            "ref, and target SHA. Full commit SHAs in base are rejected; use "
+            "gh_create_branch_from_sha for a caller-supplied immutable base. The operation "
+            "never moves or deletes refs and never blindly retries an ambiguous mutation."
         ),
         ADD_EXTERNAL,
     ),
@@ -986,8 +979,9 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
             "Additive write: create exactly one new branch at an exact 40-character "
             "commit SHA after ordinary write authorization. A branch already at the "
             "requested SHA is a safe no-write result; a conflicting existing branch is "
-            "left unchanged. The operation never force-updates, moves, overwrites, or "
-            "deletes an existing ref."
+            "left unchanged. One mutation attempt is followed by authoritative exact-ref "
+            "readback; the operation never force-updates, moves, overwrites, deletes, or "
+            "blindly retries an ambiguous ref creation."
         ),
         ADD_EXTERNAL,
     ),

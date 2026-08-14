@@ -563,16 +563,66 @@ async def test_get_failed_run_logs_is_noninteractive_bounded_and_attempt_pinned(
 
 
 @pytest.mark.asyncio
-async def test_branch_and_pr_edit_use_raw_writes() -> None:
-    branch_client = FakeGhClient([{"stdout": ""}])
-    await gh_create_branch(
+async def test_issue_branch_uses_linked_graphql_and_pr_edit_uses_raw_write() -> None:
+    sha = "a" * 40
+    branch_client = FakeGhClient(
+        [
+            {"node_id": "R_repo", "default_branch": "main"},
+            {"node_id": "I_issue"},
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            {
+                "data": {
+                    "createLinkedBranch": {
+                        "issue": {"id": "I_issue"},
+                        "linkedBranch": {"id": "LB_feature"},
+                    }
+                }
+            },
+            {
+                "data": {
+                    "repository": {
+                        "id": "R_repo",
+                        "issue": {
+                            "id": "I_issue",
+                            "linkedBranches": {
+                                "pageInfo": {"hasNextPage": False, "endCursor": None},
+                                "nodes": [
+                                    {
+                                        "id": "LB_feature",
+                                        "ref": {
+                                            "name": "feature",
+                                            "prefix": "refs/heads/",
+                                            "repository": {"id": "R_repo"},
+                                            "target": {"oid": sha},
+                                        },
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                }
+            },
+        ]
+    )
+    branch = await gh_create_branch(
         "octo",
         "repo",
         4,
         "feature",
         ctx=_context(branch_client),
     )
-    assert branch_client.calls[0][1] == {"json_output": False}
+    assert branch.precondition_checked is True
+    assert branch.readback_completed is True
+    assert branch.state_matches_requested is True
+    assert branch.linked_branch_id == "LB_feature"
+    assert branch_client.calls[4][0][:4] == ("api", "graphql", "-X", "POST")
+    assert branch_client.payloads[0]["variables"]["input"] == {
+        "issueId": "I_issue",
+        "repositoryId": "R_repo",
+        "oid": sha,
+        "name": "feature",
+    }
 
     pr_client = FakeGhClient(
         [
@@ -1380,7 +1430,11 @@ async def test_commit_files_unknown_ref_outcome_requires_read_before_retry() -> 
             {"sha": "c" * 40},
             {"sha": "d" * 40},
             {"sha": commit},
-            RuntimeError("timeout"),
+            GitHubRequestError(
+                "timeout",
+                ambiguous=True,
+                metadata=GitHubRequestMetadata(request_id="req-content-ambiguous"),
+            ),
             RuntimeError("readback timeout"),
         ]
     )
@@ -1396,7 +1450,7 @@ async def test_commit_files_unknown_ref_outcome_requires_read_before_retry() -> 
     )
 
     assert result.ref_updated is None
-    assert result.write_completed is False
+    assert result.write_completed is None
     assert result.readback_completed is False
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
