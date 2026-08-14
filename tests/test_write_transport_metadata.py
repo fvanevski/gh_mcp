@@ -31,7 +31,6 @@ class FakeGhClient:
         return GitHubRequestResult(value=result)
 
 
-@pytest.mark.asyncio
 async def test_canonical_json_write_preserves_structured_ambiguity() -> None:
     error = GitHubRequestError(
         "connection reset",
@@ -55,7 +54,6 @@ async def test_canonical_json_write_preserves_structured_ambiguity() -> None:
     assert len(client.calls) == 1
 
 
-@pytest.mark.asyncio
 async def test_canonical_json_write_does_not_infer_bare_runtimeerror_text() -> None:
     error = RuntimeError("transport timeout after request body was sent")
     client = FakeGhClient([error])
