@@ -71,13 +71,16 @@ Version 0.7.1 exposes 61 public MCP tools: 40 read-only and 21 write.
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
-- `gh_create_repo`: create a new repository (write, disabled by default).
+- `gh_create_repo`: create a new repository only for an exact configured prospective
+  `OWNER/REPO` target (write, disabled by default).
 - `gh_create_release`: create a new release (write, disabled by default).
 - `gh_create_release_exact`: create a release against one exact target commit with
   fail-closed absence preconditions and authoritative readback (write, disabled by default).
-- `gh_run_workflow`: trigger a workflow dispatch event (write, disabled by default).
-- `gh_run_workflow_exact`: dispatch one workflow only when the requested ref resolves
-  to the expected exact SHA, with post-dispatch evidence (write, disabled by default).
+- `gh_run_workflow`: trigger one workflow dispatch for an exact numeric workflow ID or
+  exact case-sensitive `.github/workflows/<file>.yml|yaml` path (write, disabled by default).
+- `gh_run_workflow_exact`: dispatch one exact numeric workflow ID or canonical workflow
+  path only when the requested ref resolves to the expected exact SHA, with post-dispatch
+  evidence bound to the resolved numeric workflow/run identities (write, disabled by default).
 - `gh_edit_issue`: edit an existing issue (write, disabled by default).
 - `gh_set_issue_state`: change issue state only from the caller-declared expected state
   and verify the resulting state by readback (write, disabled by default).
@@ -471,6 +474,30 @@ When either allowlist is non-empty, a target is accepted if its exact
 `owner/repo` or its owner is listed. Fine-grained GitHub token permissions
 remain the primary GitHub-side authorization boundary.
 
+Repository creation and workflow dispatch have an additional exact target policy.
+The corresponding allowlist must be non-empty when the fine gate is enabled; a target
+mismatch fails before the mutation request. Repository creation targets are prospective
+canonical repository identities and therefore do not require an owner-wide allowlist:
+
+```dotenv
+# Exact repositories that may be created. Prospective repositories may be listed in
+# MCP_GH_ALLOWED_REPOSITORIES as exact owner/repo entries without granting owner-wide writes.
+MCP_GH_ALLOWED_REPO_CREATION_TARGETS=fvanevski/new-project
+
+# Exact workflow targets. WORKFLOW is either a positive numeric ID or an exact,
+# case-sensitive canonical workflow path.
+MCP_GH_ALLOWED_WORKFLOW_DISPATCH_TARGETS=fvanevski/project-a@12345678,fvanevski/project-b@.github/workflows/Release.yml
+```
+
+For a workflow path, the public write schema accepts only canonical
+`.github/workflows/<file>.yml` or `.yaml` values. The server first applies the local
+repository/fine-gate/target policy to the caller-supplied selector. If the selector is
+a path, it then performs a read-only workflow lookup, requires GitHub to return that
+same path with exact case, and converts it to GitHub's positive numeric workflow ID.
+Duplicate detection, exact-ref checks, dispatch, reservation state, and authoritative
+run readback continue to use that numeric identity. A path mismatch or resolution
+failure is fail-closed and never authorizes a different workflow.
+
 Repository creation, release creation, workflow dispatch, repository-content
 commits, and PR merging require separate opt-in because they can have broader effects:
 
@@ -483,7 +510,9 @@ MCP_GH_ALLOW_PR_MERGE=true
 ```
 
 Enable only the operations the deployment actually needs; all five default to
-`false`.
+`false`. The exact repository-creation and workflow-dispatch target lists also default
+to empty, so those two operations remain denied even if their fine gate is accidentally
+enabled without a target policy.
 
 ### Exact-SHA branch creation
 
