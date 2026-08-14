@@ -237,14 +237,13 @@ async def test_existing_matching_dispatch_fails_closed_without_write() -> None:
         read_results=[
             _ref(sha),
             _runs(_run(91, sha, status="completed")),
-            _workflow(),
         ]
     )
 
     with pytest.raises(WorkflowDispatchDuplicateError, match="no write was attempted"):
         await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
-    assert [kind for kind, _, _ in client.calls] == ["read", "read", "read"]
+    assert [kind for kind, _, _ in client.calls] == ["read", "read"]
     assert client.payloads == []
     list_args = client.calls[1][1]
     assert list_args[1] == "repos/octo/repo/actions/workflows/17/runs"
