@@ -36,7 +36,7 @@ from mcp_gh_server.server import (
     gh_list_pr_files,
     gh_list_run_jobs,
     gh_merge_pr,
-    gh_run_workflow,
+    gh_run_workflow_exact,
     gh_server_info,
     gh_submit_pr_review,
     gh_upsert_label,
@@ -92,7 +92,7 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     assert result.server_version == "0.7.1"
     assert result.tool_schema_version == "0.7.1"
     assert result.transport == "stdio"
-    assert result.tool_count == 61
+    assert result.tool_count == 60
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert result.pr_merge_enabled is True
@@ -444,48 +444,6 @@ async def test_edit_issue_resolves_milestone_then_reads_issue() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_workflow_reads_returned_run_url() -> None:
-    url = "https://github.com/octo/repo/actions/runs/123"
-    client = FakeGhClient(
-        [
-            {"stdout": f"Workflow dispatched: {url}\n"},
-            {"databaseId": 123, "url": url},
-        ]
-    )
-
-    result = await gh_run_workflow(
-        "octo",
-        "repo",
-        99,
-        ctx=_context(client),
-        fields=["environment=test"],
-    )
-
-    assert result.run_id == 123
-    dispatch_args, dispatch_kwargs = client.calls[0]
-    assert "--json" not in dispatch_args
-    assert dispatch_args[-2:] == ("-f", "environment=test")
-    assert dispatch_kwargs == {"json_output": False, "stdin_text": None}
-    assert client.calls[1][0][:3] == ("run", "view", "123")
-
-
-@pytest.mark.asyncio
-async def test_run_workflow_handles_dispatch_without_run_url() -> None:
-    client = FakeGhClient([{"stdout": ""}])
-
-    result = await gh_run_workflow(
-        "octo",
-        "repo",
-        99,
-        ctx=_context(client),
-    )
-
-    assert result.run_id is None
-    assert result.url is None
-    assert len(client.calls) == 1
-
-
-@pytest.mark.asyncio
 async def test_watch_run_polls_instead_of_starting_blocking_gh_watch() -> None:
     client = FakeGhClient(
         [
@@ -779,7 +737,15 @@ async def test_high_risk_action_requires_separate_opt_in() -> None:
     context.request_context.lifespan_context.settings.allow_workflow_dispatch = False
 
     with pytest.raises(RuntimeError, match="ALLOW_WORKFLOW_DISPATCH"):
-        await gh_run_workflow("octo", "repo", 99, ctx=context)
+        await gh_run_workflow_exact(
+            "octo",
+            "repo",
+            99,
+            ".github/workflows/release.yml",
+            "heads/main",
+            "a" * 40,
+            ctx=context,
+        )
 
     assert client.calls == []
 

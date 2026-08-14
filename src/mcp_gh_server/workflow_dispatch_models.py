@@ -19,3 +19,4 @@ class WorkflowDispatchExactResult(ExactWriteResult):
     run_url: str | None = None
     run_status: str | None = None
     run_head_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    run_event: str | None = None

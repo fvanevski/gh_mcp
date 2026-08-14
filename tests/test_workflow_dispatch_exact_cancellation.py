@@ -20,6 +20,8 @@ from mcp_gh_server.tools.workflow_dispatch import (
     gh_run_workflow_exact,
 )
 
+WORKFLOW_PATH = ".github/workflows/release.yml"
+
 
 @dataclass
 class CancellationClient:
@@ -83,6 +85,10 @@ def _runs() -> dict[str, Any]:
     return {"total_count": 0, "workflow_runs": []}
 
 
+def _workflow() -> dict[str, Any]:
+    return {"id": 17, "path": WORKFLOW_PATH, "state": "active"}
+
+
 async def test_cancelled_inflight_dispatch_leaves_fail_closed_reservation() -> None:
     sha = "f" * 40
     key = ("octo", "repo", 17, sha)
@@ -95,6 +101,7 @@ async def test_cancelled_inflight_dispatch_leaves_fail_closed_reservation() -> N
             GitHubRequestError("missing tag", status_code=404),
             [],
             _ref(sha),
+            _workflow(),
             _runs(),
         ],
         write_entered=write_entered,
@@ -107,6 +114,7 @@ async def test_cancelled_inflight_dispatch_leaves_fail_closed_reservation() -> N
             "octo",
             "repo",
             17,
+            WORKFLOW_PATH,
             "heads/main",
             sha,
             ctx=ctx,
@@ -124,6 +132,7 @@ async def test_cancelled_inflight_dispatch_leaves_fail_closed_reservation() -> N
                 "octo",
                 "repo",
                 17,
+                WORKFLOW_PATH,
                 "heads/main",
                 sha,
                 ctx=ctx,

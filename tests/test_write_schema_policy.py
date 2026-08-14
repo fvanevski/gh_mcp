@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterator
 
 from mcp_gh_server.server import mcp
+from mcp_gh_server.workflow_selector import WORKFLOW_PATH_RE
 from mcp_gh_server.write_tool_schema import WRITE_TOOL_METADATA
 
 # Independent expected surface. Do not derive this from WRITE_TOOL_METADATA: adding a
@@ -29,7 +30,6 @@ PUBLIC_WRITE_TOOLS = frozenset(
         "gh_commit_files",
         "gh_create_release",
         "gh_create_release_exact",
-        "gh_run_workflow",
         "gh_run_workflow_exact",
         "gh_create_branch",
         "gh_create_branch_from_sha",
@@ -59,7 +59,6 @@ REPOSITORY_PATTERN = r"^[A-Za-z0-9_.-]{1,100}$"
 REPOSITORY_CREATE_PATTERN = r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/)?[A-Za-z0-9_.-]{1,100}$"
 REF_PATTERN = r"^(?:heads|tags)/.+$"
 LABEL_COLOR_PATTERN = r"^[0-9A-Fa-f]{6}$"
-WORKFLOW_FIELD_PATTERN = r"^[^=]+=.*$"
 
 FINE_GATE_DESCRIPTION_MARKERS = {
     "gh_merge_pr": "PR-merge fine gate",
@@ -67,7 +66,6 @@ FINE_GATE_DESCRIPTION_MARKERS = {
     "gh_commit_files": "content-commit fine gate",
     "gh_create_release": "release-creation fine gate",
     "gh_create_release_exact": "release-creation fine gate",
-    "gh_run_workflow": "workflow-dispatch fine gate",
     "gh_run_workflow_exact": "workflow-dispatch fine gate",
 }
 
@@ -135,7 +133,7 @@ def _resolve_ref(root: dict, schema: dict) -> dict:
 
 
 def _walk_schema(root: dict, schema: dict, path: str) -> Iterator[tuple[str, dict]]:
-    """Walk local refs, unions, object properties, and array items."""
+    """Walk local refs, unions, object properties, map keys/values, and array items."""
     schema = _resolve_ref(root, schema)
     yield path, schema
 
@@ -151,6 +149,14 @@ def _walk_schema(root: dict, schema: dict, path: str) -> Iterator[tuple[str, dic
         for name, child in properties.items():
             if isinstance(child, dict):
                 yield from _walk_schema(root, child, f"{path}.{name}")
+
+    property_names = schema.get("propertyNames")
+    if isinstance(property_names, dict):
+        yield from _walk_schema(root, property_names, f"{path}.<key>")
+
+    additional = schema.get("additionalProperties")
+    if isinstance(additional, dict):
+        yield from _walk_schema(root, additional, f"{path}.<value>")
 
     items = schema.get("items")
     if isinstance(items, dict):
@@ -170,7 +176,8 @@ async def test_exact_public_write_surface_is_independent_and_complete() -> None:
     }
     assert actual_writes == PUBLIC_WRITE_TOOLS
     assert set(WRITE_TOOL_METADATA) == PUBLIC_WRITE_TOOLS
-    assert len(PUBLIC_WRITE_TOOLS) == 21
+    assert len(PUBLIC_WRITE_TOOLS) == 20
+    assert "gh_run_workflow" not in tools
 
 
 async def test_registered_write_metadata_is_canonical_and_truthful() -> None:
@@ -259,7 +266,7 @@ async def test_assignee_selectors_preserve_me_without_loosening_reviewers() -> N
 
 
 async def test_all_write_schema_leaves_are_bounded() -> None:
-    """Strings, integers, arrays, and arbitrary objects must expose hard schema bounds."""
+    """Strings, integers, arrays, and map values must expose hard schema bounds."""
     tools = await _tools()
 
     for name in PUBLIC_WRITE_TOOLS:
@@ -306,7 +313,7 @@ async def test_no_generic_executor_or_host_bypass_surface_exists() -> None:
                     assert verbs != {"GET", "POST", "PUT", "PATCH", "DELETE"}
 
 
-async def test_exact_sha_and_ref_preconditions_are_host_visible() -> None:
+async def test_exact_sha_ref_and_workflow_preconditions_are_host_visible() -> None:
     tools = await _tools()
     sha_fields = {
         "gh_set_pr_draft_state": "expected_head_sha",
@@ -321,9 +328,13 @@ async def test_exact_sha_and_ref_preconditions_are_host_visible() -> None:
         schema = tools[tool_name].input_schema["properties"][field]
         assert schema["pattern"] == OBJECT_SHA_PATTERN
 
-    ref_schema = tools["gh_run_workflow_exact"].input_schema["properties"]["ref"]
-    assert ref_schema["pattern"] == REF_PATTERN
-    assert ref_schema["maxLength"] == 1024
+    workflow = tools["gh_run_workflow_exact"].input_schema["properties"]
+    assert workflow["workflow_id"]["type"] == "integer"
+    assert workflow["workflow_id"]["minimum"] == 1
+    assert workflow["expected_workflow_path"]["pattern"] == WORKFLOW_PATH_RE.pattern
+    assert workflow["expected_workflow_path"]["maxLength"] == 1024
+    assert workflow["ref"]["pattern"] == REF_PATTERN
+    assert workflow["ref"]["maxLength"] == 1024
 
 
 async def test_finite_enums_and_label_color_are_explicit() -> None:
@@ -348,16 +359,18 @@ async def test_finite_enums_and_label_color_are_explicit() -> None:
         assert _unwrap_optional(raw)["pattern"] == LABEL_COLOR_PATTERN
 
 
-async def test_workflow_inputs_are_bounded_key_value_entries() -> None:
+async def test_workflow_inputs_are_a_bounded_typed_object() -> None:
     tools = await _tools()
-    for tool_name in ("gh_run_workflow", "gh_run_workflow_exact"):
-        raw = tools[tool_name].input_schema["properties"]["fields"]
-        fields = _unwrap_optional(raw)
-        assert fields["type"] == "array"
-        assert fields["maxItems"] == 25
-        items = fields["items"]
-        assert items["pattern"] == WORKFLOW_FIELD_PATTERN
-        assert items["maxLength"] == 65_535
+    raw = tools["gh_run_workflow_exact"].input_schema["properties"]["inputs"]
+    inputs = _unwrap_optional(raw)
+
+    assert inputs["type"] == "object"
+    assert inputs["maxProperties"] == 25
+    assert inputs["propertyNames"]["minLength"] == 1
+    assert inputs["propertyNames"]["maxLength"] == 65_535
+    assert inputs["additionalProperties"]["type"] == "string"
+    assert inputs["additionalProperties"]["maxLength"] == 65_535
+    assert "65,535 aggregate" in raw["description"]
 
 
 async def test_commit_file_payload_is_host_bounded() -> None:

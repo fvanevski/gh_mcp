@@ -60,7 +60,6 @@ from .write_tool_schema import (
     gh_edit_label,
     gh_edit_pr,
     gh_merge_pr,
-    gh_run_workflow,
     gh_run_workflow_exact,
     gh_set_issue_state,
     gh_set_pr_draft_state,
@@ -79,6 +78,11 @@ mcp.add_tool(
     ),
     annotations=READ_EXTERNAL,
 )
+
+# tools.actions still self-registers the historical generic dispatch during module
+# import. Issue #55 removes that public contract; the 0.8.0 integration gate owns
+# the later source-level cleanup of obsolete compatibility registrations.
+mcp.remove_tool("gh_run_workflow")
 
 # Rebind every public write to the schema facade. The facade owns host-facing
 # schema/metadata only; the wrappers delegate execution to the existing write
@@ -147,7 +151,6 @@ __all__ = [
     "gh_list_workflows",
     "gh_merge_pr",
     "gh_read_artifact_file",
-    "gh_run_workflow",
     "gh_run_workflow_exact",
     "gh_search_code",
     "gh_search_issues",
