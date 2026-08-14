@@ -1,12 +1,12 @@
 # Release gate: 0.7.0
 
-This document records the integration contract for the 0.7.0 public MCP surface. It describes the release invariant; it does not replace exact-head test evidence.
+This document is the immutable historical integration record for the shipped 0.7.0 public MCP surface. It describes the release invariant that applied to that candidate; current runtime/release authority is defined separately by the active release gate.
 
 ## Version and public surface
 
 Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write.
 
-The Phase 2 surface adds these 12 tools over the 0.6.x baseline:
+The Phase 2 surface added these 12 tools over the 0.6.x baseline:
 
 - `gh_get_ref`
 - `gh_get_commit`
@@ -21,25 +21,25 @@ The Phase 2 surface adds these 12 tools over the 0.6.x baseline:
 - `gh_get_pr_review_state`
 - `gh_set_pr_draft_state`
 
-`gh_list_runs` is enhanced within the same 0.7.0 gate. The exact public names, input schemas, annotations, and output contracts are captured by `tests/test_tool_schema_snapshot.py`.
+`gh_list_runs` was enhanced within the same 0.7.0 gate. The then-current exact public names, input schemas, annotations, and output contracts were captured by the release's schema regressions.
 
-## Architecture
+## Historical architecture
 
-`src/mcp_gh_server/server.py` is the composition/re-export root. Tool implementations live in cohesive domain modules under `src/mcp_gh_server/tools/` rather than a monolithic server module.
+`src/mcp_gh_server/server.py` was the composition/re-export root and tool implementations lived in cohesive domain modules under `src/mcp_gh_server/tools/` rather than a monolithic server module.
 
-GitHub request execution is governed by the shared `GitHubRequestGovernor`. Tool implementations must preserve its request classification, cooldown/rate-limit handling, ambiguity handling, and bounded-evidence behavior rather than introducing independent request policy.
+GitHub request execution was governed by the shared `GitHubRequestGovernor`. The release required tool implementations to preserve request classification, cooldown/rate-limit handling, ambiguity handling, and bounded-evidence behavior rather than introducing independent request policy.
 
 ## Exact-state writes and readback
 
-Writes remain disabled by default and continue to require the repository's explicit write gates.
+Writes remained disabled by default and required explicit write gates.
 
-Where a mutation depends on current state or revision identity, the public contract requires the applicable expected state/SHA precondition. A write performs one mutation attempt and then re-reads authoritative GitHub state before reporting success. Ambiguous or partial write outcomes must not be blindly retried; callers re-read state first and decide from authoritative evidence.
+Where a mutation depended on current state or revision identity, the public contract required the applicable expected state/SHA precondition. A write performed one mutation attempt and then re-read authoritative GitHub state before reporting verified success. Ambiguous or partial outcomes were not blindly retried; callers re-read state first.
 
 ## Bounded evidence
 
-Artifact and Actions-log reads remain bounded evidence operations. Truncation/completeness indicators, byte counts, digests, and warnings are part of the evidence contract and must not be discarded or reinterpreted as complete results.
+Artifact and Actions-log reads were bounded evidence operations. Truncation/completeness indicators, byte counts, digests, and warnings were part of the evidence contract and were not to be discarded or reinterpreted as complete results.
 
-Log tailing or marker-based selection is intentionally partial evidence when the response says so. Artifact tooling in 0.7.0 exposes bounded metadata/evidence reads, not a generic artifact-download or deletion escape hatch.
+Log tailing or marker-based selection remained intentionally partial evidence when the response said so. Artifact tooling exposed bounded metadata/evidence reads, not a generic artifact-download or deletion escape hatch.
 
 ## Explicit non-goals
 
@@ -50,34 +50,21 @@ Log tailing or marker-based selection is intentionally partial evidence when the
 - a generic shell or subprocess MCP tool;
 - administrator bypasses;
 - automatic repeated workflow rerun or dispatch;
-- artifact or log deletion;
+- artifact or log deletion; or
 - branch-protection or ruleset mutation.
 
-The release does expose narrowly defined one-shot write tools such as exact workflow dispatch where their documented preconditions and readback semantics are satisfied; that does not create a general rerun/dispatch primitive.
+The release did expose narrowly defined one-shot write tools such as exact workflow dispatch where documented preconditions and readback semantics were satisfied; that did not create a general rerun/dispatch primitive.
 
-## Configuration
+## Historical acceptance mapping
 
-No additional release-gate configuration is required beyond settings already introduced by the completed 0.7.0 tool work. `.env.example` and settings documentation should therefore remain unchanged unless current source introduces a real configuration surface that is missing from them.
+For the released 0.7.0 candidate:
 
-## Acceptance mapping
+- package, lockfile, server, and tool-schema versions agreed at `0.7.0`;
+- the executable registry was exactly 56/35/21;
+- the public schema snapshot detected removal/rename drift;
+- forbidden generic/admin/destructive surfaces remained absent; and
+- Ruff, format, mypy, and the full pytest suite were required on the same exact candidate head.
 
-| Criterion | Source of truth | Regression evidence |
-| --- | --- | --- |
-| Package/server/tool-schema version agree at 0.7.0 | `pyproject.toml`, `uv.lock`, `mcp_gh_server.__version__` | `tests/test_release_gate_0_7_0.py`, protocol/model tests |
-| README/QWEN inventory and architecture match source | live registry, `server.py`, `tools/` modules | release-gate docs test plus exact tool snapshot |
-| Public schema removal/rename is detected | live MCP registry | `tests/test_tool_schema_snapshot.py` |
-| Forbidden generic/admin/destructive surfaces remain absent | live MCP registry and repository contracts | exact snapshot plus release non-goal assertions |
-| Full project quality gate passes | repository configuration | exact-final-head Ruff, format, mypy, and pytest execution |
+Those statements record 0.7.0 release evidence; they do not require later `pyproject.toml`, `uv.lock`, or the live registry to remain at 0.7.0.
 
-## Required final validation
-
-Validation must be executed after the final source/doc/lockfile change and bound to that exact Git HEAD:
-
-```text
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy
-uv run pytest
-```
-
-Any subsequent source change invalidates affected validation and requires the relevant commands to be rerun.
+Later releases validate against their own release gate rather than mutating this record. For 0.8.0, use `docs/release_gate_0_8_0.md` and `tests/test_release_gate_0_8_0.py`.
