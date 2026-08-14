@@ -143,10 +143,6 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "tag"},
         {"owner", "repo", "tag"},
     ),
-    "gh_create_release": (
-        {"owner", "repo", "tag_name", "name", "body", "draft", "prerelease", "target"},
-        {"owner", "repo", "tag_name"},
-    ),
     "gh_create_release_exact": (
         {
             "owner",
@@ -415,8 +411,9 @@ EXPECTED_DESCRIPTIONS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 60
+    assert len(tools) == 59
     assert set(tools) == set(EXPECTED_SURFACE)
+    assert "gh_create_release" not in tools
 
     for name, tool in tools.items():
         properties, required = EXPECTED_SURFACE[name]

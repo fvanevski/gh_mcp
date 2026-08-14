@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from mcp_gh_server.legacy_release_write_adapter import gh_create_release
 from mcp_gh_server.models import CommitFile
 from mcp_gh_server.server import (
     AppContext,
@@ -21,7 +22,6 @@ from mcp_gh_server.server import (
     gh_create_label,
     gh_create_milestone,
     gh_create_pr,
-    gh_create_release,
     gh_create_repo,
     gh_edit_issue,
     gh_edit_label,
@@ -92,7 +92,7 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     assert result.server_version == "0.7.1"
     assert result.tool_schema_version == "0.7.1"
     assert result.transport == "stdio"
-    assert result.tool_count == 60
+    assert result.tool_count == 59
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert result.pr_merge_enabled is True

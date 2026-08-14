@@ -9,7 +9,6 @@ import pytest
 
 from mcp_gh_server.server import (
     AppContext,
-    gh_create_release,
     gh_create_repo,
     gh_run_workflow_exact,
     mcp,
@@ -20,6 +19,7 @@ from mcp_gh_server.tooling import (
     _configured_workflow_targets,
     require_write_enabled,
 )
+from mcp_gh_server.tools.releases import gh_create_release
 from mcp_gh_server.workflow_selector import WORKFLOW_PATH_RE, resolve_workflow_id
 from mcp_gh_server.write_contracts import WritePreconditionMismatch
 from tests.test_write_wrappers import FakeGhClient

@@ -690,6 +690,68 @@ async def test_latest_true_is_rejected_for_prerelease_before_any_github_request(
     assert client.calls == []
 
 
+@pytest.mark.parametrize(
+    ("requested_draft", "requested_prerelease", "readback_draft", "readback_prerelease"),
+    [
+        (False, False, True, False),
+        (False, False, False, True),
+    ],
+)
+async def test_readback_mode_mismatch_returns_partial_success_without_replay(
+    requested_draft: bool,
+    requested_prerelease: bool,
+    readback_draft: bool,
+    readback_prerelease: bool,
+) -> None:
+    expected = _sha(20)
+    client = ReleaseExactClient(
+        read_results=[
+            _commit(expected),
+            GitHubRequestError("missing ref", status_code=404),
+            [],
+            _repo_permissions(),
+            [],
+            _commit(expected),
+            _repo_permissions(),
+            [_release(17, tag="v1.0.0", draft=readback_draft, prerelease=readback_prerelease)],
+            _tag_ref(expected),
+            _release(99, tag="v0.9.0", name="v0.9.0", body="Previous"),
+        ],
+        write_results=[
+            GitHubRequestResult(
+                value=_release(
+                    17,
+                    tag="v1.0.0",
+                    draft=readback_draft,
+                    prerelease=readback_prerelease,
+                ),
+                metadata=GitHubRequestMetadata(request_id="REQ-MODE-MISMATCH"),
+            )
+        ],
+    )
+
+    result = await gh_create_release_exact(
+        "octo",
+        "repo",
+        "v1.0.0",
+        expected,
+        False,
+        ctx=_context(client),
+        draft=requested_draft,
+        prerelease=requested_prerelease,
+    )
+
+    assert result.precondition_checked is True
+    assert result.write_completed is True
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.warning is not None
+    assert "resulting state does not match the requested state" in result.warning
+    assert result.is_draft == readback_draft
+    assert result.is_prerelease == readback_prerelease
+    assert [kind for kind, _, _ in client.calls].count("write") == 1
+
+
 async def test_latest_true_is_rejected_for_draft_before_any_github_request() -> None:
     client = ReleaseExactClient()
 

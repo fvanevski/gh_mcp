@@ -6,7 +6,6 @@ from mcp.server.mcpserver import Context
 
 from ..models import ReleaseCreate, ReleaseInfo, SearchResults
 from ..tooling import (
-    ADD_EXTERNAL,
     READ_EXTERNAL,
     AppContext,
     app_from_context,
@@ -72,7 +71,6 @@ async def gh_get_release(
     return ReleaseInfo.model_validate(result)
 
 
-@mcp.tool(annotations=ADD_EXTERNAL)
 async def gh_create_release(
     owner: str,
     repo: str,

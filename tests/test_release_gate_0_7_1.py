@@ -56,6 +56,9 @@ async def test_release_tool_inventory_and_non_goals() -> None:
         if tool.annotations is not None and tool.annotations.read_only_hint is True
     }
 
+    # This gate is immutable 0.7.1 release authority. Breaking 0.8.x child issues may
+    # intentionally make these assertions fail until issue #61 versions and integrates
+    # the new public surface; child issues must not rewrite these released counts.
     assert len(tools) == EXPECTED_TOOL_COUNT
     assert len(read_only) == EXPECTED_READ_ONLY_COUNT
     assert len(tools) - len(read_only) == EXPECTED_WRITE_COUNT
@@ -70,7 +73,7 @@ async def test_release_tool_inventory_and_non_goals() -> None:
         assert annotations.idempotent_hint is True
 
 
-def test_release_docs_report_final_surface_and_non_goals() -> None:
+def test_release_docs_preserve_authority_and_describe_development_transition() -> None:
     readme = (ROOT / "README.md").read_text()
     qwen = (ROOT / "QWEN.md").read_text()
     gate = (ROOT / "docs" / "release_gate_0_7_1.md").read_text()
@@ -83,6 +86,21 @@ def test_release_docs_report_final_surface_and_non_goals() -> None:
         assert "21 write" in document
         for tool_name in RELEASE_NEW_TOOLS:
             assert tool_name in document
+
+    # Current development documentation must not pretend the already-retired generic
+    # writes remain public merely because the package version has not yet advanced.
+    for document in documents:
+        assert "59 public MCP tools" in document
+        assert "19 write" in document
+        assert "#61" in document
+
+    heading = "### Write (current unreleased surface: 19)"
+    assert heading in readme
+    write_section = readme.split(heading, 1)[1].split("\n## ", 1)[0]
+    assert "- `gh_create_release`:" not in write_section
+    assert "- `gh_run_workflow`:" not in write_section
+    assert "- `gh_create_release_exact`:" in write_section
+    assert "- `gh_run_workflow_exact`:" in write_section
 
     non_goals = (
         "arbitrary public `gh api`",

@@ -2,9 +2,11 @@
 
 Repository-specific implementation guidance. `AGENTS.md` remains the general development-workflow authority.
 
-## 0.7.1 release authority
+## Release and development surface authority
 
-Release 0.7.1 exposes 61 public MCP tools: 40 read-only and 21 write. The executable registry in `src/mcp_gh_server/server.py` and the exact schema snapshot in `tests/test_tool_schema_snapshot.py` are the source of truth for the public tool surface. `tests/test_release_gate_0_7_0.py` preserves the historical 0.7.0 floor; `tests/test_release_gate_0_7_1.py` is the final 0.7.1 release-integration gate.
+Released version 0.7.1 exposes 61 public MCP tools: 40 read-only and 21 write. That inventory is immutable released-version authority enforced by `tests/test_release_gate_0_7_1.py`; `tests/test_release_gate_0_7_0.py` likewise preserves the historical 0.7.0 floor.
+
+The current unreleased 0.8.0 development surface exposes 59 public MCP tools: 40 read-only and 19 write after issue #55 retired generic workflow dispatch and issue #56 retired generic release creation. Until issue #61 performs the 0.8.0 version bump and integration cleanup, the executable registry and active schema snapshots describe that development surface while the 0.7.0/0.7.1 release gates intentionally continue to enforce their released inventories. Do not lower historical/current release-gate counts in child canonicalization issues merely to make the intermediate full suite green.
 
 The 0.7.1 read-only additions are:
 
@@ -13,6 +15,13 @@ The 0.7.1 read-only additions are:
 - `gh_list_artifact_files`
 - `gh_read_artifact_file`
 - `gh_get_api_rate_status`
+
+## Current unreleased write-surface transition
+
+- `gh_run_workflow_exact` is the sole current public workflow-dispatch primitive; the weaker generic `gh_run_workflow` contract is retired from the active registry.
+- `gh_create_release_exact` is the sole current public release-creation primitive; the weaker generic `gh_create_release` contract is retired from the active registry.
+- Legacy implementations may remain internal only until #61 removes obsolete compatibility infrastructure and versions the breaking public-surface change as 0.8.0.
+- README/current-development documentation may describe the 59/19 active registry, but released 0.7.0/0.7.1 gate documents must remain truthful historical records.
 
 ## Architecture
 
@@ -37,14 +46,15 @@ Bounded evidence must remain explicitly bounded. Callers must preserve truncatio
 
 ## Validation
 
-Run the repository gate against the exact final branch head:
+For issue-scoped 0.8.x child work, validate the changed invariant and active schema surface first:
 
-- `uv run pytest tests/test_release_gate_0_7_1.py tests/test_tool_schema_snapshot.py tests/test_mcp_protocol.py tests/test_tool_return_models.py tests/test_mcp_schema.py tests/test_write_wrappers.py`
+- `uv run pytest tests/test_release_canonicalization.py tests/test_release_exact.py tests/test_tool_schema_snapshot.py tests/test_write_schema_policy.py`
 - `uv run ruff check .`
 - `uv run ruff format --check .`
 - `uv run mypy`
-- `uv run pytest`
 
-Run `python tests/exercise_tools.py --inventory-only` to verify that the exercise harness resolves the exact 61-tool final surface without issuing GitHub requests. Live underlying-CLI exercises remain optional and non-destructive.
+The full `uv run pytest` remains authoritative evidence, but before #61 it is expected to retain release-inventory gate failures caused by the intentional mismatch between the still-versioned 0.7.x release authority and the 59/19 unreleased development registry. Treat those failures as #61 integration work; do not repair them by lowering 0.7.0/0.7.1 release counts. Other failures remain ordinary defects and must be investigated.
 
-See `docs/release_gate_0_7_1.md` for the final release acceptance mapping and the focused Phase 3 contract documents for implementation details.
+After #61 establishes 0.8.0 authority, the full suite, inventory exercise, schema snapshots, documentation, and release gates must all agree on the final versioned surface.
+
+See `docs/release_gate_0_7_1.md` for the immutable 0.7.1 release acceptance mapping and the focused contract documents for implementation details.

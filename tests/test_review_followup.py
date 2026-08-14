@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from mcp_gh_server.request_governor import GitHubRequestMetadata, GitHubRequestResult
-from mcp_gh_server.server import AppContext, gh_create_issue, gh_create_release
+from mcp_gh_server.server import AppContext, gh_create_issue
 from mcp_gh_server.settings import Settings
 
 
@@ -73,38 +73,3 @@ async def test_successful_request_id_is_projected_without_governor_warning() -> 
     assert result.readback_completed is True
     assert result.warning == "GitHub request id: req-success-only."
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("is_draft", "is_prerelease"),
-    [(True, False), (False, True)],
-)
-async def test_release_readback_rejects_disabled_mode_mismatch(
-    is_draft: bool,
-    is_prerelease: bool,
-) -> None:
-    client = MetadataAwareClient(
-        read_results=[
-            {
-                "tagName": "v1",
-                "url": "https://github.com/octo/repo/releases/tag/v1",
-                "isDraft": is_draft,
-                "isPrerelease": is_prerelease,
-            }
-        ],
-        write_results=[RuntimeError("release already exists")],
-    )
-
-    with pytest.raises(RuntimeError, match="release already exists"):
-        await gh_create_release(
-            "octo",
-            "repo",
-            "v1",
-            ctx=_context(client),
-            draft=False,
-            prerelease=False,
-        )
-
-    read_call = next(call for call in client.calls if call[0] == "read")
-    assert "isDraft" in read_call[1][-1]
-    assert "isPrerelease" in read_call[1][-1]
