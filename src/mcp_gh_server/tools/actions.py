@@ -17,26 +17,20 @@ from ..models import (
     WorkflowJobsPage,
     WorkflowJobStep,
     WorkflowRun,
-    WorkflowRunCreate,
     WorkflowRunFailedLogs,
     WorkflowRunsPage,
     WorkflowRunWatchResult,
 )
 from ..request_governor import GitHubRequestError
 from ..tooling import (
-    MUTATE_EXTERNAL,
     OBJECT_SHA_RE,
     READ_EXTERNAL,
     AppContext,
     app_from_context,
     bounded_utf8,
-    created_url,
     logger,
     mcp,
-    readback_warning,
-    require_write_enabled,
     validate_repository,
-    workflow_run_id,
 )
 
 _GITHUB_RUNS_PER_PAGE_MAX = 100
@@ -211,84 +205,6 @@ async def gh_get_workflow(
         f"repos/{owner}/{repo}/actions/workflows/{workflow_id}",
     )
     return WorkflowInfo.model_validate(result)
-
-
-@mcp.tool(annotations=MUTATE_EXTERNAL)
-async def gh_run_workflow(
-    owner: str,
-    repo: str,
-    workflow_id: int,
-    ref: str = "main",
-    *,
-    ctx: Context[AppContext],
-    fields: list[str] | None = None,
-) -> WorkflowRunCreate:
-    """Trigger a workflow dispatch event for a GitHub Actions workflow.
-
-    The workflow must support an `on.workflow_dispatch` trigger.
-    Use `fields` to pass inputs as key=value pairs (e.g. ["key=value"]).
-    This tool is disabled unless MCP_GH_ALLOW_WRITE_COMMANDS=true.
-    """
-
-    app = app_from_context(ctx)
-    require_write_enabled(app, owner, repo, action="workflow_dispatch")
-    args = [
-        "workflow",
-        "run",
-        str(workflow_id),
-        "--repo",
-        f"{owner}/{repo}",
-        "--ref",
-        ref,
-    ]
-    if fields:
-        for field in fields:
-            if "=" not in field or not field.split("=", 1)[0]:
-                raise ValueError("workflow fields must use non-empty key=value form")
-            args.extend(["-f", field])
-        stdin_text = None
-    else:
-        args.append("--json")
-        stdin_text = "{}"
-
-    dispatch_result = await app.client.run(*args, json_output=False, stdin_text=stdin_text)
-    stdout = dispatch_result.get("stdout", "") if isinstance(dispatch_result, dict) else ""
-    if not isinstance(stdout, str) or not stdout.strip():
-        warning = readback_warning("Workflow dispatch")
-        return WorkflowRunCreate(
-            run_id=None,
-            url=None,
-            readback_completed=False,
-            warning=warning,
-            message=warning,
-        )
-
-    created = created_url(dispatch_result, "Workflow run")
-    run_id = workflow_run_id(created)
-    try:
-        result = await app.client.run(
-            "run",
-            "view",
-            str(run_id),
-            "--repo",
-            f"{owner}/{repo}",
-            "--json",
-            "databaseId,url",
-        )
-    except RuntimeError:
-        warning = readback_warning("Workflow dispatch", created)
-        return WorkflowRunCreate(
-            run_id=run_id,
-            url=created,
-            readback_completed=False,
-            warning=warning,
-            message=warning,
-        )
-    return WorkflowRunCreate(
-        run_id=result.get("databaseId", run_id),
-        url=result.get("url", created),
-        message="Workflow dispatch triggered successfully.",
-    )
 
 
 @mcp.tool(annotations=READ_EXTERNAL)
