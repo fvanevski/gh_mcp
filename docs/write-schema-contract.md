@@ -40,7 +40,8 @@ bounded, typed parameters appropriate to the operation, including:
 - assignee elements limited to a canonical GitHub login or the exact compatibility
   selector `@me`, while reviewer elements remain canonical GitHub logins only;
 - bounded nested commit-file path/content/mode fields;
-- an explicit `REPO` or `OWNER/REPO` shape for repository creation; and
+- separate canonical `owner` and `repo` inputs for repository creation, identifying one
+  exact prospective `OWNER/REPO` target before any GitHub request; and
 - for workflow dispatch, one exact positive workflow ID or a bounded canonical,
   case-sensitive `.github/workflows/<file>.yml|yaml` path.
 
