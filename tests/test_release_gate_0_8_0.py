@@ -131,15 +131,15 @@ def test_obsolete_write_compatibility_paths_are_absent() -> None:
 
 
 def test_high_risk_write_gates_remain_default_off() -> None:
-    settings = Settings()
-    assert settings.allow_write_commands is False
-    assert settings.allow_repo_creation is False
-    assert settings.allow_release_creation is False
-    assert settings.allow_workflow_dispatch is False
-    assert settings.allow_content_commits is False
-    assert settings.allow_pr_merge is False
-    assert settings.allowed_repo_creation_targets == ""
-    assert settings.allowed_workflow_dispatch_targets == ""
+    fields = Settings.model_fields
+    assert fields["allow_write_commands"].default is False
+    assert fields["allow_repo_creation"].default is False
+    assert fields["allow_release_creation"].default is False
+    assert fields["allow_workflow_dispatch"].default is False
+    assert fields["allow_content_commits"].default is False
+    assert fields["allow_pr_merge"].default is False
+    assert fields["allowed_repo_creation_targets"].default == ""
+    assert fields["allowed_workflow_dispatch_targets"].default == ""
 
 
 def test_release_documentation_matches_runtime_authority() -> None:
