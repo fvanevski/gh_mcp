@@ -128,8 +128,7 @@ async def gh_create_branch_from_sha(
     created = outcome.write_completed is True
     if outcome.write_completed is False and outcome.state_matches_requested is True:
         message = (
-            f"Branch '{name}' already exists at the requested exact commit; "
-            "no write was performed."
+            f"Branch '{name}' already exists at the requested exact commit; no write was performed."
         )
     elif outcome.warning is not None:
         message = outcome.warning
