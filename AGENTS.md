@@ -26,23 +26,27 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 
 | Path | Purpose |
 |---|---|
-| `src/mcp_gh_server/server.py` | Composition root — registers every tool on the MCP object |
+| `src/mcp_gh_server/server.py` | Composition root — registers every public write exactly once and imports self-registered reads |
 | `src/mcp_gh_server/tooling.py` | Shared helpers: annotations, write gates, repository validation, evidence |
-| `src/mcp_gh_server/tools/` | Read-only tools plus canonical migrated write implementations by domain |
-| `src/mcp_gh_server/write_tool_schema.py` | Public write-tool facade: schemas, titles, descriptions, annotations |
-| `src/mcp_gh_server/legacy_*.py` | Frozen compatibility adapters pending 0.8.0 integration cleanup |
-| `src/mcp_gh_server/models.py` | Pydantic result schemas (used by tests and tool annotations) |
-| `src/mcp_gh_server/settings.py` | All runtime config, loaded once via `get_settings()` (cached `@lru_cache`) |
-| `src/mcp_gh_server/serialization.py` | JSON-safe serialization helpers (Decimal→str, bytes→base64:, inf→str) |
-| `tests/test_write_wrappers.py` | Largest test file; regression coverage for every write tool |
-| `tests/test_mcp_protocol.py` | Protocol-level contract tests (tool registration, schema, annotations) |
-| `tests/test_integration.py` | Live-GitHub integration tests — require `GITHUB_TOKEN` |
+| `src/mcp_gh_server/tools/` | Read-only tools plus canonical write implementations by domain |
+| `src/mcp_gh_server/write_tool_schema.py` | Canonical public write facade: bounded schemas, titles, descriptions, annotations |
+| `src/mcp_gh_server/write_contracts.py` | Shared exact-state and tri-state mutation/readback contract |
+| `src/mcp_gh_server/models.py` | Pydantic result schemas used by tests and tool annotations |
+| `src/mcp_gh_server/settings.py` | Runtime config, loaded once via cached `get_settings()` |
+| `src/mcp_gh_server/serialization.py` | JSON-safe serialization helpers |
+| `tests/test_release_gate_0_8_0.py` | Current package/schema/inventory/registration release gate |
+| `tests/test_write_wrappers.py` | Broad regression coverage for write and adjacent read tools |
+| `tests/test_mcp_protocol.py` | Protocol-level registration/schema/annotation contract tests |
+| `tests/test_integration.py` | Live-GitHub integration tests requiring `GITHUB_TOKEN` |
 
-Key invariant: `write_tool_schema.py` owns the host-facing public write schema. Execution
-may live in a canonical domain module, an exact-state module, or a still-frozen legacy
-adapter during the 0.8.0 migration. Public wrappers must delegate to the authoritative
-implementation without adding a second mutation path; changing mutation semantics requires
-updating the implementation and its regression contract together.
+Key invariant: `write_tool_schema.py` owns the host-facing public write schema and delegates
+to one canonical domain implementation. `server.py` is the sole MCP registration path for
+the 18 public write names; it does not remove and re-add compatibility registrations.
+Canonical write implementation modules do not independently register those same names.
+
+The obsolete `legacy_*write*` compatibility adapters, `legacy_write_support.py`,
+`legacy_assignee_support.py`, and the `legacy_write_status` projection are not part of the
+0.8.0 architecture and must not be restored merely to satisfy historical tests.
 
 ## Runtime architecture
 
@@ -56,121 +60,145 @@ updating the implementation and its regression contract together.
 
 ## Security model (do not bypass)
 
-Every write tool checks at least one of these before invoking `gh`:
+Every write tool is governed by the master write policy and repository/owner target policy.
+Higher-risk classes add separate fine gates, all default-off:
 
 1. `MCP_GH_ALLOW_WRITE_COMMANDS=true` — master write gate (default: `false`)
-2. `MCP_GH_ALLOWED_REPOSITORIES=` or `MCP_GH_ALLOWED_OWNERS=` — target allowlist
-3. Per-operation fine gates (all default `false`):
+2. `MCP_GH_ALLOWED_REPOSITORIES=` or `MCP_GH_ALLOWED_OWNERS=` — ordinary target allowlist
+3. Per-operation fine gates:
    - `MCP_GH_ALLOW_REPO_CREATION`
    - `MCP_GH_ALLOW_RELEASE_CREATION`
    - `MCP_GH_ALLOW_WORKFLOW_DISPATCH`
    - `MCP_GH_ALLOW_CONTENT_COMMITS`
    - `MCP_GH_ALLOW_PR_MERGE`
 
-Write tools return structured errors rather than raising unhandled exceptions. A partial-write
-warning (success + unreadable readback) instructs callers **not to retry automatically**.
+Repository creation and workflow dispatch additionally require their exact target policy.
+Their target lists default empty, so an enabled fine gate alone is insufficient.
+
+Ambiguous mutations are not blindly replayed. Where stable identity exists, canonical
+writes perform authoritative readback and return explicit tri-state outcome metadata.
+A partial or ambiguous result instructs callers to read authoritative state before any
+subsequent write.
 
 Branch tools distinguish contracts deliberately:
-- `gh_create_branch` — base must be a branch name; rejects 40-char SHAs and redirects to
-  `gh_create_branch_from_sha`.
-- `gh_create_branch_from_sha` — accepts only an exact 40-character commit SHA; never moves
+
+- `gh_create_branch` — issue-linked branch creation with exact repository/issue/base-OID
+  evidence and authoritative linked-branch/ref readback.
+- `gh_create_branch_from_sha` — accepts an exact 40-character commit SHA and never moves
   or overwrites an existing ref.
 
-`gh_commit_files` validates paths are repository-relative, bounds total request size, and
-conditionally advances the branch only when `expected_head_sha` still matches. It does not
-support file deletion.
+`gh_commit_files` validates repository-relative paths and request-size bounds, builds one
+commit, and conditionally advances exactly one existing branch using exact compare-and-swap
+state. It does not support file deletion or forced ref updates.
 
-PR author cannot `approve` their own pull request — the server checks login identity before
-the POST and returns an explicit `no review was attempted` error. `request_changes` has no
-equivalent server-side restriction (GitHub is authoritative).
+PR authors cannot `approve` their own pull request — the server checks login identity before
+the POST and returns an explicit no-write error. `request_changes` has no equivalent
+server-side identity restriction; GitHub remains authoritative.
 
-## PR review workflow (read-only, no checkout)
+## PR review workflow
 
-1. `gh_get_pr` → record `head_sha` and `base_sha`.
+1. `gh_get_pr` → record exact `head_sha` and `base_sha`.
 2. `gh_get_pr_diff` → read bounded diff/patch. Check `truncated`, `bytes_returned`,
    `total_bytes`, and `sha256`.
-3. Page through `gh_list_pr_files` and `gh_list_pr_commits`. Re-fetch the SHA pair after
-   each page; abort if the snapshot changed.
-4. For full file content, use `gh_get_file_contents` at the recorded SHAs.
-5. If the PR changes during review, restart from the new SHA pair.
+3. Page through `gh_list_pr_files` and `gh_list_pr_commits`. Re-fetch identity when the
+   reviewing workflow requires current numbered-PR evidence.
+4. Use `gh_get_file_contents` at exact SHAs for complete file content.
+5. If the PR head changes, invalidate the old review and restart from the new exact head.
 
 Formal review requires `gh_submit_pr_review` (not `gh_create_comment`). Merge requires
-`gh_merge_pr` with the same exact head SHA; `--match-head-commit` prevents silent revision
-swaps. Both are destructive writes requiring explicit opt-in.
+`gh_merge_pr` with the same exact reviewed head SHA and an explicit strategy.
 
-## Commands that agents will need
+## Commands agents will need
 
 ```bash
-# Confirm the runtime CLI compatibility floor
+# Confirm runtime compatibility floor
 gh --version
 
-# Run all unit tests (offline, fast)
-uv run pytest
-
-# Run integration tests (requires GITHUB_TOKEN)
-GITHUB_TOKEN=<token> uv run pytest tests/test_integration.py
+# Current release gate and focused contracts
+uv run pytest tests/test_release_gate_0_8_0.py
 
 # Full validation suite
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 uv run pytest
+git diff --check
 
-# Start MCP Inspector for manual tool testing
+# Optional live integration tests
+GITHUB_TOKEN=<token> uv run pytest tests/test_integration.py
+
+# Start MCP Inspector
 uv run mcp dev src/mcp_gh_server/server.py
 
-# Launch as stdio MCP server
+# Launch stdio server
 uv run mcp-gh
 
-# Launch as Streamable HTTP server
+# Launch Streamable HTTP
 MCP_GH_TRANSPORT=streamable-http uv run mcp-gh
 ```
 
 ## Testing conventions
 
-- Use `FakeGhClient` (defined in `tests/test_write_wrappers.py`) when writing unit tests
-  for write tools. It records calls, supports governed `run_with_metadata` writes, accepts
-  queued return values, and handles `--input` payload parsing.
-- Async fixtures are automatic (`asyncio_mode = "auto"` in `pyproject.toml`). Do not add
+- Reuse the repository's existing fake-client patterns rather than inventing parallel test
+  harnesses.
+- Async execution uses `asyncio_mode = "auto"` in `pyproject.toml`; new tests do not need
   explicit `@pytest.mark.asyncio` decorators.
-- Integration tests live in `tests/test_integration.py`; they use `cli/cli` as the stable
-  reference repo and skip gracefully without `GITHUB_TOKEN`.
-- Never commit `.env` files. The `.env.example` is the canonical template.
-- The released version (0.7.1) intentionally retains immutable inventory-gate failures
-  caused by the 58/18 development registry. Issue #61 owns the 0.8.0 cleanup — do not
-  hide those failures by lowering released counts on intermediate child issues.
+- Integration tests live in `tests/test_integration.py` and skip without `GITHUB_TOKEN`.
+- Never commit `.env` files. `.env.example` is the canonical template.
+- Historical `tests/test_release_gate_0_7_0.py` and `tests/test_release_gate_0_7_1.py`
+  preserve documentary release history; current executable authority belongs to
+  `tests/test_release_gate_0_8_0.py`.
+- Never relax an exact-state assertion, negative/fail-closed regression, schema bound,
+  fine gate, or no-blind-retry invariant merely to make the suite green.
 
-## Agent tooling (local stack)
+## Local agent tooling contract
 
-This repo is Python; prefer Serena over glob/grep for symbol work. Shell commands go
-through RTK to preserve tokens.
+Use the local stack narrowly:
 
-| Task | Tool | Example |
-|---|---|---|
-| Semantic read (symbols, declarations, references, body) | `serena_*` | `serena_get_symbols_overview`, `serena_search_for_pattern` |
-| Edit via symbols | `serena_replace_symbol_body`, `serena_insert_before_symbol` | Rename a function across callers without regex guessing |
-| Diagnostics | `serena_get_diagnostics_for_file` | Catch type errors before running mypy |
-| Shell commands | `rtk <cmd>` | `rtk uv run pytest tests/test_write_wrappers.py` |
-| Cross-session memory | `openviking_recall` / `openviking_remember` | Preserve decisions about write-tool gate semantics across sessions |
+- **Probe**: first-line broad repository discovery for version/schema/registration/legacy
+  patterns and compact source extraction. Do not use Probe LSP as a competing semantic
+  authority.
+- **Serena (`no-memories`)**: exact symbols/references/dependencies/diagnostics and scoped
+  structural edits after discovery is narrowed. Do not use Serena as a generic shell.
+- **RTK**: efficiency layer for routine pytest/Ruff/mypy/search output when filtering cannot
+  change the decision. Use native output for exact SHAs, complete diffs, decisive failures,
+  release/security evidence, or anything truncation-sensitive.
+- **OpenViking**: bounded historical rationale only. Never authority for current source,
+  Git/GitHub state, version/inventory, CI, runtime, or release readiness.
+- **Native git/gh/runtime tools**: authoritative local Git state, branch/commit operations,
+  authenticated GitHub reads/writes not delegated to central ChatGPT, and host/service
+  evidence. Do not route local `git` or `gh` through the MCP server under test.
 
-Do **not** invoke the raw `gh` CLI directly when an MCP tool exists — the server enforces
-write gates, SHA pinning, and bounded output that a bare subprocess skips. Do **not**
-commit `.env`; use `rtk` for env lookups if needed.
+OpenCode roles remain scoped to their configured profiles: `plan`/`chat-audit` for gate
+mapping, `review`/`chat-review` for evidence audit, `build`/`chat` only for bounded authorized
+remediation, and `chat-fast` only for mechanical assistance. Do not widen global permissions
+to bypass a failed gate.
+
+## Release authority
+
+Version 0.8.0 release authority is `docs/release_gate_0_8_0.md` plus
+`tests/test_release_gate_0_8_0.py`. Required closure evidence must belong to one exact
+candidate SHA and includes package/server/tool-schema/lock agreement, exact 58/40/18 tool
+inventory, schema snapshots, canonical single-registration proof, compatibility-path absence,
+focused write/readback and fail-closed tests, Ruff, format, mypy, full pytest, and the
+representative live replay required by issue #61.
+
+Host interception during live replay is classified separately from server fine-gate
+rejection, GitHub failure/ambiguity, and completed authoritative readback. Do not weaken
+truthful metadata or safety contracts solely to move an action past host interception.
 
 ## Known constraints
 
 - The `gh` CLI must be installed on `$PATH` at version **2.97.0 or newer**. The server
-  never installs or manages it. `gh_get_job_logs` and `gh_get_run_logs` rely on the
-  `gh api --allow-escape-sequences` behavior available from 2.97.0 onward.
-- Rate limits, authentication scope, and permission scoping are delegated entirely to
-  `gh` and the supplied token — the server performs no additional auth checks.
-- Tools like `gh release create` that require file uploads or multi-step interactive flows
-  are intentionally out of scope.
-- `gh_search_repos/issues/code` use `--json` output; field names follow GitHub's API
-  naming convention (camelCase), not snake_case.
+  never installs or manages it.
+- Rate limits, authentication scope, and permission scoping are delegated to `gh` and the
+  supplied token, while the server independently enforces its write/target policies.
+- Generic `gh release create` file-upload/multi-step flows are outside the public tool
+  surface; release creation uses the exact canonical contract.
+- Search field names follow GitHub/API output conventions rather than an invented local
+  naming layer.
 - Result serialization converts `Decimal` → string, `bytes` → `base64:` prefix,
-  infinities → string, and all datetimes → ISO 8601. Do not assume native Python types
-  in responses.
-- Detailed contract documents live under `docs/` (e.g. `docs/release_gate_0_7_1.md`,
-  `docs/pr-review-evidence-contract.md`, `docs/gh_action_logs.md`). Refer to them when
-  working on tools whose behavior is specified there rather than inferring from code.
+  infinities → string, and datetimes → ISO 8601.
+- Detailed current contracts live under `docs/`, especially `docs/release_gate_0_8_0.md`,
+  `docs/write-schema-contract.md`, `docs/pr-review-evidence-contract.md`, and the focused
+  Git/ref/workflow/release documents.
