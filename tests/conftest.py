@@ -7,10 +7,6 @@ import pytest
 _WRITE_WRAPPER_REPO_TARGET_TESTS = {
     "test_create_repo_uses_visibility_and_readme_then_reads_repo",
 }
-_WRITE_WRAPPER_WORKFLOW_TARGET_TESTS = {
-    "test_run_workflow_reads_returned_run_url",
-    "test_run_workflow_handles_dispatch_without_run_url",
-}
 
 
 @pytest.fixture(autouse=True)
@@ -32,8 +28,6 @@ def configure_preexisting_high_risk_write_prerequisites(
     if module_name.endswith("test_write_wrappers"):
         if test_name in _WRITE_WRAPPER_REPO_TARGET_TESTS:
             monkeypatch.setenv("MCP_GH_ALLOWED_REPO_CREATION_TARGETS", "octo/new-repo")
-        elif test_name in _WRITE_WRAPPER_WORKFLOW_TARGET_TESTS:
-            monkeypatch.setenv("MCP_GH_ALLOWED_WORKFLOW_DISPATCH_TARGETS", "octo/repo@99")
         return
 
     if module_name.endswith(
