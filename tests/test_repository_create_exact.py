@@ -45,12 +45,13 @@ class RepositoryCreateClient:
 
 
 def _context(client: RepositoryCreateClient, **overrides: Any) -> Any:
-    settings = Settings(
-        allow_write_commands=True,
-        allow_repo_creation=True,
-        allowed_repo_creation_targets="octo/new-repo",
-        **overrides,
-    )
+    values: dict[str, Any] = {
+        "allow_write_commands": True,
+        "allow_repo_creation": True,
+        "allowed_repo_creation_targets": "octo/new-repo",
+    }
+    values.update(overrides)
+    settings = Settings(**values)
     app = AppContext(client=client, settings=settings)  # type: ignore[arg-type]
     return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=app))
 
