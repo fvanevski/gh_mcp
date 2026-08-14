@@ -12,14 +12,12 @@ from ..models import GitRefInput
 from ..release_exact_models import ReleaseExactResult
 from ..request_governor import GitHubRequestError, GitHubRequestResult
 from ..tooling import (
-    ADD_EXTERNAL,
     OBJECT_SHA_RE,
     OWNER_RE,
     REPO_RE,
     AppContext,
     app_from_context,
     logger,
-    mcp,
     require_write_enabled,
 )
 from ..write_contracts import (
@@ -210,17 +208,6 @@ async def _read_target_commit_sha(
     return result.commit_sha if result.found else None
 
 
-@mcp.tool(
-    title="Create release at exact target",
-    description=(
-        "Additive write: create one GitHub release using an exact 40-character target commit "
-        "SHA. The tool verifies target identity, optionally requires the tag and every release "
-        "state (including drafts) to be absent, performs exactly one governed release-creation "
-        "request, and then verifies the created release, tag commit, and explicit latest/non-"
-        "latest state. It never retries an ambiguous release mutation automatically."
-    ),
-    annotations=ADD_EXTERNAL,
-)
 async def gh_create_release_exact(
     owner: Annotated[
         str,

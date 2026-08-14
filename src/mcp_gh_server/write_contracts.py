@@ -41,7 +41,7 @@ class WriteOutcomeMetadata(BaseModel):
 
 
 class ExactWriteResult(WriteOutcomeMetadata):
-    """Required result base for new nontrivial 0.7.x write tools."""
+    """Required result base for nontrivial public write tools."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,15 +52,6 @@ class WriteExecution[TWrite, TRead]:
     write_value: TWrite | None = None
     readback_value: TRead | None = None
     error: RuntimeError | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class LegacyWriteStatus:
-    """Lossy projection of the tri-state contract onto the 0.6.x public schema."""
-
-    write_completed: bool
-    readback_completed: bool
-    warning: str | None
 
 
 def make_write_outcome(
@@ -263,23 +254,8 @@ async def execute_write_readback[TWrite, TRead](
     )
 
 
-def legacy_write_status(outcome: WriteOutcomeMetadata) -> LegacyWriteStatus:
-    """Project the exact contract without claiming unknown/mismatched state as success."""
-
-    warning = outcome.warning
-    if outcome.request_id is not None:
-        warning = combine_warnings(warning, f"GitHub request id: {outcome.request_id}.")
-    return LegacyWriteStatus(
-        write_completed=outcome.write_completed is True,
-        readback_completed=(
-            outcome.readback_completed and outcome.state_matches_requested is not False
-        ),
-        warning=warning,
-    )
-
-
 def readback_failure_warning(resource: str, locator: str | None = None) -> str:
-    """Return the stable legacy-compatible warning for failed authoritative readback."""
+    """Return the stable warning for failed authoritative readback."""
 
     location = f" at {locator}" if locator else ""
     return (

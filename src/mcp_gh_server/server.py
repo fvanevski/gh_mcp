@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from .tooling import (
-    READ_EXTERNAL,
-    AppContext,
-    app_lifespan,
-    mcp,
-)
+from .tooling import AppContext, app_lifespan, mcp
 from .tools.action_logs import gh_get_job_logs, gh_get_run_logs
 from .tools.actions import (
     gh_get_failed_run_logs,
@@ -65,35 +60,10 @@ from .write_tool_schema import (
     gh_submit_pr_review,
 )
 
-# Read-tool compatibility override. Public writes deliberately do not use
-# compatibility description overrides; their host-facing metadata is canonical.
-mcp.remove_tool("gh_list_milestones")
-mcp.add_tool(
-    gh_list_milestones,
-    description=(
-        "List milestones in a repository via the GitHub API.\n\n"
-        "state: open, closed, or all (default: all)."
-    ),
-    annotations=READ_EXTERNAL,
-)
-
-# tools.actions still self-registers the historical generic dispatch during module
-# import. Issue #55 removes that public contract; the 0.8.0 integration gate owns
-# the later source-level cleanup of obsolete compatibility registrations.
-mcp.remove_tool("gh_run_workflow")
-
-# tools.issues still self-registers the retired 0.6.x upsert during import. Issue
-# #58 removes it from the public contract; issue #61 owns source-level cleanup of
-# obsolete compatibility registrations.
-mcp.remove_tool("gh_upsert_label")
-
-# Rebind every current public write to the canonical host-facing schema facade.
-# Issue #61 removes this remaining global compatibility remove/re-add loop after
-# all domain migrations are integrated.
+# Public writes are registered exactly once from the canonical host-facing schema
+# facade. Domain implementation modules do not self-register these names.
 for _facade in PUBLIC_WRITE_TOOLS:
-    _name = _facade.__name__
-    _metadata = WRITE_TOOL_METADATA[_name]
-    mcp.remove_tool(_name)
+    _metadata = WRITE_TOOL_METADATA[_facade.__name__]
     mcp.add_tool(
         _facade,
         title=_metadata.title,

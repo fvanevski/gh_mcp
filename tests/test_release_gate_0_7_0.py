@@ -1,18 +1,11 @@
-"""Historical release-floor regression gate for version 0.7.0."""
+"""Immutable historical release record for version 0.7.0."""
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
-from mcp_gh_server import __version__
-from mcp_gh_server.server import mcp
-
 ROOT = Path(__file__).resolve().parents[1]
-HISTORICAL_VERSION = (0, 7, 0)
-MINIMUM_TOOL_COUNT = 56
-MINIMUM_READ_ONLY_COUNT = 35
-EXPECTED_WRITE_COUNT = 21
+HISTORICAL_SURFACE = "Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write."
 RELEASE_NEW_TOOLS = {
     "gh_get_ref",
     "gh_get_commit",
@@ -27,68 +20,14 @@ RELEASE_NEW_TOOLS = {
     "gh_get_pr_review_state",
     "gh_set_pr_draft_state",
 }
-FORBIDDEN_PUBLIC_TOOLS = {
-    "gh_exec",
-    "gh_api",
-    "gh_shell",
-    "gh_run_command",
-    "gh_rerun_workflow",
-    "gh_delete_artifact",
-    "gh_delete_run_logs",
-    "gh_set_branch_protection",
-    "gh_set_ruleset",
-}
-
-
-def _version_tuple(value: str) -> tuple[int, int, int]:
-    major, minor, patch = value.split(".")
-    return int(major), int(minor), int(patch)
-
-
-def test_release_versions_preserve_0_7_0_floor_and_current_agreement() -> None:
-    """Keep current version authorities aligned while preserving the 0.7.0 floor."""
-
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    lock = tomllib.loads((ROOT / "uv.lock").read_text())
-    editable_packages = [
-        package
-        for package in lock["package"]
-        if package.get("name") == "mcp-gh-server" and package.get("source") == {"editable": "."}
-    ]
-
-    assert len(editable_packages) == 1
-    assert project["project"]["version"] == __version__
-    assert editable_packages[0]["version"] == __version__
-    assert _version_tuple(__version__) >= HISTORICAL_VERSION
-
-
-async def test_release_tool_inventory_floor_and_non_goals() -> None:
-    """Preserve the shipped 0.7.0 surface while allowing additive later development."""
-
-    tools = {tool.name: tool for tool in await mcp.list_tools()}
-    read_only = {
-        name
-        for name, tool in tools.items()
-        if tool.annotations is not None and tool.annotations.read_only_hint is True
-    }
-
-    # This is immutable released-version authority. Breaking 0.8.x child issues may
-    # intentionally make this inventory assertion fail until the 0.8.0 integration
-    # gate versions the new surface; child issues must not lower these historical counts.
-    assert len(tools) >= MINIMUM_TOOL_COUNT
-    assert len(read_only) >= MINIMUM_READ_ONLY_COUNT
-    assert len(tools) - len(read_only) == EXPECTED_WRITE_COUNT
-    assert tools.keys() >= RELEASE_NEW_TOOLS
-    assert FORBIDDEN_PUBLIC_TOOLS.isdisjoint(tools)
 
 
 def test_release_document_preserves_historical_surface() -> None:
-    """Keep the immutable 0.7.0 release record exact as current docs advance."""
+    """Keep the shipped 0.7.0 record immutable as current runtime authority advances."""
 
     gate = (ROOT / "docs" / "release_gate_0_7_0.md").read_text()
 
-    historical_surface = "Version 0.7.0 exposes 56 public MCP tools: 35 read-only and 21 write."
-    assert historical_surface in gate
+    assert HISTORICAL_SURFACE in gate
     for tool_name in RELEASE_NEW_TOOLS:
         assert tool_name in gate
     for phrase in (

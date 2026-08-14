@@ -15,9 +15,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-EXPECTED_VERSION = "0.7.1"
-EXPECTED_TOOL_COUNT = 61
-REQUIRED_0_7_1_TOOLS = {
+EXPECTED_VERSION = "0.8.0"
+EXPECTED_TOOL_COUNT = 58
+REQUIRED_0_8_0_READ_TOOLS = {
     "gh_get_merge_requirements",
     "gh_compare_commits",
     "gh_list_artifact_files",
@@ -44,19 +44,19 @@ try:
         )
     if len(tools) != EXPECTED_TOOL_COUNT:
         raise RuntimeError(f"tool-count mismatch: expected {EXPECTED_TOOL_COUNT}, got {len(tools)}")
-    missing = REQUIRED_0_7_1_TOOLS.difference(tools)
+    missing = REQUIRED_0_8_0_READ_TOOLS.difference(tools)
     if missing:
-        raise RuntimeError(f"missing 0.7.1 tools: {', '.join(sorted(missing))}")
-    for name in REQUIRED_0_7_1_TOOLS:
+        raise RuntimeError(f"missing 0.8.0 tools: {', '.join(sorted(missing))}")
+    for name in REQUIRED_0_8_0_READ_TOOLS:
         annotations = tools[name].annotations
         if annotations is None or annotations.read_only_hint is not True:
-            raise RuntimeError(f"0.7.1 tool is not registered read-only: {name}")
+            raise RuntimeError(f"0.8.0 tool is not registered read-only: {name}")
 
     print("✓ Server module imported successfully")
     print(f"✓ Server name: {mcp.name}")
     print(f"✓ Server version: {mcp.version}")
     print(f"✓ Exact public tool count: {len(tools)}")
-    print("✓ Required 0.7.1 read-only tools are registered")
+    print("✓ Required 0.8.0 read-only tools are registered")
 except Exception as e:
     print(f"✗ Tool registration failed: {e}")
     sys.exit(1)

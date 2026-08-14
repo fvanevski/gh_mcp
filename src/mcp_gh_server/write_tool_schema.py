@@ -47,17 +47,31 @@ from .tools.issue_branch_writes import gh_create_branch as _gh_create_branch
 from .tools.issue_state import gh_set_issue_state as _gh_set_issue_state
 from .tools.issue_writes import (
     gh_create_issue as _gh_create_issue,
+)
+from .tools.issue_writes import (
     gh_create_label as _gh_create_label,
+)
+from .tools.issue_writes import (
     gh_create_milestone as _gh_create_milestone,
+)
+from .tools.issue_writes import (
     gh_edit_issue as _gh_edit_issue,
+)
+from .tools.issue_writes import (
     gh_edit_label as _gh_edit_label,
 )
 from .tools.issues import gh_create_comment as _gh_create_comment
 from .tools.pr_draft_state import gh_set_pr_draft_state as _gh_set_pr_draft_state
 from .tools.pr_writes import (
     gh_create_pr as _gh_create_pr,
+)
+from .tools.pr_writes import (
     gh_edit_pr as _gh_edit_pr,
+)
+from .tools.pr_writes import (
     gh_merge_pr as _gh_merge_pr,
+)
+from .tools.pr_writes import (
     gh_submit_pr_review as _gh_submit_pr_review,
 )
 from .tools.release_exact import gh_create_release_exact as _gh_create_release_exact
@@ -871,7 +885,7 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
             "Destructive write: edit metadata on exactly one pull request after ordinary "
             "write authorization. The request may change title, body, labels, assignees, "
             "or base and uses authoritative readback for requested fields. Draft-state "
-            "transition, formal review, merge, branch deletion, and administrator bypass "
+            "transition, formal review, merge, branch deletion, and direct head rewrite "
             "are separate or unavailable."
         ),
         MUTATE_EXTERNAL,

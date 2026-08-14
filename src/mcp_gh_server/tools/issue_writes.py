@@ -315,11 +315,9 @@ async def gh_edit_issue(
         current_number = (
             current_milestone.get("number") if isinstance(current_milestone, dict) else None
         )
-        if milestone is not None and current_number != milestone:
-            return False
-        if remove_milestone and current_milestone is not None:
-            return False
-        return True
+        milestone_ok = milestone is None or current_number == milestone
+        milestone_removal_ok = not remove_milestone or current_milestone is None
+        return milestone_ok and milestone_removal_ok
 
     execution = await execute_write_readback(
         resource="Issue edit",

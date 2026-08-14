@@ -11,14 +11,12 @@ from pydantic import Field
 from ..pr_draft_state_models import PullRequestDraftStateTransitionResult
 from ..request_governor import GitHubRequestResult
 from ..tooling import (
-    MUTATE_EXTERNAL,
     OBJECT_SHA_RE,
     OWNER_RE,
     REPO_RE,
     AppContext,
     app_from_context,
     logger,
-    mcp,
     require_write_enabled,
 )
 from ..write_contracts import (
@@ -95,17 +93,6 @@ def _validate_transition(expected_is_draft: bool, new_is_draft: bool) -> None:
         )
 
 
-@mcp.tool(
-    title="Set pull request draft state at exact head",
-    description=(
-        "Destructive write: transition exactly one pull request between draft and ready-for-review "
-        "only when its current head SHA and draft state match the supplied preconditions. The "
-        "operation changes no unrelated pull-request metadata, is attempted once, and "
-        "authoritative readback verifies both unchanged head identity and the requested "
-        "draft state."
-    ),
-    annotations=MUTATE_EXTERNAL,
-)
 async def gh_set_pr_draft_state(
     owner: Annotated[
         str,

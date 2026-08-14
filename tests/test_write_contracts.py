@@ -19,12 +19,11 @@ from mcp_gh_server.write_contracts import (
     ExactWriteResult,
     WritePreconditionMismatch,
     execute_write_readback,
-    legacy_write_status,
     require_write_precondition,
 )
 
 
-def test_exact_write_result_exposes_required_07_contract_fields() -> None:
+def test_exact_write_result_exposes_required_contract_fields() -> None:
     schema = ExactWriteResult.model_json_schema()
 
     assert set(schema["properties"]) == {
@@ -134,13 +133,10 @@ async def test_successful_write_with_mismatched_readback_is_not_verified_success
         readback=readback,
         state_matches_requested=lambda state: state == "closed",
     )
-    legacy = legacy_write_status(execution.outcome)
 
     assert execution.outcome.write_completed is True
     assert execution.outcome.readback_completed is True
     assert execution.outcome.state_matches_requested is False
-    assert legacy.write_completed is True
-    assert legacy.readback_completed is False
     assert execution.outcome.warning is not None
     assert "does not match the requested state" in execution.outcome.warning
 
@@ -421,11 +417,7 @@ async def test_review_adapter_rejects_semantic_readback_mismatch() -> None:
     client = FakeServerClient(
         [
             {"login": "reviewer"},
-            {
-                "base": {"sha": "a" * 40},
-                "head": {"sha": head_sha},
-                "user": {"login": "author"},
-            },
+            {"base": {"sha": "a" * 40}, "head": {"sha": head_sha}, "user": {"login": "author"}},
             {"id": 91, "state": "APPROVED", "html_url": review_url},
             {
                 "id": 91,
