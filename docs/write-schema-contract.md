@@ -1,8 +1,10 @@
 # Public write-schema and host-legibility contract
 
-This document defines the public MCP contract for the 21 GitHub write tools. It is a
-schema and metadata contract only: it does not replace or relax the existing execution,
-authorization, exact-state, mutation-attempt, or readback semantics.
+This document defines the current unreleased 0.8.0-development public MCP contract for the
+19 GitHub write tools. It is a schema and metadata contract only: it does not replace or
+relax the existing execution, authorization, exact-state, mutation-attempt, or readback
+semantics. Released 0.7.x inventory counts remain governed by their immutable release-gate
+documents and tests.
 
 ## Composition boundary
 
@@ -83,7 +85,7 @@ self-describing to the host.
 
 Annotations remain semantic rather than host-policy workarounds:
 
-- all 21 writes have `readOnlyHint=false`;
+- all 19 current writes have `readOnlyHint=false`;
 - additive writes have `destructiveHint=false`;
 - state-changing/destructive writes have `destructiveHint=true`;
 - writes do not claim idempotence; and
@@ -143,10 +145,10 @@ subsequent action.
 
 The contract is enforced by complementary tests:
 
-- `tests/test_tool_schema_snapshot.py` pins the 61-tool public surface and intentional
-  schema/description snapshots;
-- `tests/test_write_surface_contract.py` pins all 21 public write facades and their module
-  provenance;
+- `tests/test_tool_schema_snapshot.py` pins the current 59-tool development surface and
+  intentional schema/description snapshots;
+- `tests/test_write_surface_contract.py` pins all 19 current public write facades and their
+  module provenance;
 - `tests/test_write_schema_policy.py` independently enumerates the write surface, checks
   canonical metadata/annotations, recursively audits bounded schema leaves and nested
   objects, rejects generic executor/bypass fields, pins the narrow `@me` assignee-selector
