@@ -17,7 +17,7 @@ from pathlib import Path
 
 EXPECTED_VERSION = "0.8.0"
 EXPECTED_TOOL_COUNT = 58
-REQUIRED_0_7_1_TOOLS = {
+REQUIRED_0_8_0_READ_TOOLS = {
     "gh_get_merge_requirements",
     "gh_compare_commits",
     "gh_list_artifact_files",
@@ -44,10 +44,10 @@ try:
         )
     if len(tools) != EXPECTED_TOOL_COUNT:
         raise RuntimeError(f"tool-count mismatch: expected {EXPECTED_TOOL_COUNT}, got {len(tools)}")
-    missing = REQUIRED_0_7_1_TOOLS.difference(tools)
+    missing = REQUIRED_0_8_0_READ_TOOLS.difference(tools)
     if missing:
         raise RuntimeError(f"missing 0.8.0 tools: {', '.join(sorted(missing))}")
-    for name in REQUIRED_0_7_1_TOOLS:
+    for name in REQUIRED_0_8_0_READ_TOOLS:
         annotations = tools[name].annotations
         if annotations is None or annotations.read_only_hint is not True:
             raise RuntimeError(f"0.8.0 tool is not registered read-only: {name}")
