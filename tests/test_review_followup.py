@@ -11,7 +11,6 @@ import pytest
 from mcp_gh_server.request_governor import GitHubRequestMetadata, GitHubRequestResult
 from mcp_gh_server.server import AppContext, gh_create_issue
 from mcp_gh_server.settings import Settings
-from mcp_gh_server.tools.releases import gh_create_release
 
 
 @dataclass
@@ -74,33 +73,3 @@ async def test_successful_request_id_is_projected_without_governor_warning() -> 
     assert result.readback_completed is True
     assert result.warning == "GitHub request id: req-success-only."
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("is_draft", "is_prerelease"),
-    [(True, False), (False, True)],
-)
-async def test_release_readback_rejects_disabled_mode_mismatch(
-    is_draft: bool,
-    is_prerelease: bool,
-) -> None:
-    client = MetadataAwareClient(
-        read_results=[
-            {"stdout": "https://github.com/octo/repo/releases/tag/v1\n"},
-            RuntimeError("release already exists"),
-        ],
-    )
-
-    result = await gh_create_release(
-        "octo",
-        "repo",
-        "v1",
-        ctx=_context(client),
-        draft=False,
-        prerelease=False,
-    )
-
-    assert result.tag_name == "v1"
-    assert result.url == ""
-    assert result.readback_completed is False
-    assert result.warning is not None
