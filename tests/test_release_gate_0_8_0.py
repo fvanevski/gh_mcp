@@ -9,6 +9,7 @@ from pathlib import Path
 from mcp_gh_server import __version__
 from mcp_gh_server.server import mcp
 from mcp_gh_server.settings import Settings
+from mcp_gh_server.write_tool_schema import PUBLIC_WRITE_TOOLS, WRITE_TOOL_METADATA
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_VERSION = "0.8.0"
@@ -106,6 +107,12 @@ def _registered_tool_function_names(path: Path) -> set[str]:
 
 
 def test_public_writes_have_one_canonical_registration_path() -> None:
+    facade_names = [tool.__name__ for tool in PUBLIC_WRITE_TOOLS]
+    assert len(facade_names) == EXPECTED_WRITE_COUNT
+    assert len(set(facade_names)) == EXPECTED_WRITE_COUNT
+    assert set(facade_names) == EXPECTED_WRITE_TOOLS
+    assert set(WRITE_TOOL_METADATA) == EXPECTED_WRITE_TOOLS
+
     server = (ROOT / "src" / "mcp_gh_server" / "server.py").read_text()
     assert "mcp.remove_tool(" not in server
     assert server.count("mcp.add_tool(") == 1
