@@ -716,6 +716,9 @@ async def test_streamable_http_content_route_keeps_namespace_live(
     monkeypatch.setenv("MCP_GH_ALLOW_WRITE_COMMANDS", "false")
     monkeypatch.setenv("MCP_GH_ALLOW_CONTENT_COMMITS", "false")
     monkeypatch.setenv("MCP_GH_ALLOW_PR_MERGE", "false")
+    monkeypatch.setenv("MCP_GH_ALLOW_REPO_CREATION", "false")
+    monkeypatch.setenv("MCP_GH_ALLOW_RELEASE_CREATION", "false")
+    monkeypatch.setenv("MCP_GH_ALLOW_WORKFLOW_DISPATCH", "false")
     monkeypatch.setenv("MCP_GH_TRANSPORT", "streamable-http")
     get_settings.cache_clear()
     caplog.set_level("INFO", logger="mcp_gh_server.server")
@@ -751,8 +754,8 @@ async def test_streamable_http_content_route_keeps_namespace_live(
                 "content_commits_enabled": False,
                 "pr_merge_enabled": False,
                 "repo_creation_enabled": False,
-                "release_creation_enabled": True,
-                "workflow_dispatch_enabled": True,
+                "release_creation_enabled": False,
+                "workflow_dispatch_enabled": False,
             }
 
             file_result = await session.call_tool("gh_get_file_contents", file_arguments)
@@ -984,6 +987,9 @@ async def test_streamable_http_formal_review_then_merge_without_nested_input(
     monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
     monkeypatch.setenv("MCP_GH_ALLOW_WRITE_COMMANDS", "true")
     monkeypatch.setenv("MCP_GH_ALLOW_PR_MERGE", "true")
+    monkeypatch.setenv("MCP_GH_ALLOW_REPO_CREATION", "false")
+    monkeypatch.setenv("MCP_GH_ALLOW_RELEASE_CREATION", "false")
+    monkeypatch.setenv("MCP_GH_ALLOW_WORKFLOW_DISPATCH", "false")
     monkeypatch.setenv("MCP_GH_ALLOWED_REPOSITORIES", "octo/repo")
     monkeypatch.setenv("MCP_GH_TRANSPORT", "streamable-http")
     get_settings.cache_clear()
@@ -1019,8 +1025,8 @@ async def test_streamable_http_formal_review_then_merge_without_nested_input(
             assert info.is_error is False
             assert info.structured_content["pr_merge_enabled"] is True
             assert info.structured_content["repo_creation_enabled"] is False
-            assert info.structured_content["release_creation_enabled"] is True
-            assert info.structured_content["workflow_dispatch_enabled"] is True
+            assert info.structured_content["release_creation_enabled"] is False
+            assert info.structured_content["workflow_dispatch_enabled"] is False
 
             merge = await session.call_tool(
                 "gh_merge_pr",
