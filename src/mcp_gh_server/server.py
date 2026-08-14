@@ -53,7 +53,6 @@ from .write_tool_schema import (
     gh_create_label,
     gh_create_milestone,
     gh_create_pr,
-    gh_create_release,
     gh_create_release_exact,
     gh_create_repo,
     gh_edit_issue,
@@ -66,10 +65,6 @@ from .write_tool_schema import (
     gh_submit_pr_review,
     gh_upsert_label,
 )
-
-# gh_create_release remains importable only for transitional internal compatibility
-# coverage until the 0.8.0 cleanup gate (#61) removes obsolete legacy adapters. It is
-# deliberately absent from PUBLIC_WRITE_TOOLS and __all__, so it is not MCP-public.
 
 # Read-tool compatibility override. Public writes deliberately do not use
 # compatibility description overrides; their host-facing metadata is canonical.
