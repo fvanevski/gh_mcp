@@ -93,7 +93,9 @@ async def _edit_issue(ctx: Any) -> IssueEditResult:
 
 
 async def _create_label(ctx: Any) -> LabelCreateResult:
-    return await gh_create_label("octo", "repo", "bug", "ff0000", ctx=ctx, description="Issue")
+    return await gh_create_label(
+        "octo", "repo", "bug", "ff0000", ctx=ctx, description="Issue"
+    )
 
 
 async def _edit_label(ctx: Any) -> LabelEditResult:
@@ -101,7 +103,9 @@ async def _edit_label(ctx: Any) -> LabelEditResult:
 
 
 async def _create_milestone(ctx: Any) -> MilestoneCreateResult:
-    return await gh_create_milestone("octo", "repo", "v1", ctx=ctx, description="Release")
+    return await gh_create_milestone(
+        "octo", "repo", "v1", ctx=ctx, description="Release"
+    )
 
 
 CASES = (

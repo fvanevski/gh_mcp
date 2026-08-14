@@ -311,7 +311,7 @@ async def run_api_json_write_with_metadata(
         file.flush()
         payload_path = file.name
     try:
-        result = await client.run_with_metadata(
+        return await client.run_with_metadata(
             "api",
             endpoint,
             "-X",
@@ -319,35 +319,8 @@ async def run_api_json_write_with_metadata(
             "--input",
             payload_path,
         )
-    except GitHubRequestError:
-        raise
-    except RuntimeError as exc:
-        if _looks_transport_ambiguous(exc):
-            raise GitHubRequestError(
-                str(exc),
-                retryable=True,
-                ambiguous=True,
-            ) from exc
-        raise
     finally:
         os.unlink(payload_path)
-    return result
-
-
-def _looks_transport_ambiguous(error: RuntimeError) -> bool:
-    """Recognize transport-like failures only for lightweight protocol fakes."""
-
-    detail = str(error).casefold()
-    return any(
-        marker in detail
-        for marker in (
-            "timeout",
-            "timed out",
-            "connection reset",
-            "transport reset",
-            "unexpected eof",
-        )
-    )
 
 
 def _write_error_warning(
