@@ -282,6 +282,6 @@ async def test_ambiguous_transport_readback_can_verify_state_without_replaying_w
     assert result.request_id == "req-ambiguous"
     assert result.initialized is True
     assert result.warning is not None
-    assert "Do not retry automatically" in result.warning
+    assert "Do not retry the mutation." in result.warning
     assert len(_write_calls(client)) == 1
     assert len(_read_calls(client)) == 1
