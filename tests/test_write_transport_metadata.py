@@ -1,7 +1,8 @@
-"""Transport-metadata boundary regressions for governed JSON writes."""
+"""Review-remediation regressions for issue #58 write and documentation boundaries."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -92,3 +93,19 @@ async def test_legacy_run_only_fake_keeps_transport_text_compatibility() -> None
     assert caught.value.ambiguous is True
     assert caught.value.retryable is True
     assert client.calls == 1
+
+
+def test_readme_documents_current_issue_write_surface() -> None:
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+
+    assert "development surface exposes 58 public MCP tools" in readme
+    assert "40 read-only and 18 write" in readme
+    assert "### Write (current unreleased surface: 18)" in readme
+
+    write_section = readme.split("### Write (current unreleased surface: 18)", 1)[1].split(
+        "## 0.7.1 architecture and evidence contract",
+        1,
+    )[0]
+    assert "- `gh_upsert_label`:" not in write_section
+    assert "legacy `gh_upsert_label` writes" in readme
+    assert "label callers must choose explicit `gh_create_label`" in readme
