@@ -32,7 +32,6 @@ from mcp_gh_server.models import (
     PullRequestInfo,
     PullRequestMerge,
     PullRequestReviewSubmission,
-    ReleaseCreate,
     ReleaseInfo,
     RepoCreate,
     RepoInfo,
@@ -88,7 +87,6 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_create_repo": RepoCreate,
     "gh_list_releases": SearchResults,
     "gh_get_release": ReleaseInfo,
-    "gh_create_release": ReleaseCreate,
     "gh_create_release_exact": ReleaseExactResult,
     "gh_list_workflows": SearchResults,
     "gh_get_workflow": WorkflowInfo,
@@ -119,7 +117,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 60
+    assert len(EXPECTED_RETURN_MODELS) == 59
 
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)
