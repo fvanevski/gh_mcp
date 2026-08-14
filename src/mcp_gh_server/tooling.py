@@ -186,17 +186,29 @@ def require_workflow_dispatch_target(
     owner: str,
     repo: str,
     workflow: int | str,
+    *,
+    workflow_aliases: tuple[int | str, ...] = (),
 ) -> None:
-    """Require exact authorization for one repository/workflow dispatch target."""
+    """Require one exact authorized identity for a verified workflow target.
 
-    target = (f"{owner}/{repo}".casefold(), _normalize_workflow_selector(workflow))
+    Exact dispatch may carry both GitHub's numeric workflow ID and the expected
+    canonical workflow path. Either configured identity may authorize the request,
+    because the exact-dispatch precondition verifies that both identify the same
+    active workflow immediately before mutation.
+    """
+
+    repository = f"{owner}/{repo}".casefold()
+    selectors = tuple(
+        _normalize_workflow_selector(selector) for selector in (workflow, *workflow_aliases)
+    )
     allowed = _configured_workflow_targets(
         app.settings.allowed_workflow_dispatch_targets,
         env_name="MCP_GH_ALLOWED_WORKFLOW_DISPATCH_TARGETS",
     )
-    if target not in allowed:
+    if not any((repository, selector) in allowed for selector in selectors):
+        joined = " or ".join(f"{owner}/{repo}@{selector}" for selector in selectors)
         raise RuntimeError(
-            f"GitHub workflow dispatch is not allowed for {owner}/{repo}@{target[1]}; "
+            f"GitHub workflow dispatch is not allowed for {joined}; "
             "configure MCP_GH_ALLOWED_WORKFLOW_DISPATCH_TARGETS"
         )
 
@@ -208,6 +220,7 @@ def require_write_enabled(
     *,
     action: str,
     workflow: int | str | None = None,
+    workflow_aliases: tuple[int | str, ...] = (),
 ) -> None:
     """Enforce server-side write, repository, and high-risk action policy."""
 
@@ -227,7 +240,13 @@ def require_write_enabled(
     elif action == "workflow_dispatch":
         if workflow is None:
             raise RuntimeError("workflow dispatch authorization requires an exact workflow target")
-        require_workflow_dispatch_target(app, owner, repo, workflow)
+        require_workflow_dispatch_target(
+            app,
+            owner,
+            repo,
+            workflow,
+            workflow_aliases=workflow_aliases,
+        )
 
 
 def require_action_enabled(app: AppContext, action: str) -> None:
