@@ -36,9 +36,7 @@ def _matches_requested_repository(
         return False
 
     is_empty = snapshot.get("isEmpty")
-    if isinstance(is_empty, bool) and (not is_empty) is not auto_init:
-        return False
-    return True
+    return not (isinstance(is_empty, bool) and (not is_empty) is not auto_init)
 
 
 async def gh_create_repo(
