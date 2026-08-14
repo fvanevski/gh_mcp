@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from mcp_gh_server.legacy_release_write_adapter import gh_create_release
 from mcp_gh_server.models import CommitFile
 from mcp_gh_server.server import (
     AppContext,
@@ -21,7 +22,6 @@ from mcp_gh_server.server import (
     gh_create_label,
     gh_create_milestone,
     gh_create_pr,
-    gh_create_release,
     gh_create_repo,
     gh_edit_issue,
     gh_edit_label,
@@ -400,7 +400,7 @@ async def test_create_release_executes_then_reads_tag() -> None:
     )
 
     assert result.tag_name == "v1"
-    assert client.calls[0][1] == {"json_output": False, "stdin_text": "Notes"}
+    assert client.calls[0][1] == {"json_output": false, "stdin_text": "Notes"}
     assert "--notes-file" in client.calls[0][0]
     assert "--json" not in client.calls[0][0]
     assert client.calls[1][0] == (
