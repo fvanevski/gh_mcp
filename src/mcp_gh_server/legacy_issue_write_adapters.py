@@ -1,14 +1,10 @@
-"""Backward-compatible issue-domain write re-exports."""
+"""Retired aggregate compatibility exports for issue-domain writes.
 
-from .legacy_issue_core_write_adapter import gh_create_issue, gh_edit_issue
-from .legacy_label_write_adapter import gh_create_label, gh_edit_label, gh_upsert_label
-from .legacy_milestone_write_adapter import gh_create_milestone
+Issue, label, and milestone write execution migrated to canonical domain
+implementations in issue #58. The individual frozen adapter modules remain only
+for later 0.8.0 source cleanup and are no longer re-exported here.
+"""
 
-__all__ = [
-    "gh_create_issue",
-    "gh_create_label",
-    "gh_create_milestone",
-    "gh_edit_issue",
-    "gh_edit_label",
-    "gh_upsert_label",
-]
+from __future__ import annotations
+
+__all__: list[str] = []
