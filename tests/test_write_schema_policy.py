@@ -28,7 +28,6 @@ PUBLIC_WRITE_TOOLS = frozenset(
         "gh_merge_pr",
         "gh_create_repo",
         "gh_commit_files",
-        "gh_create_release",
         "gh_create_release_exact",
         "gh_run_workflow_exact",
         "gh_create_branch",
@@ -44,7 +43,6 @@ ADDITIVE_WRITE_TOOLS = {
     "gh_create_pr",
     "gh_submit_pr_review",
     "gh_create_repo",
-    "gh_create_release",
     "gh_create_release_exact",
     "gh_create_branch",
     "gh_create_branch_from_sha",
@@ -64,7 +62,6 @@ FINE_GATE_DESCRIPTION_MARKERS = {
     "gh_merge_pr": "PR-merge fine gate",
     "gh_create_repo": "repository-creation fine gate",
     "gh_commit_files": "content-commit fine gate",
-    "gh_create_release": "release-creation fine gate",
     "gh_create_release_exact": "release-creation fine gate",
     "gh_run_workflow_exact": "workflow-dispatch fine gate",
 }
@@ -176,8 +173,9 @@ async def test_exact_public_write_surface_is_independent_and_complete() -> None:
     }
     assert actual_writes == PUBLIC_WRITE_TOOLS
     assert set(WRITE_TOOL_METADATA) == PUBLIC_WRITE_TOOLS
-    assert len(PUBLIC_WRITE_TOOLS) == 20
+    assert len(PUBLIC_WRITE_TOOLS) == 19
     assert "gh_run_workflow" not in tools
+    assert "gh_create_release" not in tools
 
 
 async def test_registered_write_metadata_is_canonical_and_truthful() -> None:
