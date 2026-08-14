@@ -20,9 +20,9 @@ def _looks_transport_ambiguous(error: RuntimeError) -> bool:
     """Recognize transport-like failures only for lightweight protocol fakes.
 
     Real ``GhClient`` executions already raise ``GitHubRequestError`` with an
-    authoritative ambiguity classification. The fallback exists because historical
-    compatibility tests use lightweight clients whose ``run`` or ``run_with_metadata``
-    methods can surface only bare ``RuntimeError`` instances.
+    authoritative ambiguity classification. Non-``GhClient`` compatibility doubles
+    are deliberately treated as historical run-only fakes even if they happen to
+    expose a ``run_with_metadata`` convenience method.
     """
 
     detail = str(error).casefold()
@@ -38,18 +38,6 @@ def _looks_transport_ambiguous(error: RuntimeError) -> bool:
     )
 
 
-def _raise_ambiguous_fake_error(error: RuntimeError) -> None:
-    """Normalize a legacy fake transport failure without affecting real ``GhClient``."""
-
-    if _looks_transport_ambiguous(error):
-        raise GitHubRequestError(
-            str(error),
-            retryable=True,
-            ambiguous=True,
-        ) from error
-    raise error
-
-
 async def run_write_with_metadata(
     client: GhClient,
     *args: str,
@@ -57,22 +45,20 @@ async def run_write_with_metadata(
 ) -> GitHubRequestResult[Any]:
     """Run one governed write while preserving request metadata."""
 
-    runner = getattr(client, "run_with_metadata", None)
-    if callable(runner):
-        if isinstance(client, GhClient):
-            return await client.run_with_metadata(*args, **kwargs)
-        try:
-            return await runner(*args, **kwargs)
-        except GitHubRequestError:
-            raise
-        except RuntimeError as exc:
-            _raise_ambiguous_fake_error(exc)
+    if isinstance(client, GhClient):
+        return await client.run_with_metadata(*args, **kwargs)
     try:
         value = await client.run(*args, **kwargs)
     except GitHubRequestError:
         raise
     except RuntimeError as exc:
-        _raise_ambiguous_fake_error(exc)
+        if _looks_transport_ambiguous(exc):
+            raise GitHubRequestError(
+                str(exc),
+                retryable=True,
+                ambiguous=True,
+            ) from exc
+        raise
     return GitHubRequestResult(value=value)
 
 
@@ -84,22 +70,20 @@ async def run_json_write_with_metadata(
 ) -> GitHubRequestResult[Any]:
     """Send one governed JSON mutation without discarding request metadata."""
 
-    runner = getattr(client, "run_with_metadata", None)
-    if callable(runner):
-        if isinstance(client, GhClient):
-            return await run_api_json_write_with_metadata(client, method, endpoint, payload)
-        try:
-            return await run_api_json_write_with_metadata(client, method, endpoint, payload)
-        except GitHubRequestError:
-            raise
-        except RuntimeError as exc:
-            _raise_ambiguous_fake_error(exc)
+    if isinstance(client, GhClient):
+        return await run_api_json_write_with_metadata(client, method, endpoint, payload)
     try:
         value = await api_json_write(client, method, endpoint, payload)
     except GitHubRequestError:
         raise
     except RuntimeError as exc:
-        _raise_ambiguous_fake_error(exc)
+        if _looks_transport_ambiguous(exc):
+            raise GitHubRequestError(
+                str(exc),
+                retryable=True,
+                ambiguous=True,
+            ) from exc
+        raise
     return GitHubRequestResult(value=value)
 
 
