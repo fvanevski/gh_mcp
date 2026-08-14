@@ -33,7 +33,6 @@ from mcp_gh_server.models import (
     PullRequestMerge,
     PullRequestReviewSubmission,
     ReleaseInfo,
-    RepoCreate,
     RepoInfo,
     RepositoryFile,
     SearchResults,
@@ -51,6 +50,7 @@ from mcp_gh_server.pr_draft_state_models import PullRequestDraftStateTransitionR
 from mcp_gh_server.pr_review_models import PullRequestReviewsPage, PullRequestReviewState
 from mcp_gh_server.rate_status_models import ApiRateStatus
 from mcp_gh_server.release_exact_models import ReleaseExactResult
+from mcp_gh_server.repository_create_models import RepositoryCreateResult
 from mcp_gh_server.workflow_dispatch_models import WorkflowDispatchExactResult
 
 EXPECTED_RETURN_MODELS: dict[str, object] = {
@@ -84,7 +84,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_get_commit": GitCommitInfo,
     "gh_compare_commits": CommitComparisonResult,
     "gh_commit_files": CommitFilesResult,
-    "gh_create_repo": RepoCreate,
+    "gh_create_repo": RepositoryCreateResult,
     "gh_list_releases": SearchResults,
     "gh_get_release": ReleaseInfo,
     "gh_create_release_exact": ReleaseExactResult,
