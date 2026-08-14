@@ -5,9 +5,12 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 
-from mcp_gh_server.server import WRITE_TOOL_METADATA, mcp
+from mcp_gh_server.server import mcp
 from mcp_gh_server.workflow_selector import WORKFLOW_PATH_RE
+from mcp_gh_server.write_tool_schema import WRITE_TOOL_METADATA
 
+# Independent expected surface. Do not derive this from WRITE_TOOL_METADATA: adding a
+# public write must require an explicit policy-test update.
 PUBLIC_WRITE_TOOLS = frozenset(
     {
         "gh_create_issue",
@@ -43,6 +46,7 @@ ADDITIVE_WRITE_TOOLS = {
     "gh_create_branch",
     "gh_create_branch_from_sha",
 }
+
 DESTRUCTIVE_WRITE_TOOLS = PUBLIC_WRITE_TOOLS - ADDITIVE_WRITE_TOOLS
 
 OBJECT_SHA_PATTERN = r"^[0-9A-Fa-f]{40}$"
@@ -105,6 +109,7 @@ PRECONDITION_MARKERS = (
 
 
 def _unwrap_optional(schema: dict) -> dict:
+    """Return the one non-null branch of an optional JSON schema."""
     any_of = schema.get("anyOf")
     if not isinstance(any_of, list):
         return schema
@@ -123,25 +128,31 @@ def _resolve_ref(root: dict, schema: dict) -> dict:
 
 
 def _walk_schema(root: dict, schema: dict, path: str) -> Iterator[tuple[str, dict]]:
+    """Walk local refs, unions, object properties, map keys/values, and array items."""
     schema = _resolve_ref(root, schema)
     yield path, schema
+
     for union_key in ("anyOf", "oneOf", "allOf"):
         variants = schema.get(union_key, [])
         if isinstance(variants, list):
             for index, variant in enumerate(variants):
                 if isinstance(variant, dict) and variant.get("type") != "null":
                     yield from _walk_schema(root, variant, f"{path}.{union_key}[{index}]")
+
     properties = schema.get("properties", {})
     if isinstance(properties, dict):
         for name, child in properties.items():
             if isinstance(child, dict):
                 yield from _walk_schema(root, child, f"{path}.{name}")
+
     property_names = schema.get("propertyNames")
     if isinstance(property_names, dict):
         yield from _walk_schema(root, property_names, f"{path}.<key>")
+
     additional = schema.get("additionalProperties")
     if isinstance(additional, dict):
         yield from _walk_schema(root, additional, f"{path}.<value>")
+
     items = schema.get("items")
     if isinstance(items, dict):
         yield from _walk_schema(root, items, f"{path}[]")
@@ -169,6 +180,7 @@ async def test_exact_public_write_surface_is_independent_and_complete() -> None:
 async def test_registered_write_metadata_is_canonical_and_truthful() -> None:
     tools = await _tools()
     descriptions: set[str] = set()
+
     for name in PUBLIC_WRITE_TOOLS:
         tool = tools[name]
         metadata = WRITE_TOOL_METADATA[name]
@@ -179,16 +191,20 @@ async def test_registered_write_metadata_is_canonical_and_truthful() -> None:
         assert tool.annotations.destructive_hint is (name in DESTRUCTIVE_WRITE_TOOLS)
         assert tool.annotations.idempotent_hint is False
         assert tool.annotations.open_world_hint is True
+
         description = tool.description or ""
         descriptions.add(description)
         assert description.startswith(("Additive write:", "Destructive write:"))
         assert any(marker in description for marker in PRECONDITION_MARKERS), name
         assert any(marker in description for marker in NON_CAPABILITY_MARKERS), name
+
+    # Shared generic copy would defeat action-specific host review surfaces.
     assert len(descriptions) == len(PUBLIC_WRITE_TOOLS)
 
 
 async def test_high_risk_write_descriptions_name_required_fine_gate() -> None:
     tools = await _tools()
+
     for tool_name, marker in FINE_GATE_DESCRIPTION_MARKERS.items():
         description = tools[tool_name].description or ""
         assert marker in description, f"{tool_name} must advertise {marker!r}"
@@ -196,6 +212,7 @@ async def test_high_risk_write_descriptions_name_required_fine_gate() -> None:
 
 async def test_repository_target_schemas_are_canonical() -> None:
     tools = await _tools()
+
     for name in PUBLIC_WRITE_TOOLS:
         properties = tools[name].input_schema["properties"]
         owner = properties["owner"]
@@ -204,6 +221,7 @@ async def test_repository_target_schemas_are_canonical() -> None:
         assert owner["maxLength"] == 39
         assert repo["pattern"] == REPOSITORY_PATTERN
         assert repo["maxLength"] == 100
+
     create_properties = tools["gh_create_repo"].input_schema["properties"]
     assert "name" not in create_properties
     assert set(tools["gh_create_repo"].input_schema["required"]) >= {"owner", "repo"}
@@ -219,6 +237,7 @@ async def test_assignee_selectors_preserve_me_without_loosening_reviewers() -> N
         ("gh_edit_pr", "assignees_add"),
         ("gh_edit_pr", "assignees_remove"),
     )
+
     for tool_name, field_name in assignee_fields:
         raw = tools[tool_name].input_schema["properties"][field_name]
         assert "@me" in raw["description"]
@@ -232,6 +251,7 @@ async def test_assignee_selectors_preserve_me_without_loosening_reviewers() -> N
         assert re.fullmatch(item["pattern"], "@me")
         assert re.fullmatch(item["pattern"], "@you") is None
         assert re.fullmatch(item["pattern"], "octo/user") is None
+
     reviewers_raw = tools["gh_create_pr"].input_schema["properties"]["review_users"]
     reviewers = _unwrap_optional(reviewers_raw)
     assert reviewers["items"]["pattern"] == OWNER_PATTERN
@@ -239,7 +259,9 @@ async def test_assignee_selectors_preserve_me_without_loosening_reviewers() -> N
 
 
 async def test_all_write_schema_leaves_are_bounded() -> None:
+    """Strings, integers, arrays, and map values must expose hard schema bounds."""
     tools = await _tools()
+
     for name in PUBLIC_WRITE_TOOLS:
         root = tools[name].input_schema
         for path, schema in _walk_schema(root, root, name):
@@ -266,6 +288,7 @@ async def test_all_write_schema_leaves_are_bounded() -> None:
 
 async def test_no_generic_executor_or_host_bypass_surface_exists() -> None:
     tools = await _tools()
+
     for name in PUBLIC_WRITE_TOOLS:
         root = tools[name].input_schema
         for path, schema in _walk_schema(root, root, name):
@@ -273,6 +296,9 @@ async def test_no_generic_executor_or_host_bypass_surface_exists() -> None:
             if isinstance(properties, dict):
                 violations = set(properties) & FORBIDDEN_FIELD_NAMES
                 assert not violations, f"{path} exposes forbidden fields: {violations}"
+
+                # `gh_merge_pr.method` is a finite merge strategy, not a generic HTTP
+                # method. Only a generic HTTP verb surface is forbidden here.
                 method = properties.get("method")
                 if isinstance(method, dict):
                     method = _unwrap_optional(method)
@@ -294,6 +320,7 @@ async def test_exact_sha_ref_and_workflow_preconditions_are_host_visible() -> No
     for tool_name, field in sha_fields.items():
         schema = tools[tool_name].input_schema["properties"][field]
         assert schema["pattern"] == OBJECT_SHA_PATTERN
+
     workflow = tools["gh_run_workflow_exact"].input_schema["properties"]
     assert workflow["workflow_id"]["type"] == "integer"
     assert workflow["workflow_id"]["minimum"] == 1
@@ -319,6 +346,7 @@ async def test_finite_enums_and_label_color_are_explicit() -> None:
         "squash",
         "rebase",
     }
+
     for tool_name in ("gh_create_label", "gh_edit_label"):
         raw = tools[tool_name].input_schema["properties"]["color"]
         assert _unwrap_optional(raw)["pattern"] == LABEL_COLOR_PATTERN
@@ -328,6 +356,7 @@ async def test_workflow_inputs_are_a_bounded_typed_object() -> None:
     tools = await _tools()
     raw = tools["gh_run_workflow_exact"].input_schema["properties"]["inputs"]
     inputs = _unwrap_optional(raw)
+
     assert inputs["type"] == "object"
     assert inputs["maxProperties"] == 25
     assert inputs["propertyNames"]["minLength"] == 1
@@ -344,6 +373,7 @@ async def test_commit_file_payload_is_host_bounded() -> None:
     assert files["type"] == "array"
     assert files["minItems"] == 1
     assert files["maxItems"] == 1000
+
     item = _resolve_ref(root, files["items"])
     properties = item["properties"]
     assert properties["path"]["maxLength"] == 4096
