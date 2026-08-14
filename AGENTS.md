@@ -28,9 +28,9 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 |---|---|
 | `src/mcp_gh_server/server.py` | Composition root — registers every tool on the MCP object |
 | `src/mcp_gh_server/tooling.py` | Shared helpers: annotations, write gates, repository validation, evidence |
-| `src/mcp_gh_server/tools/` | Read-only tool implementations by domain |
+| `src/mcp_gh_server/tools/` | Read-only tools plus canonical migrated write implementations by domain |
 | `src/mcp_gh_server/write_tool_schema.py` | Public write-tool facade: schemas, titles, descriptions, annotations |
-| `src/mcp_gh_server/legacy_*.py` | 14 legacy adapter files mapping MCP tools → `gh` subcommands |
+| `src/mcp_gh_server/legacy_*.py` | Frozen compatibility adapters pending 0.8.0 integration cleanup |
 | `src/mcp_gh_server/models.py` | Pydantic result schemas (used by tests and tool annotations) |
 | `src/mcp_gh_server/settings.py` | All runtime config, loaded once via `get_settings()` (cached `@lru_cache`) |
 | `src/mcp_gh_server/serialization.py` | JSON-safe serialization helpers (Decimal→str, bytes→base64:, inf→str) |
@@ -38,9 +38,11 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 | `tests/test_mcp_protocol.py` | Protocol-level contract tests (tool registration, schema, annotations) |
 | `tests/test_integration.py` | Live-GitHub integration tests — require `GITHUB_TOKEN` |
 
-Key invariant: write execution lives in `legacy_*.py`; the public facade in
-`write_tool_schema.py` owns host-facing schema only and delegates unchanged to those
-implementations. Changing a write tool's mutation semantics requires touching both.
+Key invariant: `write_tool_schema.py` owns the host-facing public write schema. Execution
+may live in a canonical domain module, an exact-state module, or a still-frozen legacy
+adapter during the 0.8.0 migration. Public wrappers must delegate to the authoritative
+implementation without adding a second mutation path; changing mutation semantics requires
+updating the implementation and its regression contract together.
 
 ## Runtime architecture
 
@@ -127,16 +129,16 @@ MCP_GH_TRANSPORT=streamable-http uv run mcp-gh
 ## Testing conventions
 
 - Use `FakeGhClient` (defined in `tests/test_write_wrappers.py`) when writing unit tests
-  for write tools. It records calls, accepts queued return values, and handles `--input`
-  payload parsing.
+  for write tools. It records calls, supports governed `run_with_metadata` writes, accepts
+  queued return values, and handles `--input` payload parsing.
 - Async fixtures are automatic (`asyncio_mode = "auto"` in `pyproject.toml`). Do not add
   explicit `@pytest.mark.asyncio` decorators.
 - Integration tests live in `tests/test_integration.py`; they use `cli/cli` as the stable
   reference repo and skip gracefully without `GITHUB_TOKEN`.
 - Never commit `.env` files. The `.env.example` is the canonical template.
 - The released version (0.7.1) intentionally retains immutable inventory-gate failures
-  caused by the 59/19 development registry. Issue #61 owns the 0.8.0 cleanup — do not
-  hide those failures by lowering counts on intermediate child issues.
+  caused by the 58/18 development registry. Issue #61 owns the 0.8.0 cleanup — do not
+  hide those failures by lowering released counts on intermediate child issues.
 
 ## Agent tooling (local stack)
 

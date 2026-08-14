@@ -63,7 +63,6 @@ from .write_tool_schema import (
     gh_set_issue_state,
     gh_set_pr_draft_state,
     gh_submit_pr_review,
-    gh_upsert_label,
 )
 
 # Read-tool compatibility override. Public writes deliberately do not use
@@ -83,9 +82,14 @@ mcp.add_tool(
 # the later source-level cleanup of obsolete compatibility registrations.
 mcp.remove_tool("gh_run_workflow")
 
-# Rebind every public write to the schema facade. The facade owns host-facing
-# schema/metadata only; the wrappers delegate execution to the existing write
-# implementations without changing mutation, gate, or readback semantics.
+# tools.issues still self-registers the retired 0.6.x upsert during import. Issue
+# #58 removes it from the public contract; issue #61 owns source-level cleanup of
+# obsolete compatibility registrations.
+mcp.remove_tool("gh_upsert_label")
+
+# Rebind every current public write to the canonical host-facing schema facade.
+# Issue #61 removes this remaining global compatibility remove/re-add loop after
+# all domain migrations are integrated.
 for _facade in PUBLIC_WRITE_TOOLS:
     _name = _facade.__name__
     _metadata = WRITE_TOOL_METADATA[_name]
@@ -157,7 +161,6 @@ __all__ = [
     "gh_set_issue_state",
     "gh_set_pr_draft_state",
     "gh_submit_pr_review",
-    "gh_upsert_label",
     "gh_watch_run",
     "mcp",
 ]

@@ -20,8 +20,8 @@ def _looks_transport_ambiguous(error: RuntimeError) -> bool:
     """Recognize transport-like failures only for lightweight protocol fakes.
 
     Real ``GhClient`` executions already raise ``GitHubRequestError`` with an
-    authoritative ambiguity classification. The fallback exists because the
-    repository's historical test doubles expose only ``run()``.
+    authoritative ambiguity classification. The fallback exists only for frozen
+    compatibility test doubles that still surface bare ``RuntimeError`` values.
     """
 
     detail = str(error).casefold()
@@ -46,7 +46,7 @@ async def run_write_with_metadata(
 
     runner = getattr(client, "run_with_metadata", None)
     if callable(runner):
-        return await client.run_with_metadata(*args, **kwargs)
+        return await runner(*args, **kwargs)
     try:
         value = await client.run(*args, **kwargs)
     except GitHubRequestError:
@@ -72,7 +72,18 @@ async def run_json_write_with_metadata(
 
     runner = getattr(client, "run_with_metadata", None)
     if callable(runner):
-        return await run_api_json_write_with_metadata(client, method, endpoint, payload)
+        try:
+            return await run_api_json_write_with_metadata(client, method, endpoint, payload)
+        except GitHubRequestError:
+            raise
+        except RuntimeError as exc:
+            if not isinstance(client, GhClient) and _looks_transport_ambiguous(exc):
+                raise GitHubRequestError(
+                    str(exc),
+                    retryable=True,
+                    ambiguous=True,
+                ) from exc
+            raise
     try:
         value = await api_json_write(client, method, endpoint, payload)
     except GitHubRequestError:

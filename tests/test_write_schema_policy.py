@@ -17,7 +17,6 @@ PUBLIC_WRITE_TOOLS = frozenset(
         "gh_edit_issue",
         "gh_set_issue_state",
         "gh_create_label",
-        "gh_upsert_label",
         "gh_edit_label",
         "gh_create_milestone",
         "gh_create_comment",
@@ -172,9 +171,10 @@ async def test_exact_public_write_surface_is_independent_and_complete() -> None:
     }
     assert actual_writes == PUBLIC_WRITE_TOOLS
     assert set(WRITE_TOOL_METADATA) == PUBLIC_WRITE_TOOLS
-    assert len(PUBLIC_WRITE_TOOLS) == 19
+    assert len(PUBLIC_WRITE_TOOLS) == 18
     assert "gh_run_workflow" not in tools
     assert "gh_create_release" not in tools
+    assert "gh_upsert_label" not in tools
 
 
 async def test_registered_write_metadata_is_canonical_and_truthful() -> None:
@@ -347,7 +347,7 @@ async def test_finite_enums_and_label_color_are_explicit() -> None:
         "rebase",
     }
 
-    for tool_name in ("gh_create_label", "gh_upsert_label", "gh_edit_label"):
+    for tool_name in ("gh_create_label", "gh_edit_label"):
         raw = tools[tool_name].input_schema["properties"]["color"]
         assert _unwrap_optional(raw)["pattern"] == LABEL_COLOR_PATTERN
 
