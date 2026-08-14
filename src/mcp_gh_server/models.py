@@ -33,6 +33,9 @@ class ServerInfo(BaseModel):
     write_commands_enabled: bool
     content_commits_enabled: bool
     pr_merge_enabled: bool
+    repo_creation_enabled: bool
+    release_creation_enabled: bool
+    workflow_dispatch_enabled: bool
 
 
 # ---------------------------------------------------------------------------

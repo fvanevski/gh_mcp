@@ -114,9 +114,7 @@ def _configured_repository_targets(raw: str, *, env_name: str) -> set[str]:
         try:
             validate_repository(owner, repo)
         except ValueError as exc:
-            raise RuntimeError(
-                f"{env_name} contains invalid repository target {value!r}"
-            ) from exc
+            raise RuntimeError(f"{env_name} contains invalid repository target {value!r}") from exc
         targets.add(f"{owner}/{repo}".casefold())
     return targets
 

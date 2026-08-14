@@ -51,6 +51,9 @@ class TestModels:
             write_commands_enabled=False,
             content_commits_enabled=False,
             pr_merge_enabled=False,
+            repo_creation_enabled=False,
+            release_creation_enabled=False,
+            workflow_dispatch_enabled=False,
         )
         assert info.server_name == "mcp-gh-server"
         assert info.server_version == "0.7.1"
