@@ -210,6 +210,12 @@ async def test_high_risk_write_descriptions_name_required_fine_gate() -> None:
         assert marker in description, f"{tool_name} must advertise {marker!r}"
 
 
+async def test_merge_description_explicitly_rejects_administrator_bypass() -> None:
+    tools = await _tools()
+    description = tools["gh_merge_pr"].description or ""
+    assert "cannot use administrator bypass" in description
+
+
 async def test_repository_target_schemas_are_canonical() -> None:
     tools = await _tools()
 
