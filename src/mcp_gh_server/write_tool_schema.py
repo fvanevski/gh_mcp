@@ -15,7 +15,6 @@ from mcp_types import ToolAnnotations
 from pydantic import Field
 
 from .issue_state_models import IssueState, IssueStateReason, IssueStateTransitionResult
-from .legacy_action_write_adapter import gh_run_workflow as _gh_run_workflow
 from .legacy_git_write_adapter import (
     gh_create_branch as _gh_create_branch,
 )
@@ -70,7 +69,6 @@ from .models import (
     PullRequestReviewSubmission,
     ReleaseCreate,
     RepoCreate,
-    WorkflowRunCreate,
 )
 from .pr_draft_state_models import PullRequestDraftStateTransitionResult
 from .release_exact_models import ReleaseExactResult
@@ -149,36 +147,20 @@ RefName = Annotated[
         pattern=r"^(?:heads|tags)/.+$",
     ),
 ]
-WorkflowSelector = Annotated[
-    Annotated[
-        int,
-        Field(ge=1),
-    ]
-    | Annotated[
-        str,
-        Field(
-            min_length=23,
-            max_length=1024,
-            pattern=WORKFLOW_PATH_RE.pattern,
-        ),
-    ],
-    Field(
-        description=(
-            "Exact positive workflow ID or canonical case-sensitive path under "
-            ".github/workflows/ ending in .yml or .yaml."
-        )
-    ),
-]
-WorkflowField = Annotated[
+WorkflowPath = Annotated[
     str,
     Field(
-        min_length=2,
-        max_length=65_535,
-        pattern=r"^[^=]+=.*$",
-        description="One workflow_dispatch input in non-empty key=value form.",
+        min_length=23,
+        max_length=1024,
+        pattern=WORKFLOW_PATH_RE.pattern,
     ),
 ]
-WorkflowFields = Annotated[list[WorkflowField], Field(max_length=25)]
+WorkflowInputKey = Annotated[str, Field(min_length=1, max_length=65_535)]
+WorkflowInputValue = Annotated[str, Field(max_length=65_535)]
+WorkflowInputs = Annotated[
+    dict[WorkflowInputKey, WorkflowInputValue],
+    Field(max_length=25),
+]
 DueOn = Annotated[str, Field(min_length=1, max_length=64)]
 RepositoryCreateName = Annotated[
     str,
@@ -782,35 +764,22 @@ async def gh_create_release_exact(
     )
 
 
-async def gh_run_workflow(
-    owner: Owner,
-    repo: Repository,
-    workflow_id: WorkflowSelector,
-    ref: Annotated[
-        BranchName,
-        Field(description="Branch or tag name to dispatch; defaults to main."),
-    ] = "main",
-    *,
-    ctx: Context[AppContext],
-    fields: Annotated[
-        WorkflowFields | None,
-        Field(description="Optional workflow_dispatch inputs as key=value entries."),
-    ] = None,
-) -> WorkflowRunCreate:
-    return await _gh_run_workflow(
-        owner,
-        repo,
-        workflow_id,
-        ref,
-        ctx=ctx,
-        fields=fields,
-    )
-
-
 async def gh_run_workflow_exact(
     owner: Owner,
     repo: Repository,
-    workflow_id: WorkflowSelector,
+    workflow_id: Annotated[
+        PositiveNumber,
+        Field(description="Exact positive GitHub workflow ID to dispatch."),
+    ],
+    expected_workflow_path: Annotated[
+        WorkflowPath,
+        Field(
+            description=(
+                "Exact canonical case-sensitive workflow path that the numeric workflow ID "
+                "must identify immediately before dispatch."
+            )
+        ),
+    ],
     ref: Annotated[
         RefName,
         Field(description=("Exact ref path relative to refs/, as heads/<branch> or tags/<tag>.")),
@@ -821,19 +790,25 @@ async def gh_run_workflow_exact(
     ],
     *,
     ctx: Context[AppContext],
-    fields: Annotated[
-        WorkflowFields | None,
-        Field(description="Optional workflow_dispatch inputs as key=value entries."),
+    inputs: Annotated[
+        WorkflowInputs | None,
+        Field(
+            description=(
+                "Optional workflow_dispatch input object with at most 25 string entries and "
+                "at most 65,535 aggregate key/value characters."
+            )
+        ),
     ] = None,
 ) -> WorkflowDispatchExactResult:
     return await _gh_run_workflow_exact(
         owner,
         repo,
         workflow_id,
+        expected_workflow_path,
         ref,
         expected_ref_sha,
         ctx=ctx,
-        fields=fields,
+        inputs=inputs,
     )
 
 
@@ -1081,30 +1056,17 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
         ),
         ADD_EXTERNAL,
     ),
-    "gh_run_workflow": WriteToolMetadata(
-        "Dispatch workflow",
-        (
-            "Destructive write: issue exactly one workflow_dispatch request for the exact "
-            "authorized workflow ID or canonical workflow path and bounded branch/tag ref "
-            "after ordinary write authorization, exact workflow-target policy, and the "
-            "workflow-dispatch fine gate. Inputs are bounded key=value entries. This "
-            "compatibility surface has no exact ref-SHA precondition; use "
-            "gh_run_workflow_exact when immutable identity is required. It cannot rerun, "
-            "cancel, or automatically repeat a dispatch."
-        ),
-        MUTATE_EXTERNAL,
-    ),
     "gh_run_workflow_exact": WriteToolMetadata(
         "Dispatch workflow at exact ref",
         (
             "Destructive write: after ordinary write authorization, exact workflow-target "
-            "policy, and the separate workflow-dispatch fine gate, resolve an authorized "
-            "workflow ID or canonical path to its numeric GitHub identity, then verify under "
-            "one server-local critical section an exact canonical branch/tag ref against "
-            "expected_ref_sha, reject same-name branch/tag ambiguity, and reject an existing "
-            "workflow_dispatch run for the workflow/head before one dispatch. Returned run "
-            "details and authoritative readback bind the result to an exact run ID; the tool "
-            "never redispatches automatically."
+            "policy, and the separate workflow-dispatch fine gate, dispatch exactly one "
+            "positive workflow ID only when GitHub immediately re-verifies the caller's exact "
+            "canonical workflow path and active state. The tool also verifies the exact "
+            "branch/tag ref against expected_ref_sha, rejects same-name branch/tag ambiguity "
+            "and an existing workflow_dispatch run for the workflow/head, accepts only a "
+            "bounded typed input object, requests return_run_details, and binds authoritative "
+            "readback to the exact returned run ID. It never redispatches automatically."
         ),
         MUTATE_EXTERNAL,
     ),
@@ -1151,7 +1113,6 @@ PUBLIC_WRITE_TOOLS: tuple[PublicWriteTool, ...] = (
     gh_commit_files,
     gh_create_release,
     gh_create_release_exact,
-    gh_run_workflow,
     gh_run_workflow_exact,
     gh_create_branch,
     gh_create_branch_from_sha,
