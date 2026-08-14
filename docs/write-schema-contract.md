@@ -39,8 +39,18 @@ bounded, typed parameters appropriate to the operation, including:
 - bounded assignee, reviewer, label, workflow-input, and commit-file collections;
 - assignee elements limited to a canonical GitHub login or the exact compatibility
   selector `@me`, while reviewer elements remain canonical GitHub logins only;
-- bounded nested commit-file path/content/mode fields; and
-- an explicit `REPO` or `OWNER/REPO` shape for repository creation.
+- bounded nested commit-file path/content/mode fields;
+- an explicit `REPO` or `OWNER/REPO` shape for repository creation; and
+- for workflow dispatch, one exact positive workflow ID or a bounded canonical,
+  case-sensitive `.github/workflows/<file>.yml|yaml` path.
+
+The workflow selector union is intentionally narrow. A numeric selector remains a positive
+GitHub workflow ID. A path selector names a file directly under `.github/workflows/`; the
+execution layer first authorizes that exact caller-supplied selector and then performs a
+read-only GitHub workflow lookup by file name. The returned workflow metadata must preserve
+the exact requested path and case before the numeric workflow ID may be used for duplicate
+detection, mutation, reservation state, or readback. The path option therefore adds no
+generic repository-path, URL, or API surface.
 
 The `@me` exception is intentionally narrow. GitHub CLI accepts it for issue/PR assignee
 selection, and the frozen write contract normalizes it to the authenticated concrete login
@@ -89,12 +99,21 @@ invariants continue to apply, including:
 - global write authorization and repository allow policy;
 - separate fine gates for repository creation, release creation, workflow dispatch,
   content commits, and pull-request merge;
+- exact prospective-repository authorization for repository creation;
+- exact repository/workflow-selector authorization for workflow dispatch before any
+  workflow-resolution read or mutation request;
 - exact expected state/head/ref/target checks where the tool contract prescribes them;
 - preservation of the supported `@me` assignee selector and its concrete-login readback
   normalization for issue/PR create and assignee edits;
 - one governed mutation attempt for no-blind-retry operations;
 - authoritative readback where a stable identity exists; and
 - explicit ambiguous/partial-write reporting instead of automatic replay.
+
+Repository creation and workflow dispatch therefore require both their ordinary repository
+policy and their operation-specific exact target policy. The exact target lists default to
+empty. Enabling a fine gate without a matching exact target remains fail-closed. Release
+creation intentionally keeps its existing contract: master write gate, release fine gate,
+and normal repository policy, without a new release-target list.
 
 Legacy compatibility tools that intentionally lack an immutable precondition remain
 truthful about that limitation and direct callers to the corresponding exact-state tool
@@ -124,12 +143,17 @@ The contract is enforced by complementary tests:
   canonical metadata/annotations, recursively audits bounded schema leaves and nested
   objects, rejects generic executor/bypass fields, pins the narrow `@me` assignee-selector
   exception without loosening reviewer logins, requires each high-risk write description
-  to name its actual fine gate, and pins exact-state/payload constraints; and
+  to name its actual fine gate, and pins exact-state/payload constraints;
+- `tests/test_write_target_policy.py` pins the new high-risk target gates, including
+  zero-GitHub-call target mismatches, public ID-or-path workflow schema, exact case-preserving
+  path resolution to numeric workflow identity, release-gate preservation, and unchanged
+  ordinary repository policy; and
 - write-wrapper tests verify that facade calls still delegate to the existing execution
   implementations, including symbolic-assignee readback semantics.
 
-Async schema-policy tests follow the repository's `asyncio_mode = "auto"` convention and
-do not carry explicit `@pytest.mark.asyncio` decorators.
+Async schema-policy and target-policy tests follow the repository's
+`asyncio_mode = "auto"` convention and do not carry explicit `@pytest.mark.asyncio`
+decorators.
 
 A new public write or a material schema/annotation change must update the independent
 policy set and the relevant exact snapshot intentionally. Green tests alone are not a
