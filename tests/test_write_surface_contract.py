@@ -23,7 +23,6 @@ from mcp_gh_server.server import (
     gh_create_label,
     gh_create_milestone,
     gh_create_pr,
-    gh_create_release,
     gh_create_release_exact,
     gh_create_repo,
     gh_edit_issue,
@@ -99,14 +98,13 @@ def test_all_public_writes_are_bound_to_issue9_compatibility_modules() -> None:
         gh_merge_pr: "mcp_gh_server.write_tool_schema",
         gh_create_repo: "mcp_gh_server.write_tool_schema",
         gh_commit_files: "mcp_gh_server.write_tool_schema",
-        gh_create_release: "mcp_gh_server.write_tool_schema",
         gh_create_release_exact: "mcp_gh_server.write_tool_schema",
         gh_run_workflow_exact: "mcp_gh_server.write_tool_schema",
         gh_create_branch: "mcp_gh_server.write_tool_schema",
         gh_create_branch_from_sha: "mcp_gh_server.write_tool_schema",
     }
 
-    assert len(expected) == 20
+    assert len(expected) == 19
     for function, module in expected.items():
         assert function.__module__ == module
 
