@@ -467,7 +467,7 @@ async def gh_submit_pr_review(
         url=str(review.get("html_url") or created.get("html_url") or review_url),
         message=_outcome_message(
             outcome,
-            success=f"Formal pull request review submitted and verified as {_review_state(action)}.",
+            success=f"Formal review submitted and verified as {_review_state(action)}.",
             unverified="Pull request review was not verified.",
         ),
         **outcome.model_dump(),
