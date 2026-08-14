@@ -221,3 +221,77 @@ async def test_content_commit_ambiguous_cas_preserves_unknown_write_outcome() ->
     assert result.warning is not None
     assert "outcome is unknown" in result.warning
     assert sum(kind == "write" for kind, _, _ in client.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_issue_branch_graphql_error_is_ambiguous_until_readback() -> None:
+    sha = "a" * 40
+    client = MetadataAwareClient(
+        read_results=[
+            {"node_id": "R_repo", "default_branch": "main"},
+            {"node_id": "I_issue"},
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            {"ref": "refs/heads/main", "object": {"sha": sha}},
+            _linked_branch_page("I_issue", "feature", sha),
+        ],
+        write_results=[
+            GitHubRequestResult(
+                value={"errors": [{"message": "resolver failed"}]},
+                metadata=GitHubRequestMetadata(request_id="req-linked-graphql-error"),
+            )
+        ],
+    )
+
+    result = await gh_create_branch("octo", "repo", 60, "feature", ctx=_context(client))
+
+    assert result.write_completed is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is True
+    assert result.request_id == "req-linked-graphql-error"
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_content_commit_graphql_error_is_ambiguous_until_ref_readback() -> None:
+    head = "a" * 40
+    base_tree = "b" * 40
+    blob_sha = "c" * 40
+    tree_sha = "d" * 40
+    commit_sha = "e" * 40
+    client = MetadataAwareClient(
+        read_results=[
+            {"object": {"sha": head}},
+            {"node_id": "R_repo"},
+            {"tree": {"sha": base_tree}},
+            {"ref": "refs/heads/main", "object": {"sha": head}},
+        ],
+        write_results=[
+            {"sha": blob_sha},
+            {"sha": tree_sha},
+            {"sha": commit_sha},
+            GitHubRequestResult(
+                value={"errors": [{"message": "updateRefs resolver failed"}]},
+                metadata=GitHubRequestMetadata(request_id="req-cas-graphql-error"),
+            ),
+        ],
+    )
+
+    result = await gh_commit_files(
+        "octo",
+        "repo",
+        "main",
+        head,
+        [CommitFile(path="a.txt", content="replacement\n")],
+        "update a.txt",
+        ctx=_context(client),
+    )
+
+    assert result.write_completed is None
+    assert result.readback_completed is True
+    assert result.state_matches_requested is False
+    assert result.ref_updated is False
+    assert result.files_committed == 0
+    assert result.request_id == "req-cas-graphql-error"
+    assert result.warning is not None
+    assert "Do not retry" in result.warning
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 4

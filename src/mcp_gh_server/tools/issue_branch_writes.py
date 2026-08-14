@@ -257,12 +257,9 @@ async def gh_create_branch(
         value = result.value
         errors = value.get("errors") if isinstance(value, dict) else None
         if errors:
-            data = value.get("data") if isinstance(value, dict) else None
-            mutation = data.get("createLinkedBranch") if isinstance(data, dict) else None
-            ambiguous = isinstance(mutation, dict) and mutation.get("linkedBranch") is not None
             raise GitHubRequestError(
-                "GitHub GraphQL rejected linked-branch creation",
-                ambiguous=ambiguous,
+                "GitHub GraphQL returned mutation errors during linked-branch creation",
+                ambiguous=True,
                 metadata=result.metadata,
             )
         return result

@@ -10,7 +10,7 @@ from pydantic import Field
 
 from ..git_write_models import CommitFilesResult
 from ..models import CommitFile
-from ..request_governor import GitHubRequestResult
+from ..request_governor import GitHubRequestError, GitHubRequestResult
 from ..tooling import (
     OBJECT_SHA_RE,
     AppContext,
@@ -193,12 +193,20 @@ async def gh_commit_files(
     }
 
     async def write_ref() -> GitHubRequestResult[Any]:
-        return await run_api_json_write_with_metadata(
+        result = await run_api_json_write_with_metadata(
             app.client,
             "POST",
             "graphql",
             cas_payload,
         )
+        value = result.value
+        if isinstance(value, dict) and value.get("errors"):
+            raise GitHubRequestError(
+                "GitHub GraphQL returned mutation errors during exact ref update",
+                ambiguous=True,
+                metadata=result.metadata,
+            )
+        return result
 
     async def readback_ref() -> dict[str, Any]:
         result = await app.client.run(
