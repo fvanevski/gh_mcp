@@ -48,9 +48,6 @@ from .legacy_pr_review_write_adapter import gh_submit_pr_review as _gh_submit_pr
 from .legacy_repository_write_adapters import (
     gh_commit_files as _gh_commit_files,
 )
-from .legacy_repository_write_adapters import (
-    gh_create_repo as _gh_create_repo,
-)
 from .models import (
     BranchCreate,
     BranchCreateFromSha,
@@ -66,10 +63,10 @@ from .models import (
     PullRequestEdit,
     PullRequestMerge,
     PullRequestReviewSubmission,
-    RepoCreate,
 )
 from .pr_draft_state_models import PullRequestDraftStateTransitionResult
 from .release_exact_models import ReleaseExactResult
+from .repository_create_models import RepositoryCreateResult
 from .tooling import (
     ADD_EXTERNAL,
     MUTATE_EXTERNAL,
@@ -82,6 +79,7 @@ from .tools.issue_state import gh_set_issue_state as _gh_set_issue_state
 from .tools.issues import gh_create_comment as _gh_create_comment
 from .tools.pr_draft_state import gh_set_pr_draft_state as _gh_set_pr_draft_state
 from .tools.release_exact import gh_create_release_exact as _gh_create_release_exact
+from .tools.repository_create import gh_create_repo as _gh_create_repo
 from .tools.workflow_dispatch import gh_run_workflow_exact as _gh_run_workflow_exact
 from .workflow_dispatch_models import WorkflowDispatchExactResult
 from .workflow_selector import WORKFLOW_PATH_RE
@@ -160,18 +158,6 @@ WorkflowInputs = Annotated[
     Field(max_length=25),
 ]
 DueOn = Annotated[str, Field(min_length=1, max_length=64)]
-RepositoryCreateName = Annotated[
-    str,
-    Field(
-        min_length=1,
-        max_length=140,
-        pattern=(
-            r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/)?"
-            r"[A-Za-z0-9_.-]{1,100}$"
-        ),
-        description="Canonical repository name as REPO or OWNER/REPO.",
-    ),
-]
 CommitMessage = Annotated[str, Field(min_length=1, max_length=65_536)]
 ReleaseName = Annotated[str, Field(max_length=256)]
 
@@ -624,7 +610,8 @@ async def gh_merge_pr(
 
 
 async def gh_create_repo(
-    name: RepositoryCreateName,
+    owner: Owner,
+    repo: Repository,
     *,
     ctx: Context[AppContext],
     description: Annotated[
@@ -633,9 +620,10 @@ async def gh_create_repo(
     ] = None,
     private: bool = False,
     auto_init: bool = False,
-) -> RepoCreate:
+) -> RepositoryCreateResult:
     return await _gh_create_repo(
-        name,
+        owner,
+        repo,
         ctx=ctx,
         description=description,
         private=private,
@@ -969,11 +957,13 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
     "gh_create_repo": WriteToolMetadata(
         "Create repository",
         (
-            "Additive write: create exactly one repository named REPO or OWNER/REPO after "
-            "the ordinary write policy, exact prospective-repository target policy, and "
-            "separate repository-creation fine gate allow it. The request may set description, "
-            "visibility, and initial README only. It cannot delete, rename, transfer, or "
-            "otherwise administer an existing repository."
+            "Additive write: create exactly one repository at the canonical OWNER/REPO target "
+            "after ordinary write policy, exact prospective-repository target policy, and the "
+            "separate repository-creation fine gate allow it. The mutation is attempted once, "
+            "then exact authoritative readback verifies repository identity, visibility, "
+            "description, and initialization when GitHub exposes that evidence. It never "
+            "retries an ambiguous creation and cannot delete, rename, transfer, or otherwise "
+            "administer an existing repository."
         ),
         ADD_EXTERNAL,
     ),
