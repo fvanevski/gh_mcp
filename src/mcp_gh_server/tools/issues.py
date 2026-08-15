@@ -47,7 +47,7 @@ async def gh_list_issues(
         str(limit),
     ]
     if labels:
-        args.extend(["--labels", labels])
+        args.extend(["--label", labels])
 
     result = await app.client.run(*args)
     items: list[Any] = result if isinstance(result, list) else []

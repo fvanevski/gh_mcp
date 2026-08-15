@@ -1,4 +1,4 @@
-"""Regression tests for authoritative GitHub Search total counts."""
+"""Regression tests for bounded GitHub Search count evidence."""
 
 from __future__ import annotations
 
@@ -36,6 +36,40 @@ class FakeGhClient:
 def _context(client: FakeGhClient) -> Any:
     app = AppContext(client=client, settings=Settings())  # type: ignore[arg-type]
     return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=app))
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [gh_search_repos, gh_search_issues, gh_search_code],
+)
+async def test_incomplete_count_evidence_preserves_items_and_marks_truncated(tool: Any) -> None:
+    items = [{"id": 1}]
+    client = FakeGhClient(
+        [items, {"total_count": 4, "incomplete_results": True, "items": [{"id": 1}]}]
+    )
+
+    result = await tool(query="repo:octo/repo", per_page=1, ctx=_context(client))
+
+    assert result.items == items
+    assert result.total_count == 4
+    assert result.truncated is True
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [gh_search_repos, gh_search_issues, gh_search_code],
+)
+async def test_count_drift_below_returned_items_is_reconciled_conservatively(tool: Any) -> None:
+    items = [{"id": 1}, {"id": 2}]
+    client = FakeGhClient(
+        [items, {"total_count": 1, "incomplete_results": False, "items": [{"id": 1}]}]
+    )
+
+    result = await tool(query="repo:octo/repo", per_page=2, ctx=_context(client))
+
+    assert result.items == items
+    assert result.total_count == len(items)
+    assert result.truncated is True
 
 
 @pytest.mark.parametrize(
@@ -167,15 +201,6 @@ async def test_exact_returned_total_is_complete() -> None:
     assert result.truncated is False
 
 
-async def test_incomplete_count_evidence_is_rejected() -> None:
-    client = FakeGhClient(
-        [[{"id": 1}], {"total_count": 4, "incomplete_results": True, "items": [{"id": 1}]}]
-    )
-
-    with pytest.raises(RuntimeError, match="incomplete"):
-        await gh_search_code(query="language:python", per_page=1, ctx=_context(client))
-
-
 @pytest.mark.parametrize(
     "count_evidence",
     [
@@ -183,7 +208,6 @@ async def test_incomplete_count_evidence_is_rejected() -> None:
         {"total_count": -1, "incomplete_results": False},
         {"total_count": "2", "incomplete_results": False},
         {"total_count": True, "incomplete_results": False},
-        {"total_count": 1, "incomplete_results": False},
         {"total_count": 2},
         {"total_count": 2, "incomplete_results": "false"},
         [],

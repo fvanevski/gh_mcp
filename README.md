@@ -569,6 +569,13 @@ must not be retried automatically.
 ## Operational limits
 
 - Search tools use GitHub's `gh search` subcommands with `--json` output.
+- Search tools obtain count evidence from one matching bounded Search REST read. Structurally
+  valid `incomplete_results=true` evidence or a later count below already-returned items does
+  not discard those items: `total_count` is reconciled to at least the returned-item count and
+  `truncated=true`. Malformed count evidence still fails closed. See
+  `docs/search-read-contract.md`.
+- `gh_list_issues(labels=...)` passes its comma-separated filter through the supported singular
+  `gh issue list --label` option; it never emits the unsupported `--labels` spelling.
 - Results are bounded by `MCP_GH_DEFAULT_MAX_RESULTS` (default: 30) and
   capped at `MCP_GH_HARD_MAX_RESULTS` (default: 100).
 - All output is JSON-safe: `Decimal` → string, `bytes` → `base64:`
