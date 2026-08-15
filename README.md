@@ -4,12 +4,13 @@ A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
 runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
-Version 0.8.0 exposes 58 public MCP tools: 40 read-only and 18 write.
-The 0.8.0 release retires the weaker generic workflow-dispatch, release-creation,
-and label-upsert writes, removes obsolete write-compatibility infrastructure, and
-registers every public write exactly once through the canonical host-facing schema
-facade. Historical 0.7.0/0.7.1 release records remain available under `docs/` but do
-not define the current runtime inventory.
+Version 0.8.1 exposes 58 public MCP tools: 40 read-only and 18 write.
+The 0.8.1 patch restores correct behavior for `gh_search_code` and `gh_list_issues(labels=...)`
+after post-release live-read regressions surfaced. The 0.8.0 release retired the weaker
+generic workflow-dispatch, release-creation, and label-upsert writes, removed obsolete
+write-compatibility infrastructure, and registered every public write exactly once through
+the canonical host-facing schema facade. Historical 0.7.0/0.7.1 release records remain
+available under `docs/` but do not define the current runtime inventory.
 
 ## Tools
 
@@ -136,10 +137,10 @@ The conservative read surface includes exact-state evidence such as
 identity, policy, or bounded-source completeness cannot be established. See the
 focused documents under `docs/` for each contract.
 
-0.8.0 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public
+0.8.1 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public
 `gh api`, a generic shell/subprocess MCP tool, administrator bypasses, automatic
 mutation replay, artifact/log deletion, or branch-protection/ruleset mutation. See
-`docs/release_gate_0_8_0.md` for the current release acceptance mapping.
+`docs/release_gate_0_8_1.md` for the current release acceptance mapping.
 
 ## Install
 
@@ -216,7 +217,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.8.0`, but availability in ChatGPT depends on the
+The action surface is version `0.8.1`, but availability in ChatGPT depends on the
 account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -302,7 +303,7 @@ MCP tool invocation reached server: tool=gh_get_pr
 ```
 
 After deploying the current release, delete and reinstall the Plus custom plugin and
-verify `gh_server_info` reports both versions as 0.8.0. An immediate namespace-disabled
+verify `gh_server_info` reports both versions as 0.8.1. An immediate namespace-disabled
 response with no `gh_get_pr` marker still proves rejection occurred in the host before
 the revised server operation. It does not indicate GitHub authentication, repository,
 PR, or readback failure and must not be retried as though a GitHub write partially ran.
@@ -606,13 +607,13 @@ uv run pytest
 git diff --check
 ```
 
-The 0.8.0 release passes only when package/server/tool-schema/lock versions, the exact
+The 0.8.1 release passes only when package/server/tool-schema/lock versions, the exact
 58/40/18 executable inventory, schema snapshots, canonical registration invariants,
 compatibility-path absence, focused negative/fail-closed regressions, static checks,
 and the full test suite agree on the same exact candidate SHA. Any source change
 invalidates affected validation and requires rerunning it.
 
-Historical 0.7.0 and 0.7.1 release mappings remain under `docs/`; current release
+Historical 0.7.0, 0.7.1, and 0.8.0 release mappings remain under `docs/`; current release
 authority is `docs/release_gate_0_8_0.md` and `tests/test_release_gate_0_8_0.py`.
 
 ## Known boundaries

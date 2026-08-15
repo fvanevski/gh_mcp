@@ -75,10 +75,10 @@ def test_release_documentation_describes_final_080_inventory() -> None:
     readme = Path("README.md").read_text()
     contract = Path("docs/write-schema-contract.md").read_text()
 
-    assert "0.8.0" in readme
+    assert "0.8.1" in readme
     assert "58 public MCP tools" in readme
     assert "40 read-only" in readme
     assert "18 write" in readme
-    assert "0.8.0" in contract
+    assert "0.8.1" in contract
     assert "58" in contract
     assert "18" in contract

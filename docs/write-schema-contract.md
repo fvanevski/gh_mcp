@@ -1,8 +1,8 @@
 # Public write-schema and host-legibility contract
 
-Version 0.8.0 exposes 18 public GitHub write tools through one canonical host-facing MCP facade. This document defines their schema, metadata, registration, authorization, and ambiguity invariants. It does not weaken execution, exact-state, mutation-attempt, or readback requirements.
+Version 0.8.1 exposes 18 public GitHub write tools through one canonical host-facing MCP facade. This document defines their schema, metadata, registration, authorization, and ambiguity invariants. It does not weaken execution, exact-state, mutation-attempt, or readback requirements.
 
-Historical 0.7.0 and 0.7.1 inventories remain recorded by their release documents. The current 0.8.0 runtime authority is defined by `docs/release_gate_0_8_0.md` and `tests/test_release_gate_0_8_0.py`.
+Historical 0.7.0, 0.7.1, and 0.8.0 inventories remain recorded by their release documents. The current 0.8.1 runtime authority is defined by `docs/release_gate_0_8_1.md` and `tests/test_release_gate_0_8_1.py`.
 
 ## Composition boundary
 
@@ -15,7 +15,7 @@ Historical 0.7.0 and 0.7.1 inventories remain recorded by their release document
 
 `src/mcp_gh_server/server.py` registers each function in `PUBLIC_WRITE_TOOLS` exactly once using the corresponding `WRITE_TOOL_METADATA` entry. It performs no compatibility `remove_tool`/re-add rebinding. Public write implementations under `src/mcp_gh_server/tools/` do not independently register the same public names with `@mcp.tool`.
 
-The obsolete `legacy_*write*` adapters, `legacy_write_support.py`, `legacy_assignee_support.py`, and the `legacy_write_status` result projection are not part of the 0.8.0 architecture.
+The obsolete `legacy_*write*` adapters, `legacy_write_support.py`, `legacy_assignee_support.py`, and the `legacy_write_status` result projection are not part of the 0.8.1 architecture.
 
 Canonical domain implementations include:
 

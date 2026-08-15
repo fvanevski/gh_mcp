@@ -34,7 +34,7 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 | `src/mcp_gh_server/models.py` | Pydantic result schemas used by tests and tool annotations |
 | `src/mcp_gh_server/settings.py` | Runtime config, loaded once via cached `get_settings()` |
 | `src/mcp_gh_server/serialization.py` | JSON-safe serialization helpers |
-| `tests/test_release_gate_0_8_0.py` | Current package/schema/inventory/registration release gate |
+| `tests/test_release_gate_0_8_1.py` | Current package/schema/inventory/registration release gate |
 | `tests/test_write_wrappers.py` | Broad regression coverage for write and adjacent read tools |
 | `tests/test_mcp_protocol.py` | Protocol-level registration/schema/annotation contract tests |
 | `tests/test_integration.py` | Live-GitHub integration tests requiring `GITHUB_TOKEN` |
@@ -115,7 +115,7 @@ Formal review requires `gh_submit_pr_review` (not `gh_create_comment`). Merge re
 gh --version
 
 # Current release gate and focused contracts
-uv run pytest tests/test_release_gate_0_8_0.py
+uv run pytest tests/test_release_gate_0_8_1.py
 
 # Full validation suite
 uv run ruff check .
@@ -147,7 +147,7 @@ MCP_GH_TRANSPORT=streamable-http uv run mcp-gh
 - Never commit `.env` files. `.env.example` is the canonical template.
 - Historical `tests/test_release_gate_0_7_0.py` and `tests/test_release_gate_0_7_1.py`
   preserve documentary release history; current executable authority belongs to
-  `tests/test_release_gate_0_8_0.py`.
+  `tests/test_release_gate_0_8_1.py`.
 - Never relax an exact-state assertion, negative/fail-closed regression, schema bound,
   fine gate, or no-blind-retry invariant merely to make the suite green.
 
@@ -176,12 +176,12 @@ to bypass a failed gate.
 
 ## Release authority
 
-Version 0.8.0 release authority is `docs/release_gate_0_8_0.md` plus
-`tests/test_release_gate_0_8_0.py`. Required closure evidence must belong to one exact
+Version 0.8.1 release authority is `docs/release_gate_0_8_1.md` plus
+`tests/test_release_gate_0_8_1.py`. Required closure evidence must belong to one exact
 candidate SHA and includes package/server/tool-schema/lock agreement, exact 58/40/18 tool
 inventory, schema snapshots, canonical single-registration proof, compatibility-path absence,
 focused write/readback and fail-closed tests, Ruff, format, mypy, full pytest, and the
-representative live replay required by issue #61.
+representative live replay required by issues #61 and #72.
 
 Host interception during live replay is classified separately from server fine-gate
 rejection, GitHub failure/ambiguity, and completed authoritative readback. Do not weaken
@@ -199,6 +199,6 @@ truthful metadata or safety contracts solely to move an action past host interce
   naming layer.
 - Result serialization converts `Decimal` → string, `bytes` → `base64:` prefix,
   infinities → string, and datetimes → ISO 8601.
-- Detailed current contracts live under `docs/`, especially `docs/release_gate_0_8_0.md`,
-  `docs/write-schema-contract.md`, `docs/pr-review-evidence-contract.md`, and the focused
-  Git/ref/workflow/release documents.
+- Detailed current contracts live under `docs/`, especially `docs/release_gate_0_8_1.md`,
+  `docs/search-read-contract.md`, `docs/write-schema-contract.md`,
+  `docs/pr-review-evidence-contract.md`, and the focused Git/ref/workflow/release documents.
