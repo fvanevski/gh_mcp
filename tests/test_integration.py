@@ -78,6 +78,25 @@ class TestListIssues:
         assert len(issues) > 0
         assert issues[0]["number"] > 0
 
+    async def test_list_issues_label_filter_uses_supported_cli_contract(
+        self, client: GhClient
+    ) -> None:
+        result = await client.run(
+            "issue",
+            "list",
+            "--repo",
+            "cli/cli",
+            "--json",
+            "title,number,state,labels",
+            "--limit",
+            "5",
+            "--state",
+            "all",
+            "--label",
+            "bug",
+        )
+        assert isinstance(result, list)
+
 
 class TestGetRepo:
     """Get repository details test."""

@@ -32,13 +32,13 @@ def _search_query_from_args(query_args: list[str]) -> str:
     return " ".join(formatted)
 
 
-async def _authoritative_search_total(
+async def _search_count_evidence(
     app: AppContext,
     endpoint: str,
     query: str,
     returned_items: int,
-) -> int:
-    """Read and validate one authoritative bounded Search REST count."""
+) -> tuple[int, bool]:
+    """Read bounded Search REST count evidence and its completeness state."""
 
     result = await app.client.run(
         "api",
@@ -54,20 +54,15 @@ async def _authoritative_search_total(
         raise RuntimeError("GitHub Search count endpoint returned a non-object response")
 
     incomplete_results = result.get("incomplete_results")
-    if incomplete_results is True:
-        raise RuntimeError("GitHub Search count evidence is incomplete")
-    if incomplete_results is not False:
+    if not isinstance(incomplete_results, bool):
         raise RuntimeError("GitHub Search count evidence has malformed incomplete_results")
 
     total_count = result.get("total_count")
-    if (
-        isinstance(total_count, bool)
-        or not isinstance(total_count, int)
-        or total_count < 0
-        or total_count < returned_items
-    ):
+    if isinstance(total_count, bool) or not isinstance(total_count, int) or total_count < 0:
         raise RuntimeError("GitHub Search count evidence has malformed total_count")
-    return total_count
+
+    count_incomplete = incomplete_results or total_count < returned_items
+    return max(total_count, returned_items), count_incomplete
 
 
 @mcp.tool(annotations=READ_EXTERNAL)
@@ -107,13 +102,13 @@ async def gh_search_repos(
     args.extend(query_args)
     result = await app.client.run(*args)
     items, _ = parse_search_result(result)
-    total = await _authoritative_search_total(
+    total, count_incomplete = await _search_count_evidence(
         app,
         "search/repositories",
         _search_query_from_args(query_args),
         len(items),
     )
-    truncated = len(items) < total
+    truncated = count_incomplete or len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
 
 
@@ -154,13 +149,13 @@ async def gh_search_issues(
     args.extend(query_args)
     result = await app.client.run(*args)
     items, _ = parse_search_result(result)
-    total = await _authoritative_search_total(
+    total, count_incomplete = await _search_count_evidence(
         app,
         "search/issues",
         _search_query_from_args(query_args),
         len(items),
     )
-    truncated = len(items) < total
+    truncated = count_incomplete or len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
 
 
@@ -192,11 +187,11 @@ async def gh_search_code(
     args.extend(query_args)
     result = await app.client.run(*args)
     items, _ = parse_search_result(result)
-    total = await _authoritative_search_total(
+    total, count_incomplete = await _search_count_evidence(
         app,
         "search/code",
         _search_query_from_args(query_args),
         len(items),
     )
-    truncated = len(items) < total
+    truncated = count_incomplete or len(items) < total
     return SearchResults(total_count=total, items=items, truncated=truncated, query=query)
