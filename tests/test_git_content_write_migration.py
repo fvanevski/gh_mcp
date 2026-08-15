@@ -339,9 +339,6 @@ async def test_content_commit_graphql_error_is_ambiguous_until_ref_readback() ->
     assert result.warning is not None
     assert "unresolved, not disproven" in result.warning
     assert (
-        sum(
-            kind == "write" and args[:2] == ("api", "graphql")
-            for kind, args, _ in client.calls
-        )
+        sum(kind == "write" and args[:2] == ("api", "graphql") for kind, args, _ in client.calls)
         == 1
     )

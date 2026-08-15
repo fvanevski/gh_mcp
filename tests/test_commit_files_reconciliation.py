@@ -135,9 +135,7 @@ def _assert_single_ref_cas(
         }
     ]
     graphql_writes = [
-        args
-        for kind, args, _ in client.calls
-        if kind == "write" and args[:2] == ("api", "graphql")
+        args for kind, args, _ in client.calls if kind == "write" and args[:2] == ("api", "graphql")
     ]
     assert len(graphql_writes) == 1
 
@@ -146,8 +144,7 @@ def _assert_ref_read_count(client: ReconciliationClient, readback_attempts: int)
     exact_ref_reads = [
         args
         for kind, args, _ in client.calls
-        if kind == "read"
-        and args[:2] == ("api", "repos/octo/repo/git/ref/heads/main")
+        if kind == "read" and args[:2] == ("api", "repos/octo/repo/git/ref/heads/main")
     ]
     assert len(exact_ref_reads) == 1 + readback_attempts
 

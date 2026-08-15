@@ -1376,7 +1376,10 @@ async def test_commit_files_ref_race_returns_branch_unchanged_result() -> None:
     assert result.files_committed == 0
     assert result.commit_sha == commit
     assert result.warning is not None
-    assert "branch head is unchanged" in result.warning
+    assert "authoritative exact-ref readback" in result.warning
+    assert "head is unchanged at" in result.warning
+    assert head in result.warning
+    assert "Do not retry automatically" in result.warning
 
 
 @pytest.mark.asyncio
