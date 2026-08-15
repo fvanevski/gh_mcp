@@ -85,6 +85,13 @@ def _reconciliation_warning(
 
     if readback_completed and state_matches_requested is False:
         observed = observed_head_sha or "an unrecognized head"
+        if write_completed is False and observed_head_sha == previous_head_sha:
+            return (
+                "Repository content commit CAS failed before confirmed completion, and "
+                f"authoritative exact-ref readback confirms branch {branch!r} head is "
+                f"unchanged at {previous_head_sha}. Do not retry automatically; re-read "
+                "authoritative state first."
+            )
         prefix = (
             "Repository content commit CAS transport outcome is unknown"
             if write_completed is None
@@ -301,9 +308,11 @@ async def gh_commit_files(
     }
 
     cas_metadata_warning: str | None = None
+    cas_known_failed = False
 
     async def write_ref() -> GitHubRequestResult[Any]:
         nonlocal cas_metadata_warning
+        nonlocal cas_known_failed
         try:
             result = await run_api_json_write_with_metadata(
                 app.client,
@@ -311,8 +320,12 @@ async def gh_commit_files(
                 "graphql",
                 cas_payload,
             )
-        except GitHubRequestError as exc:
-            cas_metadata_warning = exc.metadata.warning
+        except RuntimeError as exc:
+            if isinstance(exc, GitHubRequestError):
+                cas_metadata_warning = exc.metadata.warning
+                cas_known_failed = not exc.ambiguous
+            else:
+                cas_known_failed = True
             raise
         cas_metadata_warning = result.metadata.warning
         value = result.value
@@ -348,6 +361,9 @@ async def gh_commit_files(
                 raise
 
             if observed_head_sha != actual_head_sha:
+                return observed_head_sha
+
+            if cas_known_failed:
                 return observed_head_sha
 
             if attempt == _REF_READBACK_MAX_ATTEMPTS:
@@ -401,10 +417,17 @@ async def gh_commit_files(
     elif outcome.readback_completed and outcome.state_matches_requested is False:
         ref_updated = False
         files_committed = 0
-        base_message = (
-            f"Commit object {commit_sha} was created, but branch {branch!r} was "
-            f"authoritatively observed at distinct commit {observed_head_sha}."
-        )
+        if outcome.write_completed is False and observed_head_sha == actual_head_sha:
+            base_message = (
+                f"Commit object {commit_sha} was created, but the branch CAS failed before "
+                f"confirmed completion and branch {branch!r} head is unchanged at "
+                f"{actual_head_sha}."
+            )
+        else:
+            base_message = (
+                f"Commit object {commit_sha} was created, but branch {branch!r} was "
+                f"authoritatively observed at distinct commit {observed_head_sha}."
+            )
     else:
         ref_updated = None
         files_committed = 0
