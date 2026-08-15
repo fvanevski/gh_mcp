@@ -304,6 +304,8 @@ async def test_content_commit_graphql_error_is_ambiguous_until_ref_readback() ->
             {"node_id": "R_repo"},
             {"tree": {"sha": base_tree}},
             {"ref": "refs/heads/main", "object": {"sha": head}},
+            {"ref": "refs/heads/main", "object": {"sha": head}},
+            {"ref": "refs/heads/main", "object": {"sha": head}},
         ],
         write_results=[
             {"sha": blob_sha},
@@ -327,11 +329,16 @@ async def test_content_commit_graphql_error_is_ambiguous_until_ref_readback() ->
     )
 
     assert result.write_completed is None
-    assert result.readback_completed is True
-    assert result.state_matches_requested is False
-    assert result.ref_updated is False
+    assert result.readback_completed is False
+    assert result.state_matches_requested is None
+    assert result.ref_updated is None
+    assert result.observed_head_sha == head
+    assert result.readback_attempts == 3
     assert result.files_committed == 0
     assert result.request_id == "req-cas-graphql-error"
     assert result.warning is not None
-    assert "Do not retry" in result.warning
-    assert sum(kind == "write" for kind, _, _ in client.calls) == 4
+    assert "unresolved, not disproven" in result.warning
+    assert (
+        sum(kind == "write" and args[:2] == ("api", "graphql") for kind, args, _ in client.calls)
+        == 1
+    )

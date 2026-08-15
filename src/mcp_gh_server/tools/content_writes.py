@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Any
 from urllib.parse import quote
 
@@ -26,6 +27,13 @@ from ..write_contracts import (
     run_api_json_write_with_metadata,
 )
 
+_REF_READBACK_MAX_ATTEMPTS = 3
+_REF_READBACK_BACKOFF_SECONDS = (0.05, 0.10)
+
+
+class _InconclusiveRefReadback(RuntimeError):
+    """Bounded exact-ref reconciliation observed only the expected old head."""
+
 
 def _metadata_note(result: GitHubRequestResult[Any]) -> str | None:
     warning = result.metadata.warning
@@ -35,6 +43,113 @@ def _metadata_note(result: GitHubRequestResult[Any]) -> str | None:
             f"GitHub request id: {result.metadata.request_id}.",
         )
     return warning
+
+
+def _parse_exact_ref_sha(result: object, branch: str) -> str:
+    if not isinstance(result, dict):
+        raise RuntimeError("GitHub returned a non-object branch ref readback")
+    obj = result.get("object")
+    sha = obj.get("sha") if isinstance(obj, dict) else None
+    if not isinstance(sha, str) or not OBJECT_SHA_RE.fullmatch(sha):
+        raise RuntimeError(f"GitHub did not return an exact head SHA for branch {branch!r}")
+    return sha.casefold()
+
+
+def _reconciliation_warning(
+    *,
+    branch: str,
+    previous_head_sha: str,
+    commit_sha: str,
+    write_completed: bool | None,
+    readback_completed: bool,
+    state_matches_requested: bool | None,
+    observed_head_sha: str | None,
+    readback_attempts: int,
+    reconciliation_exhausted: bool,
+    readback_failed: bool,
+) -> str | None:
+    if state_matches_requested is True:
+        if write_completed is None:
+            return (
+                "Repository content commit CAS transport outcome is unknown, but bounded "
+                f"exact-ref reconciliation verified branch {branch!r} at created commit "
+                f"{commit_sha}. Do not retry the mutation."
+            )
+        if write_completed is False:
+            return (
+                "Repository content commit CAS was not confirmed complete, but bounded "
+                f"exact-ref reconciliation verified branch {branch!r} at created commit "
+                f"{commit_sha}. Do not retry the mutation."
+            )
+        return None
+
+    if readback_completed and state_matches_requested is False:
+        observed = observed_head_sha or "an unrecognized head"
+        if write_completed is False and observed_head_sha == previous_head_sha:
+            return (
+                "Repository content commit CAS failed before confirmed completion, and "
+                f"authoritative exact-ref readback confirms branch {branch!r} head is "
+                f"unchanged at {previous_head_sha}. Do not retry automatically; re-read "
+                "authoritative state first."
+            )
+        prefix = (
+            "Repository content commit CAS transport outcome is unknown"
+            if write_completed is None
+            else (
+                "Repository content commit CAS completed"
+                if write_completed is True
+                else "Repository content commit CAS was not confirmed complete"
+            )
+        )
+        return (
+            f"{prefix}, and authoritative exact-ref reconciliation observed branch "
+            f"{branch!r} at distinct commit {observed}, not created commit {commit_sha}. "
+            "This is a conclusive semantic mismatch. Do not retry automatically; re-read "
+            "authoritative state first."
+        )
+
+    if reconciliation_exhausted and observed_head_sha == previous_head_sha:
+        prefix = (
+            "Repository content commit CAS transport outcome is unknown"
+            if write_completed is None
+            else (
+                "Repository content commit CAS completed"
+                if write_completed is True
+                else "Repository content commit CAS was not confirmed complete"
+            )
+        )
+        return (
+            f"{prefix}, but bounded exact-ref reconciliation remained inconclusive after "
+            f"{readback_attempts} attempt(s): branch {branch!r} was still observed at the "
+            f"pre-write head {previous_head_sha}. The branch update is unresolved, not "
+            "disproven. Do not retry automatically; re-read authoritative state first."
+        )
+
+    if readback_failed:
+        prefix = (
+            "Repository content commit CAS transport outcome is unknown"
+            if write_completed is None
+            else (
+                "Repository content commit CAS completed"
+                if write_completed is True
+                else "Repository content commit CAS was not confirmed complete"
+            )
+        )
+        observation = (
+            f" The last valid observed head was {observed_head_sha}."
+            if observed_head_sha is not None
+            else ""
+        )
+        return (
+            f"{prefix}, but authoritative exact-ref reconciliation failed on readback "
+            f"attempt {readback_attempts}.{observation} The branch update remains "
+            "unverified. Do not retry automatically; re-read authoritative state first."
+        )
+
+    return (
+        "Repository content commit exact-ref reconciliation did not establish a conclusive "
+        "postcondition. Do not retry automatically; re-read authoritative state first."
+    )
 
 
 async def gh_commit_files(
@@ -192,13 +307,27 @@ async def gh_commit_files(
         },
     }
 
+    cas_metadata_warning: str | None = None
+    cas_known_failed = False
+
     async def write_ref() -> GitHubRequestResult[Any]:
-        result = await run_api_json_write_with_metadata(
-            app.client,
-            "POST",
-            "graphql",
-            cas_payload,
-        )
+        nonlocal cas_metadata_warning
+        nonlocal cas_known_failed
+        try:
+            result = await run_api_json_write_with_metadata(
+                app.client,
+                "POST",
+                "graphql",
+                cas_payload,
+            )
+        except RuntimeError as exc:
+            if isinstance(exc, GitHubRequestError):
+                cas_metadata_warning = exc.metadata.warning
+                cas_known_failed = not exc.ambiguous
+            else:
+                cas_known_failed = True
+            raise
+        cas_metadata_warning = result.metadata.warning
         value = result.value
         if isinstance(value, dict) and value.get("errors"):
             raise GitHubRequestError(
@@ -208,19 +337,48 @@ async def gh_commit_files(
             )
         return result
 
-    async def readback_ref() -> dict[str, Any]:
-        result = await app.client.run(
-            "api",
-            f"repos/{owner}/{repo}/git/ref/heads/{branch_path}",
-        )
-        if not isinstance(result, dict):
-            raise RuntimeError("GitHub returned a non-object branch ref readback")
-        return result
+    readback_attempts = 0
+    observed_head_sha: str | None = None
+    reconciliation_exhausted = False
+    readback_failed = False
 
-    def ref_matches(result: dict[str, Any]) -> bool:
-        obj = result.get("object")
-        sha = obj.get("sha") if isinstance(obj, dict) else None
-        return isinstance(sha, str) and sha.casefold() == commit_sha
+    async def readback_ref() -> str:
+        nonlocal readback_attempts
+        nonlocal observed_head_sha
+        nonlocal reconciliation_exhausted
+        nonlocal readback_failed
+
+        for attempt in range(1, _REF_READBACK_MAX_ATTEMPTS + 1):
+            readback_attempts = attempt
+            try:
+                result = await app.client.run(
+                    "api",
+                    f"repos/{owner}/{repo}/git/ref/heads/{branch_path}",
+                )
+                observed_head_sha = _parse_exact_ref_sha(result, branch)
+            except RuntimeError:
+                readback_failed = True
+                raise
+
+            if observed_head_sha != actual_head_sha:
+                return observed_head_sha
+
+            if cas_known_failed:
+                return observed_head_sha
+
+            if attempt == _REF_READBACK_MAX_ATTEMPTS:
+                reconciliation_exhausted = True
+                raise _InconclusiveRefReadback(
+                    f"branch {branch!r} remained at the pre-write head "
+                    f"{actual_head_sha} through {_REF_READBACK_MAX_ATTEMPTS} exact-ref reads"
+                )
+
+            await asyncio.sleep(_REF_READBACK_BACKOFF_SECONDS[attempt - 1])
+
+        raise AssertionError("bounded exact-ref reconciliation loop did not terminate")
+
+    def ref_matches(readback_sha: str) -> bool:
+        return readback_sha == commit_sha
 
     execution = await execute_write_readback(
         resource="Repository content commit",
@@ -230,47 +388,60 @@ async def gh_commit_files(
     )
     outcome = execution.outcome.model_copy(update={"precondition_checked": True})
 
-    readback_sha: str | None = None
-    if execution.readback_value is not None:
-        obj = execution.readback_value.get("object")
-        value = obj.get("sha") if isinstance(obj, dict) else None
-        if isinstance(value, str) and OBJECT_SHA_RE.fullmatch(value):
-            readback_sha = value.casefold()
-
     final_request_note = (
         f"GitHub request id: {outcome.request_id}." if outcome.request_id is not None else None
     )
-    warning = combine_warnings(*sequence_warnings, outcome.warning, final_request_note)
-    if outcome.readback_completed and outcome.state_matches_requested is False:
-        if readback_sha == actual_head_sha:
-            branch_status = "The branch head is unchanged."
-        elif readback_sha is not None:
-            branch_status = f"The branch now points to a different commit, {readback_sha}."
-        else:
-            branch_status = "The branch head could not be interpreted."
-        warning = combine_warnings(
-            warning,
-            (
-                f"Commit object {commit_sha} was created, but it was not installed on branch "
-                f"{branch!r}. {branch_status} Do not retry automatically; "
-                "re-read the branch first."
-            ),
-        )
+    reconciliation_warning = _reconciliation_warning(
+        branch=branch,
+        previous_head_sha=actual_head_sha,
+        commit_sha=commit_sha,
+        write_completed=outcome.write_completed,
+        readback_completed=outcome.readback_completed,
+        state_matches_requested=outcome.state_matches_requested,
+        observed_head_sha=observed_head_sha,
+        readback_attempts=readback_attempts,
+        reconciliation_exhausted=reconciliation_exhausted,
+        readback_failed=readback_failed,
+    )
+    warning = combine_warnings(
+        *sequence_warnings,
+        cas_metadata_warning,
+        reconciliation_warning,
+        final_request_note,
+    )
 
     if outcome.state_matches_requested is True:
         ref_updated: bool | None = True
         files_committed = len(files)
         base_message = f"Committed {len(files)} file(s) to {branch}."
-    elif outcome.readback_completed:
+    elif outcome.readback_completed and outcome.state_matches_requested is False:
         ref_updated = False
         files_committed = 0
-        base_message = f"Commit {commit_sha} was created but not installed on {branch}."
+        if outcome.write_completed is False and observed_head_sha == actual_head_sha:
+            base_message = (
+                f"Commit object {commit_sha} was created, but the branch CAS failed before "
+                f"confirmed completion and branch {branch!r} head is unchanged at "
+                f"{actual_head_sha}."
+            )
+        else:
+            base_message = (
+                f"Commit object {commit_sha} was created, but branch {branch!r} was "
+                f"authoritatively observed at distinct commit {observed_head_sha}."
+            )
     else:
         ref_updated = None
         files_committed = 0
-        base_message = (
-            f"Commit object {commit_sha} was created, but the branch update could not be verified."
-        )
+        if reconciliation_exhausted and observed_head_sha == actual_head_sha:
+            base_message = (
+                f"Commit object {commit_sha} was created, but branch {branch!r} remained "
+                f"unresolved after {readback_attempts} exact-ref readback attempt(s); "
+                f"the final observation was the pre-write head {actual_head_sha}."
+            )
+        else:
+            base_message = (
+                f"Commit object {commit_sha} was created, but the branch update could not "
+                f"be verified after {readback_attempts} exact-ref readback attempt(s)."
+            )
 
     outcome_data = outcome.model_dump()
     outcome_data["warning"] = warning
@@ -280,8 +451,10 @@ async def gh_commit_files(
         commit_sha=commit_sha,
         tree_sha=tree_sha,
         ref_updated=ref_updated,
+        observed_head_sha=observed_head_sha,
+        readback_attempts=readback_attempts,
         files_committed=files_committed,
         url=url,
-        message=warning or base_message,
+        message=combine_warnings(base_message, warning) or base_message,
         **outcome_data,
     )

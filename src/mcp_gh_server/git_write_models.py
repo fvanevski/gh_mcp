@@ -36,6 +36,8 @@ class CommitFilesResult(ExactWriteResult):
     commit_sha: str | None = None
     tree_sha: str | None = None
     ref_updated: bool | None = False
+    observed_head_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    readback_attempts: int = Field(default=0, ge=0)
     files_committed: int = 0
     url: str = ""
     message: str

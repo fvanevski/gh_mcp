@@ -125,7 +125,7 @@ Do not weaken annotations, schema constraints, descriptions, authorization gates
 
 The contract is enforced by complementary tests:
 
-- `tests/test_release_gate_0_8_0.py` pins package/lock/runtime versions, exact 58/40/18 inventory, retired-tool absence, single canonical write registration, compatibility-path removal, default-off fine gates, and release documentation;
+- `tests/test_release_gate_0_8_1.py` pins package/lock/runtime versions, exact 58/40/18 inventory, retired-tool absence, single canonical write registration, compatibility-path removal, default-off fine gates, and release documentation;
 - `tests/test_tool_schema_snapshot.py` pins the complete current tool schema surface;
 - `tests/test_write_surface_contract.py` pins all 18 public write facades and canonical module provenance;
 - `tests/test_write_schema_policy.py` audits bounded schemas, annotations, generic-executor/bypass exclusions, the narrow `@me` selector, high-risk descriptions, and exact-state/payload constraints;

@@ -599,7 +599,7 @@ must not be retried automatically.
 ## Validation
 
 ```bash
-uv run pytest tests/test_release_gate_0_8_0.py
+uv run pytest tests/test_release_gate_0_8_1.py
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy
@@ -614,7 +614,7 @@ and the full test suite agree on the same exact candidate SHA. Any source change
 invalidates affected validation and requires rerunning it.
 
 Historical 0.7.0, 0.7.1, and 0.8.0 release mappings remain under `docs/`; current release
-authority is `docs/release_gate_0_8_0.md` and `tests/test_release_gate_0_8_0.py`.
+authority is `docs/release_gate_0_8_1.md` and `tests/test_release_gate_0_8_1.py`.
 
 ## Known boundaries
 
