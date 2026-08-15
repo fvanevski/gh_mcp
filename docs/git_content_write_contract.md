@@ -50,7 +50,7 @@ The current branch head must equal `expected_head_sha` before any blob/tree/comm
 
 The ref mutation is never replayed. After that single CAS attempt, the tool performs bounded read-only reconciliation using fresh exact `git/ref/heads/<branch>` reads. The current bound is three exact-ref reads with small bounded backoff between provisional stale observations.
 
-The readback classification is:
+For a CAS whose transport/application completion is either known successful or ambiguous, the readback classification is:
 
 - observing the newly created `commit_sha` conclusively verifies the requested branch state;
 - observing the exact `previous_head_sha` is provisionally stale/inconclusive while reconciliation attempts remain;
@@ -58,7 +58,9 @@ The readback classification is:
 - observing a third SHA distinct from both the previous head and created commit is a conclusive semantic mismatch, with `ref_updated=False` and the observed SHA returned;
 - a readback error or malformed exact-ref response fails closed as unverifiable and does not become a known failed branch update.
 
-An immediate observation of the pre-write head is therefore not proof that the CAS failed. Only authoritative observation of `commit_sha` establishes verified success. A distinct third-party head establishes a verified mismatch. Exhausted stale-old-head observations remain unresolved and require an external authoritative re-read before any retry decision.
+If the CAS is instead known to have failed before completion (`write_completed=False`), an authoritative read of the unchanged `previous_head_sha` is conclusive evidence that the requested new branch state was not installed. That known-failure path preserves the existing #60 semantics and does not consume the stale-read retry bound unnecessarily.
+
+An immediate observation of the pre-write head is therefore not proof that a successful or transport-ambiguous CAS failed. Only authoritative observation of `commit_sha` establishes verified success. A distinct third-party head establishes a verified mismatch. Exhausted stale-old-head observations after successful or ambiguous CAS remain unresolved and require an external authoritative re-read before any retry decision.
 
 For an ambiguous CAS transport/application result, `write_completed` remains `None` even when later reconciliation verifies `commit_sha`. Readback establishes final requested state; it does not retroactively establish transport completion.
 
@@ -75,7 +77,8 @@ Regression coverage must include, at minimum:
 - exact `beforeOid`/`afterOid` content CAS with `force=False`;
 - immediate new-head content readback;
 - stale old-head followed by new-head on the second or final bounded read;
-- exhausted old-head-only reconciliation as unresolved rather than failed;
+- exhausted old-head-only reconciliation after successful or ambiguous CAS as unresolved rather than failed;
+- known non-ambiguous CAS failure plus authoritative unchanged-head readback as a conclusive failed requested state;
 - third-party head reconciliation as a conclusive mismatch;
 - readback failure after an old-head observation as unresolved/fail-closed;
 - ambiguous content CAS followed by eventual new-head verification or exhausted old-head ambiguity, without mutation replay;
