@@ -1,6 +1,6 @@
 # Git and content write contract
 
-Issue #60 migrates the public Git-reference and repository-content writes away from legacy compatibility adapters and onto the shared exact-outcome contract.
+Issue #60 migrates the public Git-reference and repository-content writes away from legacy compatibility adapters and onto the shared exact-outcome contract. Issue #73 narrows the `gh_commit_files` post-CAS verification contract so transient read-after-write staleness cannot be misreported as a known failed branch update.
 
 This document records the invariants that must remain true for `gh_create_branch`, `gh_create_branch_from_sha`, and `gh_commit_files`.
 
@@ -10,12 +10,14 @@ The migrated tools expose the shared `ExactWriteResult` outcome fields directly:
 
 - `precondition_checked`: whether the required exact-state precondition ran successfully immediately before the mutation.
 - `write_completed`: `True` for a known completed mutation, `False` for a known failure before completion, and `None` when transport or application behavior leaves mutation completion ambiguous.
-- `readback_completed`: whether authoritative post-write state was obtained.
-- `state_matches_requested`: `True` or `False` only when authoritative readback completed; otherwise `None`.
+- `readback_completed`: whether authoritative post-write evidence conclusively established whether the requested state matches.
+- `state_matches_requested`: `True` or `False` only when authoritative readback is conclusive; otherwise `None`.
 - `warning`: fail-closed ambiguity, readback, or semantic-mismatch guidance.
 - `request_id`: GitHub request identity when supplied by the governed transport.
 
 An ambiguous mutation is attempted exactly once. Authoritative readback may establish the resulting state, but it does not rewrite `write_completed=None` into known transport success or failure. Callers must not blindly replay an ambiguous write.
+
+A syntactically successful read can still be inconclusive for a tool-specific postcondition. In that case `readback_completed=False` and `state_matches_requested=None` are truthful when the tool has not yet obtained conclusive authoritative evidence.
 
 ## `gh_create_branch_from_sha`
 
@@ -46,7 +48,21 @@ GitHub's GraphQL schema defines `CreateLinkedBranchInput.repositoryId` as the re
 
 The current branch head must equal `expected_head_sha` before any blob/tree/commit objects are created. The tool then constructs the requested Git objects and performs exactly one GraphQL `updateRefs` compare-and-swap using the observed head as `beforeOid`, the new commit as `afterOid`, and `force=False`.
 
-The exact branch ref is read back after the CAS attempt. A mismatched or ambiguous CAS cannot be upgraded to success. A commit object may exist even when it was not installed on the branch; the result reports that distinction and instructs callers to re-read state rather than retry blindly.
+The ref mutation is never replayed. After that single CAS attempt, the tool performs bounded read-only reconciliation using fresh exact `git/ref/heads/<branch>` reads. The current bound is three exact-ref reads with small bounded backoff between provisional stale observations.
+
+The readback classification is:
+
+- observing the newly created `commit_sha` conclusively verifies the requested branch state;
+- observing the exact `previous_head_sha` is provisionally stale/inconclusive while reconciliation attempts remain;
+- observing only `previous_head_sha` through the full bound leaves the branch update unresolved, with `ref_updated=None`, `readback_completed=False`, and `state_matches_requested=None`;
+- observing a third SHA distinct from both the previous head and created commit is a conclusive semantic mismatch, with `ref_updated=False` and the observed SHA returned;
+- a readback error or malformed exact-ref response fails closed as unverifiable and does not become a known failed branch update.
+
+An immediate observation of the pre-write head is therefore not proof that the CAS failed. Only authoritative observation of `commit_sha` establishes verified success. A distinct third-party head establishes a verified mismatch. Exhausted stale-old-head observations remain unresolved and require an external authoritative re-read before any retry decision.
+
+For an ambiguous CAS transport/application result, `write_completed` remains `None` even when later reconciliation verifies `commit_sha`. Readback establishes final requested state; it does not retroactively establish transport completion.
+
+`CommitFilesResult` includes the exact previous head, created commit/tree, tri-state `ref_updated`, final valid `observed_head_sha`, and exact-ref `readback_attempts` so callers can diagnose the result without an immediate second tool call.
 
 ## Public routing and regressions
 
@@ -57,9 +73,15 @@ Regression coverage must include, at minimum:
 - exact branch-from-SHA success, conflicting-ref failure, ambiguity, and authoritative ref readback;
 - stale content head rejection before any content mutation;
 - exact `beforeOid`/`afterOid` content CAS with `force=False`;
-- ambiguous content CAS and GraphQL application-error handling without replay;
+- immediate new-head content readback;
+- stale old-head followed by new-head on the second or final bounded read;
+- exhausted old-head-only reconciliation as unresolved rather than failed;
+- third-party head reconciliation as a conclusive mismatch;
+- readback failure after an old-head observation as unresolved/fail-closed;
+- ambiguous content CAS followed by eventual new-head verification or exhausted old-head ambiguity, without mutation replay;
+- GraphQL application-error handling without replay;
 - exact issue-linked branch association including target repository identity;
 - an ambiguous issue-branch mutation followed by a same-ref/same-SHA linked branch from a different repository, which must produce `state_matches_requested=False` and no retry;
-- public exact-outcome schema fields and canonical facade provenance.
+- public exact-outcome schema fields, `CommitFilesResult` reconciliation fields, and canonical facade provenance.
 
 Async tests added for this contract rely on the repository's configured automatic asyncio mode and do not add explicit `@pytest.mark.asyncio` markers.
