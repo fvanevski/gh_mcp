@@ -1,4 +1,4 @@
-"""Regression coverage for the complete issue #9 write-surface migration."""
+"""Regression coverage for the complete public write-surface migration."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from mcp_gh_server.request_governor import (
 )
 from mcp_gh_server.server import (
     AppContext,
+    gh_approve_pr,
+    gh_comment_pr_review,
     gh_commit_files,
     gh_create_branch,
     gh_create_branch_from_sha,
@@ -30,10 +32,10 @@ from mcp_gh_server.server import (
     gh_edit_label,
     gh_edit_pr,
     gh_merge_pr,
+    gh_request_pr_changes,
     gh_run_workflow_exact,
     gh_set_issue_state,
     gh_set_pr_draft_state,
-    gh_submit_pr_review,
 )
 from mcp_gh_server.settings import Settings
 
@@ -93,7 +95,6 @@ def test_all_public_writes_are_bound_to_active_schema_modules() -> None:
         gh_create_pr: "mcp_gh_server.write_tool_schema",
         gh_edit_pr: "mcp_gh_server.write_tool_schema",
         gh_set_pr_draft_state: "mcp_gh_server.write_tool_schema",
-        gh_submit_pr_review: "mcp_gh_server.write_tool_schema",
         gh_merge_pr: "mcp_gh_server.write_tool_schema",
         gh_create_repo: "mcp_gh_server.write_tool_schema",
         gh_commit_files: "mcp_gh_server.write_tool_schema",
@@ -101,8 +102,11 @@ def test_all_public_writes_are_bound_to_active_schema_modules() -> None:
         gh_run_workflow_exact: "mcp_gh_server.write_tool_schema",
         gh_create_branch: "mcp_gh_server.write_tool_schema",
         gh_create_branch_from_sha: "mcp_gh_server.write_tool_schema",
+        gh_approve_pr: "mcp_gh_server.pr_review_tool_schema",
+        gh_request_pr_changes: "mcp_gh_server.pr_review_tool_schema",
+        gh_comment_pr_review: "mcp_gh_server.pr_review_tool_schema",
     }
-    assert len(expected) == 18
+    assert len(expected) == 20
     for function, module in expected.items():
         assert function.__module__ == module
 
