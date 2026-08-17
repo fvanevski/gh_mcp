@@ -107,8 +107,7 @@ class ReviewerPrincipal:
             raise RuntimeError(
                 "Configured reviewer installation lacks pull_requests=write permission"
             )
-        suspended_at = installation.get("suspended_at")
-        if suspended_at is not None:
+        if installation.get("suspended_at") is not None:
             raise RuntimeError("Configured reviewer installation is suspended")
 
         return ReviewerIdentity(login=configured_login, kind="github_app")
@@ -139,7 +138,6 @@ class ReviewerPrincipal:
         )
         token = await self._app_jwt(app_id)
 
-        # Re-verify repository installation immediately before minting the scoped token.
         installation = await self._app_request(
             "GET",
             f"repos/{owner}/{repo}/installation",
@@ -236,7 +234,7 @@ class ReviewerPrincipal:
             raise RuntimeError("Reviewer GitHub App JWT signing timed out") from exc
 
         if process.returncode != 0 or not stdout:
-            detail = stderr.decode(errors="replace").strip()[:1000]
+            detail = (stderr or b"").decode(errors="replace").strip()[:1000]
             suffix = f": {detail}" if detail else ""
             raise RuntimeError(f"Unable to sign reviewer GitHub App JWT{suffix}")
 
@@ -315,7 +313,7 @@ def _app_request_once(
         },
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310 - fixed GitHub API root
+        with urlopen(request, timeout=30) as response:
             raw = response.read(_MAX_APP_RESPONSE_BYTES + 1)
             if len(raw) > _MAX_APP_RESPONSE_BYTES:
                 raise GitHubRequestError(
@@ -369,7 +367,8 @@ def _safe_error_detail(error: HTTPError) -> str:
     try:
         raw = error.read(16_384)
         parsed = json.loads(raw)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        del exc
         return ""
     if not isinstance(parsed, dict):
         return ""
