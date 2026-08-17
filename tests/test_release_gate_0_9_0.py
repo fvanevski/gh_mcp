@@ -139,6 +139,19 @@ def test_public_writes_have_one_canonical_registration_path() -> None:
     assert EXPECTED_WRITE_TOOLS.isdisjoint(directly_registered)
 
 
+def test_current_write_registry_is_explicit_not_old_inventory_minus_retired_tool() -> None:
+    path = ROOT / "src" / "mcp_gh_server" / "current_write_tool_schema.py"
+    tree = ast.parse(path.read_text(), filename=str(path))
+    imported_from_legacy_facade: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "write_tool_schema":
+            imported_from_legacy_facade.update(alias.name for alias in node.names)
+
+    assert "PUBLIC_WRITE_TOOLS" not in imported_from_legacy_facade
+    assert "gh_submit_pr_review" not in imported_from_legacy_facade
+    assert "gh_submit_pr_review" not in path.read_text()
+
+
 def test_obsolete_write_compatibility_paths_and_imports_are_absent() -> None:
     package = ROOT / "src" / "mcp_gh_server"
     legacy_paths = sorted(path.name for path in package.glob("legacy_*write*.py"))
@@ -183,3 +196,6 @@ def test_release_documentation_matches_runtime_authority() -> None:
         assert retired in gate
     assert "host interception" in gate.casefold()
     assert "Do not retry" in gate
+    assert "tests/test_reviewer_client_isolation.py" in gate
+    assert "## Disposable live exercise" in gate
+    assert "The gate remains open" in gate

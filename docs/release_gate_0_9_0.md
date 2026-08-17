@@ -86,6 +86,12 @@ The weaker historical public writes `gh_run_workflow`, `gh_create_release`, and
 by the three action-specific review writes above. None are aliases, compatibility shims, or
 hidden public registrations in 0.9.0.
 
+`src/mcp_gh_server/current_write_tool_schema.py` composes this inventory from an explicit
+17-tool non-review allowlist plus the three action-specific formal-review tools. It does not
+derive the current authority by importing an older public inventory and subtracting a retired
+tool name. This keeps future changes to the historical/non-review facade from accidentally
+reintroducing a retired formal-review authority.
+
 ## Read-plane contract additions
 
 The 0.9.0 read-plane addition is:
@@ -103,12 +109,42 @@ These changes preserve:
 - write authorization or fine gates;
 - historical 0.7.x/0.8.x release-gate records.
 
+## Reviewer-principal hardening
+
+The preferred reviewer path is a narrowly scoped GitHub App. Release acceptance requires
+deterministic coverage of the App path rather than only configuration parsing:
+
+- read-only reviewer resolution verifies App ID, exact repository installation,
+  `pull_requests=write`, and non-suspended installation state without minting an
+  installation token;
+- write-client construction rechecks the exact installation, mints one repository-scoped
+  token with only `pull_requests=write`, constructs a reviewer-specific `GhClient`, and
+  verifies the authenticated reviewer through GraphQL `viewer.login`;
+- mismatched installation, permission, suspension, and authenticated reviewer identity fail
+  closed;
+- App JWT signing invokes `openssl` directly without a shell and never places private-key
+  contents in argv or stdin;
+- public reviewer-auth failures do not reflect configured private-key filesystem paths or
+  raw OpenSSL stderr, either of which can expose deployment-local details; and
+- the temporary static-token path remains reviewer-only and never overwrites the ordinary
+  GitHub credential.
+
+`tests/test_reviewer_client_isolation.py` independently proves that an unrelated ordinary PR
+write continues to execute solely through the ordinary application client even when reviewer
+credentials are configured.
+
 ## Test/documentary additions
 
 - `tests/test_pr_review_identity.py` — dedicated regression coverage for the reviewer
-  identity and eligibility paths.
-- `tests/test_reviewer_auth.py` — regression coverage for static-token and GitHub-App
-  reviewer principal resolution and fail-closed identity behavior.
+  identity, exact-head review writes, eligibility paths, self-approval rejection, and
+  no-blind-replay behavior.
+- `tests/test_reviewer_auth.py` — direct regression coverage for static-token and GitHub-App
+  reviewer principal resolution, App JWT signing, exact installation/permission checks,
+  repository-scoped token minting, authenticated reviewer verification, fixed GitHub API
+  transport, ambiguity classification, credential isolation, and sanitized deployment
+  errors.
+- `tests/test_reviewer_client_isolation.py` — proves unrelated ordinary PR writes do not
+  resolve or reuse reviewer credentials.
 - `tests/test_tool_schema_snapshot.py` — pins the complete current 61-tool schema surface,
   including the four new review tool schemas and the absence of `gh_submit_pr_review`.
 - `tests/test_write_surface_contract.py` — pins all 20 public write facades and canonical
@@ -130,6 +166,7 @@ uv run pytest tests/test_release_gate_0_9_0.py \
   tests/test_write_surface_contract.py \
   tests/test_pr_review_identity.py \
   tests/test_reviewer_auth.py \
+  tests/test_reviewer_client_isolation.py \
   tests/test_mcp_protocol.py
 
 uv run ruff check .
@@ -142,6 +179,11 @@ git diff --check
 The release passes only when package version, server version, tool-schema version, `uv.lock`,
 runtime inventory, schema snapshots, documentation, static checks, focused negative/fail-closed
 regressions, and the full suite agree on the same exact candidate SHA.
+
+The repository currently has no committed Pyrefly pin/configuration/baseline. A workflow that
+requires Pyrefly must report that gate as unavailable rather than installing, regenerating, or
+weakening type-check policy inside issue #75. The repository's existing mypy command remains
+supplementary evidence and is not represented as Pyrefly.
 
 ## Ambiguity and replay policy
 
@@ -171,6 +213,34 @@ Residual host interception is not an `gh_mcp` implementation defect by itself. H
 interception and server behavior must be reported separately. Truthful annotations,
 destructive/additive semantics, exact target constraints, and safety contracts must not be
 weakened merely to alter host classification.
+
+A deployed `gh_server_info` result is not sufficient to prove that a ChatGPT connector has
+refreshed its cached tool namespace. Before closing the gate, rediscover the connector and
+verify that `gh_get_pr_review_eligibility`, `gh_approve_pr`, `gh_request_pr_changes`, and
+`gh_comment_pr_review` are callable and that the retired `gh_submit_pr_review` is absent.
+A stale host namespace must be classified separately from the server's executable inventory.
+
+## Disposable live exercise
+
+The deterministic suite is necessary but not sufficient for issue #75. Before the issue or
+release gate is closed, bind the following evidence to one exact disposable PR head:
+
+| Scenario | Required result |
+| --- | --- |
+| ordinary author identity attempts own approval | rejected before formal-review POST |
+| distinct reviewer identity approves author's PR | verified `APPROVED` review |
+| wrong expected reviewer login | rejected before formal-review POST |
+| changed PR head | rejected before formal-review POST |
+| same-author formal review fallback | verified `COMMENTED`, never represented as `APPROVED` |
+| ambiguous response simulation where supported | authoritative read before any retry; no blind replay |
+| ChatGPT invocation of dedicated approval tool | server reachability + verified review, or explicit pre-server host rejection |
+
+If an App approval is intended to satisfy a repository required-review policy, verify that
+policy separately. The existence of an `APPROVED` review object is not evidence that a
+ruleset or branch-protection rule counts that App's approval.
+
+The gate remains open while any required live scenario is unexecuted or while the ChatGPT
+connector still advertises a stale formal-review schema.
 
 ## Non-goals
 
