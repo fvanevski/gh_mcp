@@ -44,3 +44,96 @@ GitHub references:
 ## Exact-head aggregate invariant
 
 The aggregate remains valid only while the pull request's base and head SHAs stay unchanged across the multi-request read. A head mismatch, base/head movement during the read, truncated review evidence, or truncated review-thread evidence prevents a satisfied exact-head conclusion.
+
+## Formal review identity contract
+
+Issue #75 separates three authorities that must not be conflated:
+
+- the **PR author** is the GitHub actor recorded on the pull request;
+- the **ordinary GitHub identity** is the deployment credential used by ordinary repository tools;
+- the **reviewer principal** is an independently configured credential used only by
+  `gh_approve_pr` and `gh_request_pr_changes`;
+- **Central review authority** is the external reasoning/decision authority and is not
+  itself a GitHub account.
+
+`gh_get_pr_review_eligibility` is a read-only advisory preflight. It binds its
+conclusions to `expected_head_sha`, reports the current author/ordinary/reviewer identities,
+and reports whether independent GitHub approval or an ordinary-principal `COMMENTED`
+review is currently available. A head movement discards the eligibility conclusion.
+Write-side identity, policy, and exact-head checks are repeated independently.
+
+### Reviewer GitHub App
+
+The preferred reviewer principal is a GitHub App installation configured with:
+
+```dotenv
+MCP_GH_REVIEWER_APP_ID=...
+MCP_GH_REVIEWER_INSTALLATION_ID=...
+MCP_GH_REVIEWER_PRIVATE_KEY_FILE=/absolute/path/to/reviewer-app.pem
+MCP_GH_REVIEWER_LOGIN=my-reviewer[bot]
+```
+
+The App should receive only repository access needed for the review target and **Pull
+requests: Read and write** permission. App JWT signing requires the deployment `openssl`
+executable. The server authenticates App-JWT bootstrap calls with `Authorization: Bearer`,
+verifies the configured installation belongs to the exact target repository and still has
+`pull_requests=write`, and does not mint an installation token during the read-only
+eligibility call.
+
+For a reviewer-principal write, the server mints one short-lived installation token narrowed
+to the target repository and `pull_requests=write`, verifies the authenticated reviewer
+actor against `expected_reviewer_login`, re-reads the PR head after reviewer authentication,
+and only then attempts the formal review POST. Reviewer credentials are deployment state;
+no public tool accepts a token, App ID, installation ID, private-key path, credential
+selector, or alternate-auth parameter.
+
+`MCP_GH_REVIEWER_TOKEN` is a reviewer-only staged-rollout compatibility path. It remains
+independent from `GITHUB_TOKEN` but is weaker than the GitHub App path because it is a
+long-lived static credential.
+
+### Action-specific formal review writes
+
+The public formal-review mutation surface is exactly:
+
+- `gh_approve_pr` -> GitHub review state `APPROVED`;
+- `gh_request_pr_changes` -> GitHub review state `CHANGES_REQUESTED`;
+- `gh_comment_pr_review` -> GitHub review state `COMMENTED`.
+
+`gh_submit_pr_review` is retired from the current public MCP inventory. There is no public
+compatibility alias and no caller-supplied action enum that can multiplex these effects.
+
+Every review write is bound to an exact head, attempts the review mutation at most once, and
+uses immutable review-ID readback to verify review state, author, commit ID, and body. An
+ambiguous transport outcome is never blindly replayed.
+
+`gh_approve_pr` additionally requires `expected_reviewer_login` as a compare-only
+precondition and rejects reviewer==PR-author before the review POST. The value cannot select
+a credential.
+
+### Same-author positive disposition
+
+A PR author cannot create a genuine GitHub approval of their own PR. When Central review is
+positive but no independent reviewer principal can legitimately approve, callers may
+explicitly use `gh_comment_pr_review`. The resulting GitHub state is `COMMENTED`, even if its
+body records an external/Central disposition of `APPROVE`. The server never silently converts
+an approval request to a comment review, and a `COMMENTED` review must never be counted or
+reported as satisfying a GitHub `APPROVED` requirement.
+
+Whether an App-authored `APPROVED` review satisfies a particular branch/ruleset required-review
+policy is separate live evidence. Do not infer policy satisfaction from the existence of the
+review object; verify the configured repository policy on a disposable/live target.
+
+### Host interception boundary
+
+Action-specific names and schemas make the requested external effect legible to an MCP host,
+but they do not guarantee that a host will route a write. If a host rejects a dedicated formal
+review before server reachability, do not weaken annotations or add confirmation,
+authorization, generic command/API, or credential-selector parameters. The operational
+fallback is a local execution agent invoking the already-specified dedicated operation with
+the configured reviewer principal, followed by Central exact-ID/head readback. Merge remains
+a separate explicitly authorized operation.
+
+GitHub references:
+
+- https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
+- https://docs.github.com/en/rest/pulls/reviews
