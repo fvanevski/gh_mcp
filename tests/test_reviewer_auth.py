@@ -6,9 +6,9 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any
+from unittest.mock import patch
 from urllib.error import URLError
 from urllib.request import Request
-from unittest.mock import patch
 
 import pytest
 
@@ -180,7 +180,7 @@ async def test_static_resolve_identity_empty_viewer_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_static_client_for_review_uses_reviewer_token_without_mutating_ordinary_settings() -> None:
+async def test_static_client_for_review_uses_reviewer_token_without_mutating_settings() -> None:
     settings = _static_settings(github_token="ordinary-token")
     principal = _principal(settings)
     created: list[FakeGhClient] = []
@@ -339,9 +339,7 @@ async def test_app_client_for_review_mints_one_repo_scoped_token_and_verifies_vi
         return {"token": "installation-token"}
 
     def make_client(*, settings: Settings, governor: Any) -> FakeGhClient:
-        client = FakeGhClient(
-            viewer_login="app-bot[bot]", settings=settings, governor=governor
-        )
+        client = FakeGhClient(viewer_login="app-bot[bot]", settings=settings, governor=governor)
         created_clients.append(client)
         return client
 
@@ -349,9 +347,7 @@ async def test_app_client_for_review_mints_one_repo_scoped_token_and_verifies_vi
     monkeypatch.setattr(ReviewerPrincipal, "_app_request", fake_request)
     monkeypatch.setattr(reviewer_auth_module, "GhClient", make_client)
 
-    client = await principal.client_for_review(
-        "octo", "repo", expected_login="app-bot[bot]"
-    )
+    client = await principal.client_for_review("octo", "repo", expected_login="app-bot[bot]")
 
     assert client is created_clients[0]
     assert app_calls == [
@@ -411,9 +407,7 @@ async def test_app_client_for_review_rejects_wrong_authenticated_actor(
     )
 
     with pytest.raises(ValueError, match="does not match expected_reviewer_login"):
-        await principal.client_for_review(
-            "octo", "repo", expected_login="app-bot[bot]"
-        )
+        await principal.client_for_review("octo", "repo", expected_login="app-bot[bot]")
 
     assert token_mints == 1
 
@@ -468,9 +462,7 @@ async def test_app_client_for_review_fails_before_token_mint_on_invalid_installa
     monkeypatch.setattr(ReviewerPrincipal, "_app_request", fake_request)
 
     with pytest.raises(RuntimeError, match=message):
-        await principal.client_for_review(
-            "octo", "repo", expected_login="app-bot[bot]"
-        )
+        await principal.client_for_review("octo", "repo", expected_login="app-bot[bot]")
 
     assert methods == ["GET"]
 
@@ -582,7 +574,7 @@ class _FakeResponse:
             "X-RateLimit-Reset": "1700000100",
         }
 
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, *args: Any) -> None:
