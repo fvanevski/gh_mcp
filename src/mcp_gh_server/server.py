@@ -2,6 +2,30 @@
 
 from __future__ import annotations
 
+from .current_write_tool_schema import (
+    PUBLIC_WRITE_TOOLS,
+    WRITE_TOOL_METADATA,
+    gh_approve_pr,
+    gh_comment_pr_review,
+    gh_commit_files,
+    gh_create_branch,
+    gh_create_branch_from_sha,
+    gh_create_comment,
+    gh_create_issue,
+    gh_create_label,
+    gh_create_milestone,
+    gh_create_pr,
+    gh_create_release_exact,
+    gh_create_repo,
+    gh_edit_issue,
+    gh_edit_label,
+    gh_edit_pr,
+    gh_merge_pr,
+    gh_request_pr_changes,
+    gh_run_workflow_exact,
+    gh_set_issue_state,
+    gh_set_pr_draft_state,
+)
 from .tooling import AppContext, app_lifespan, mcp
 from .tools.action_logs import gh_get_job_logs, gh_get_run_logs
 from .tools.actions import (
@@ -26,6 +50,7 @@ from .tools.issues import (
     gh_list_milestones,
 )
 from .tools.merge_requirements import gh_get_merge_requirements
+from .tools.pr_review_eligibility import gh_get_pr_review_eligibility
 from .tools.pr_reviews import gh_get_pr_review_state, gh_list_pr_reviews
 from .tools.pull_requests import (
     gh_get_pr,
@@ -37,31 +62,9 @@ from .tools.pull_requests import (
 )
 from .tools.releases import gh_get_release, gh_list_releases
 from .tools.repositories import gh_get_file_contents, gh_get_repo, gh_list_repos
-from .write_tool_schema import (
-    PUBLIC_WRITE_TOOLS,
-    WRITE_TOOL_METADATA,
-    gh_commit_files,
-    gh_create_branch,
-    gh_create_branch_from_sha,
-    gh_create_comment,
-    gh_create_issue,
-    gh_create_label,
-    gh_create_milestone,
-    gh_create_pr,
-    gh_create_release_exact,
-    gh_create_repo,
-    gh_edit_issue,
-    gh_edit_label,
-    gh_edit_pr,
-    gh_merge_pr,
-    gh_run_workflow_exact,
-    gh_set_issue_state,
-    gh_set_pr_draft_state,
-    gh_submit_pr_review,
-)
 
-# Public writes are registered exactly once from the canonical host-facing schema
-# facade. Domain implementation modules do not self-register these names.
+# Public writes are registered exactly once from the canonical current host-facing
+# schema. Domain implementation modules do not self-register these names.
 for _facade in PUBLIC_WRITE_TOOLS:
     _metadata = WRITE_TOOL_METADATA[_facade.__name__]
     mcp.add_tool(
@@ -74,6 +77,8 @@ for _facade in PUBLIC_WRITE_TOOLS:
 __all__ = [
     "AppContext",
     "app_lifespan",
+    "gh_approve_pr",
+    "gh_comment_pr_review",
     "gh_commit_files",
     "gh_compare_commits",
     "gh_create_branch",
@@ -99,6 +104,7 @@ __all__ = [
     "gh_get_pr",
     "gh_get_pr_checks",
     "gh_get_pr_diff",
+    "gh_get_pr_review_eligibility",
     "gh_get_pr_review_state",
     "gh_get_ref",
     "gh_get_release",
@@ -123,6 +129,7 @@ __all__ = [
     "gh_list_workflows",
     "gh_merge_pr",
     "gh_read_artifact_file",
+    "gh_request_pr_changes",
     "gh_run_workflow_exact",
     "gh_search_code",
     "gh_search_issues",
@@ -130,7 +137,6 @@ __all__ = [
     "gh_server_info",
     "gh_set_issue_state",
     "gh_set_pr_draft_state",
-    "gh_submit_pr_review",
     "gh_watch_run",
     "mcp",
 ]
