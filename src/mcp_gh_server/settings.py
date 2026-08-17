@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import find_dotenv
-from pydantic import AliasChoices, Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,6 +78,21 @@ class Settings(BaseSettings):
     http_port: int = Field(default=8766, ge=1, le=65_535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    @field_validator(
+        "reviewer_app_id",
+        "reviewer_installation_id",
+        "reviewer_private_key_file",
+        "reviewer_login",
+        "reviewer_token",
+        mode="before",
+    )
+    @classmethod
+    def _blank_reviewer_values_are_unset(cls, value: object) -> object:
+        """Blank reviewer entries (e.g. an unedited .env.example) mean unconfigured."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @property
     def reviewer_configured(self) -> bool:
         return self.reviewer_token is not None or self.reviewer_app_id is not None
@@ -107,11 +122,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Configure either the reviewer GitHub App or MCP_GH_REVIEWER_TOKEN, not both"
             )
-        if (
-            self.reviewer_login is not None
-            and not app_configured
-            and self.reviewer_token is None
-        ):
+        if self.reviewer_login is not None and not app_configured and self.reviewer_token is None:
             raise ValueError("MCP_GH_REVIEWER_LOGIN requires reviewer credentials")
         return self
 

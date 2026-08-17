@@ -67,7 +67,7 @@ uv run mypy
 uv run pytest
 ```
 
-The commands above reproduce the repository's current 0.8.1 validation documentation.
+The commands above reproduce the repository's current 0.9.0 validation documentation.
 Issue work governed by the newer project workflow must additionally run the repository-pinned
 Pyrefly gate when that tooling exists. Issue #75 does not silently add, regenerate, or weaken
 type-check tooling or a Pyrefly baseline.

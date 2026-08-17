@@ -139,9 +139,7 @@ async def test_eligibility_author_is_ordinary_identity_without_reviewer(
     client = FakeClient(read_results=[_pr(head), {"login": "author"}, _pr(head)])
     _install_fake_principal(monkeypatch, None)
 
-    result = await gh_get_pr_review_eligibility(
-        "octo", "repo", 9, head, ctx=_context(client)
-    )
+    result = await gh_get_pr_review_eligibility("octo", "repo", 9, head, ctx=_context(client))
 
     assert isinstance(result, PullRequestReviewEligibility)
     assert result.head_matches_expected is True
@@ -203,9 +201,7 @@ async def test_eligibility_head_moved_fails_closed_before_identity_reads(
     client = FakeClient(read_results=[_pr("b" * 40)])
     _install_fake_principal(monkeypatch, None)
 
-    result = await gh_get_pr_review_eligibility(
-        "octo", "repo", 9, "a" * 40, ctx=_context(client)
-    )
+    result = await gh_get_pr_review_eligibility("octo", "repo", 9, "a" * 40, ctx=_context(client))
 
     assert result.head_matches_expected is False
     assert result.approval_eligible is False
@@ -359,9 +355,7 @@ async def test_comment_review_allows_author_and_verifies_commented(
     )
     _install_fake_principal(monkeypatch, None)
 
-    result = await gh_comment_pr_review(
-        "octo", "repo", 9, head, body, ctx=_context(ordinary)
-    )
+    result = await gh_comment_pr_review("octo", "repo", 9, head, body, ctx=_context(ordinary))
 
     assert result.action == "comment"
     assert result.state == "COMMENTED"
@@ -423,9 +417,7 @@ async def test_approve_never_silently_falls_back_to_comment(
     _install_fake_principal(monkeypatch, None)
 
     with pytest.raises(RuntimeError, match="reviewer_not_configured"):
-        await gh_approve_pr(
-            "octo", "repo", 9, head, "reviewer", ctx=_context(ordinary)
-        )
+        await gh_approve_pr("octo", "repo", 9, head, "reviewer", ctx=_context(ordinary))
 
     assert _review_posts(ordinary) == []
 
@@ -550,8 +542,6 @@ async def test_comment_review_uses_only_ordinary_client(
     )
     monkeypatch.setattr(review_writes_module, "ReviewerPrincipal", replacement)
 
-    result = await gh_comment_pr_review(
-        "octo", "repo", 9, head, body, ctx=_context(ordinary)
-    )
+    result = await gh_comment_pr_review("octo", "repo", 9, head, body, ctx=_context(ordinary))
     assert result.state == "COMMENTED"
     assert len(_review_posts(ordinary)) == 1

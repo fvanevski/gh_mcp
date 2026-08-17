@@ -193,9 +193,7 @@ class ReviewerPrincipal:
         if key_file is None:
             raise RuntimeError("GitHub App reviewer private key file is not configured")
         if not Path(key_file).is_file():
-            raise RuntimeError(
-                f"Reviewer GitHub App private key file does not exist: {key_file}"
-            )
+            raise RuntimeError(f"Reviewer GitHub App private key file does not exist: {key_file}")
 
         now = int(time())
         header = {"alg": "RS256", "typ": "JWT"}

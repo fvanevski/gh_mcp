@@ -83,9 +83,21 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "number", "required_only", "max_checks"},
         {"owner", "repo", "number"},
     ),
-    "gh_submit_pr_review": (
-        {"owner", "repo", "number", "expected_head_sha", "action", "body"},
-        {"owner", "repo", "number", "expected_head_sha", "action"},
+    "gh_get_pr_review_eligibility": (
+        {"owner", "repo", "number", "expected_head_sha"},
+        {"owner", "repo", "number", "expected_head_sha"},
+    ),
+    "gh_approve_pr": (
+        {"owner", "repo", "number", "expected_head_sha", "expected_reviewer_login", "body"},
+        {"owner", "repo", "number", "expected_head_sha", "expected_reviewer_login"},
+    ),
+    "gh_request_pr_changes": (
+        {"owner", "repo", "number", "expected_head_sha", "expected_reviewer_login", "body"},
+        {"owner", "repo", "number", "expected_head_sha", "expected_reviewer_login", "body"},
+    ),
+    "gh_comment_pr_review": (
+        {"owner", "repo", "number", "expected_head_sha", "body"},
+        {"owner", "repo", "number", "expected_head_sha", "body"},
     ),
     "gh_merge_pr": (
         {"owner", "repo", "number", "expected_head_sha", "method", "subject", "body"},
@@ -336,6 +348,7 @@ READ_ONLY_TOOLS = {
     "gh_list_pr_commits",
     "gh_list_pr_reviews",
     "gh_get_pr_review_state",
+    "gh_get_pr_review_eligibility",
     "gh_get_merge_requirements",
     "gh_get_pr_checks",
     "gh_get_repo",
@@ -419,10 +432,11 @@ EXACT_OUTCOME_FIELDS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 58
+    assert len(tools) == 61
     assert set(tools) == set(EXPECTED_SURFACE)
     assert "gh_create_release" not in tools
     assert "gh_upsert_label" not in tools
+    assert "gh_submit_pr_review" not in tools
 
     for name, tool in tools.items():
         properties, required = EXPECTED_SURFACE[name]

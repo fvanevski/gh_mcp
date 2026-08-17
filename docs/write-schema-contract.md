@@ -1,27 +1,30 @@
 # Public write-schema and host-legibility contract
 
-Version 0.8.1 exposes 18 public GitHub write tools through one canonical host-facing MCP facade. This document defines their schema, metadata, registration, authorization, and ambiguity invariants. It does not weaken execution, exact-state, mutation-attempt, or readback requirements.
+Version 0.9.0 exposes 20 public GitHub write tools (61 total public MCP tools: 41 read-only and 20 write) through one canonical host-facing MCP facade. This document defines their schema, metadata, registration, authorization, and ambiguity invariants. It does not weaken execution, exact-state, mutation-attempt, or readback requirements.
 
-Historical 0.7.0, 0.7.1, and 0.8.0 inventories remain recorded by their release documents. The current 0.8.1 runtime authority is defined by `docs/release_gate_0_8_1.md` and `tests/test_release_gate_0_8_1.py`.
+Historical 0.7.0, 0.7.1, 0.8.0, and 0.8.1 inventories remain recorded by their release documents. The current 0.9.0 runtime authority is defined by `docs/release_gate_0_9_0.md` and `tests/test_release_gate_0_9_0.py`.
 
 ## Composition boundary
 
-`src/mcp_gh_server/write_tool_schema.py` is the canonical host-facing facade for every public write. It owns:
+`src/mcp_gh_server/current_write_tool_schema.py` is the canonical host-facing facade for every public write. It owns:
 
 - the public function signature used to generate the MCP input schema;
 - the tool title and action-specific description;
 - truthful MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`); and
 - delegation to the authoritative canonical domain implementation.
 
+For the 0.9.0 formal review writes, the facade delegates to `src/mcp_gh_server/pr_review_tool_schema.py`, which owns the bounded review-write schemas and action-specific metadata. The pre-review-split writes remain defined by `src/mcp_gh_server/write_tool_schema.py`, whose shared bounded types and metadata the review schema imports.
+
 `src/mcp_gh_server/server.py` registers each function in `PUBLIC_WRITE_TOOLS` exactly once using the corresponding `WRITE_TOOL_METADATA` entry. It performs no compatibility `remove_tool`/re-add rebinding. Public write implementations under `src/mcp_gh_server/tools/` do not independently register the same public names with `@mcp.tool`.
 
-The obsolete `legacy_*write*` adapters, `legacy_write_support.py`, `legacy_assignee_support.py`, and the `legacy_write_status` result projection are not part of the 0.8.1 architecture.
+The obsolete `legacy_*write*` adapters, `legacy_write_support.py`, `legacy_assignee_support.py`, and the `legacy_write_status` result projection are not part of the 0.9.0 architecture.
 
 Canonical domain implementations include:
 
 - issue/label/milestone writes in `tools/issue_writes.py`;
 - stable-ID comment creation in `tools/issues.py`;
 - pull-request writes in `tools/pr_writes.py`;
+- action-specific formal review writes (`gh_approve_pr`, `gh_request_pr_changes`, `gh_comment_pr_review`) in `tools/pr_review_writes.py`;
 - exact issue-state and PR-draft transitions in their focused modules;
 - repository creation in `tools/repository_create.py`;
 - exact Git/reference writes in `tools/git_writes.py` and `tools/issue_branch_writes.py`;
@@ -66,7 +69,7 @@ A tool governed by a separate operation fine gate names that fine gate in its ho
 
 Annotations remain semantic rather than host-policy workarounds:
 
-- all 18 writes have `readOnlyHint=false`;
+- all 20 writes have `readOnlyHint=false`;
 - additive writes have `destructiveHint=false`;
 - state-changing/destructive writes have `destructiveHint=true`;
 - writes do not claim idempotence; and
@@ -125,9 +128,9 @@ Do not weaken annotations, schema constraints, descriptions, authorization gates
 
 The contract is enforced by complementary tests:
 
-- `tests/test_release_gate_0_8_1.py` pins package/lock/runtime versions, exact 58/40/18 inventory, retired-tool absence, single canonical write registration, compatibility-path removal, default-off fine gates, and release documentation;
+- `tests/test_release_gate_0_9_0.py` pins package/lock/runtime versions, exact 61/41/20 inventory, retired-tool absence, single canonical write registration, compatibility-path removal, default-off fine gates, and release documentation;
 - `tests/test_tool_schema_snapshot.py` pins the complete current tool schema surface;
-- `tests/test_write_surface_contract.py` pins all 18 public write facades and canonical module provenance;
+- `tests/test_write_surface_contract.py` pins all 20 public write facades and canonical module provenance;
 - `tests/test_write_schema_policy.py` audits bounded schemas, annotations, generic-executor/bypass exclusions, the narrow `@me` selector, high-risk descriptions, and exact-state/payload constraints;
 - `tests/test_write_target_policy.py` pins exact high-risk target gates and zero-call target mismatches;
 - domain migration tests pin canonical direct tri-state outcomes and no-blind-retry behavior; and

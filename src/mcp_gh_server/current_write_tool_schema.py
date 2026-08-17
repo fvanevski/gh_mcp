@@ -17,7 +17,11 @@ from .pr_review_tool_schema import (
 )
 from .write_tool_schema import (
     PUBLIC_WRITE_TOOLS as _PRE_REVIEW_SPLIT_TOOLS,
+)
+from .write_tool_schema import (
     WRITE_TOOL_METADATA as _PRE_REVIEW_SPLIT_METADATA,
+)
+from .write_tool_schema import (
     WriteToolMetadata,
     gh_commit_files,
     gh_create_branch,
@@ -42,9 +46,7 @@ _RETIRED_PUBLIC_REVIEW_TOOL = "gh_submit_pr_review"
 
 PublicWriteTool = Callable[..., Awaitable[object]]
 _NON_REVIEW_WRITE_TOOLS: tuple[PublicWriteTool, ...] = tuple(
-    tool
-    for tool in _PRE_REVIEW_SPLIT_TOOLS
-    if tool.__name__ != _RETIRED_PUBLIC_REVIEW_TOOL
+    tool for tool in _PRE_REVIEW_SPLIT_TOOLS if tool.__name__ != _RETIRED_PUBLIC_REVIEW_TOOL
 )
 PUBLIC_WRITE_TOOLS: tuple[PublicWriteTool, ...] = (
     *_NON_REVIEW_WRITE_TOOLS,
@@ -52,8 +54,7 @@ PUBLIC_WRITE_TOOLS: tuple[PublicWriteTool, ...] = (
 )
 
 WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
-    tool.__name__: _PRE_REVIEW_SPLIT_METADATA[tool.__name__]
-    for tool in _NON_REVIEW_WRITE_TOOLS
+    tool.__name__: _PRE_REVIEW_SPLIT_METADATA[tool.__name__] for tool in _NON_REVIEW_WRITE_TOOLS
 }
 WRITE_TOOL_METADATA.update(PR_REVIEW_WRITE_METADATA)
 

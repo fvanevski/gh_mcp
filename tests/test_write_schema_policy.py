@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 
+from mcp_gh_server.current_write_tool_schema import WRITE_TOOL_METADATA
 from mcp_gh_server.server import mcp
 from mcp_gh_server.workflow_selector import WORKFLOW_PATH_RE
-from mcp_gh_server.write_tool_schema import WRITE_TOOL_METADATA
 
 # Independent expected surface. Do not derive this from WRITE_TOOL_METADATA: adding a
 # public write must require an explicit policy-test update.
@@ -23,7 +23,9 @@ PUBLIC_WRITE_TOOLS = frozenset(
         "gh_create_pr",
         "gh_edit_pr",
         "gh_set_pr_draft_state",
-        "gh_submit_pr_review",
+        "gh_approve_pr",
+        "gh_request_pr_changes",
+        "gh_comment_pr_review",
         "gh_merge_pr",
         "gh_create_repo",
         "gh_commit_files",
@@ -40,7 +42,9 @@ ADDITIVE_WRITE_TOOLS = {
     "gh_create_milestone",
     "gh_create_comment",
     "gh_create_pr",
-    "gh_submit_pr_review",
+    "gh_approve_pr",
+    "gh_request_pr_changes",
+    "gh_comment_pr_review",
     "gh_create_repo",
     "gh_create_release_exact",
     "gh_create_branch",
@@ -171,7 +175,7 @@ async def test_exact_public_write_surface_is_independent_and_complete() -> None:
     }
     assert actual_writes == PUBLIC_WRITE_TOOLS
     assert set(WRITE_TOOL_METADATA) == PUBLIC_WRITE_TOOLS
-    assert len(PUBLIC_WRITE_TOOLS) == 18
+    assert len(PUBLIC_WRITE_TOOLS) == 20
     assert "gh_run_workflow" not in tools
     assert "gh_create_release" not in tools
     assert "gh_upsert_label" not in tools
@@ -316,7 +320,9 @@ async def test_exact_sha_ref_and_workflow_preconditions_are_host_visible() -> No
     tools = await _tools()
     sha_fields = {
         "gh_set_pr_draft_state": "expected_head_sha",
-        "gh_submit_pr_review": "expected_head_sha",
+        "gh_approve_pr": "expected_head_sha",
+        "gh_request_pr_changes": "expected_head_sha",
+        "gh_comment_pr_review": "expected_head_sha",
         "gh_merge_pr": "expected_head_sha",
         "gh_commit_files": "expected_head_sha",
         "gh_create_release_exact": "expected_target_sha",
@@ -341,11 +347,6 @@ async def test_finite_enums_and_label_color_are_explicit() -> None:
     assert set(tools["gh_create_milestone"].input_schema["properties"]["state"]["enum"]) == {
         "open",
         "closed",
-    }
-    assert set(tools["gh_submit_pr_review"].input_schema["properties"]["action"]["enum"]) == {
-        "approve",
-        "request_changes",
-        "comment",
     }
     assert set(tools["gh_merge_pr"].input_schema["properties"]["method"]["enum"]) == {
         "merge",

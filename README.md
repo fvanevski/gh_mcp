@@ -4,17 +4,22 @@ A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
 runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
-Version 0.8.1 exposes 58 public MCP tools: 40 read-only and 18 write.
-The 0.8.1 patch restores correct behavior for `gh_search_code` and `gh_list_issues(labels=...)`
-after post-release live-read regressions surfaced. The 0.8.0 release retired the weaker
-generic workflow-dispatch, release-creation, and label-upsert writes, removed obsolete
-write-compatibility infrastructure, and registered every public write exactly once through
-the canonical host-facing schema facade. Historical 0.7.0/0.7.1 release records remain
-available under `docs/` but do not define the current runtime inventory.
+Version 0.9.0 exposes 61 public MCP tools: 41 read-only and 20 write.
+The 0.9.0 release splits the former generic `gh_submit_pr_review` into three
+action-specific formal pull-request review writes — `gh_approve_pr`,
+`gh_request_pr_changes`, and `gh_comment_pr_review` — and adds the read-only
+`gh_get_pr_review_eligibility` preflight. Each review write submits exactly one review
+through the server-configured reviewer principal, verifies the exact head and
+authenticated reviewer identity immediately before the review POST, and readbacks
+immutable review-ID state. The 0.8.0 release retired the weaker generic workflow-dispatch,
+release-creation, and label-upsert writes, removed obsolete write-compatibility
+infrastructure, and registered every public write exactly once through the canonical
+host-facing schema facade. Historical 0.7.0/0.7.1, 0.8.0, and 0.8.1 release records
+remain available under `docs/` but do not define the current runtime inventory.
 
 ## Tools
 
-### Read-only (40)
+### Read-only (41)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -37,6 +42,9 @@ available under `docs/` but do not define the current runtime inventory.
   preserving pagination and exact-head evidence.
 - `gh_get_pr_review_state`: aggregate exact-head review/request/thread evidence without
   treating truncated evidence as complete.
+- `gh_get_pr_review_eligibility`: read-only exact-head preflight reporting the PR author,
+  ordinary GitHub identity, configured reviewer identity, and whether an independent
+  APPROVED review or ordinary COMMENTED review is currently eligible.
 - `gh_get_merge_requirements`: aggregate effective merge requirements/readiness for an
   exact expected PR head and fail closed when policy or identity evidence is incomplete.
 - `gh_get_repo`: get details of a specific repository.
@@ -73,7 +81,7 @@ available under `docs/` but do not define the current runtime inventory.
 - `gh_compare_commits`: compare two exact commit SHAs with explicit merge-base,
   ahead/behind status, independently bounded commit/file evidence, and digests.
 
-### Write (18)
+### Write (20)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
@@ -98,8 +106,15 @@ available under `docs/` but do not define the current runtime inventory.
 - `gh_edit_pr`: edit an existing pull request (write, disabled by default).
 - `gh_set_pr_draft_state`: change PR draft state only for the expected exact head and
   expected current draft state, with authoritative readback (write, disabled by default).
-- `gh_submit_pr_review`: submit a formal review pinned to an exact PR head SHA
-  (additive write, disabled by default).
+- `gh_approve_pr`: submit exactly one formal APPROVED review for an exact PR head through
+  the server-configured independent reviewer principal, verifying exact head and
+  authenticated reviewer login before the POST (additive write, disabled by default).
+- `gh_request_pr_changes`: submit exactly one formal CHANGES_REQUESTED review for an exact
+  PR head through the configured reviewer principal with an exact expected reviewer login
+  compare-only precondition (additive write, disabled by default).
+- `gh_comment_pr_review`: submit exactly one formal COMMENTED review through the ordinary
+  authenticated principal for an exact PR head as the explicit same-author fallback;
+  COMMENTED is never reported as APPROVED (additive write, disabled by default).
 - `gh_merge_pr`: merge an exact reviewed PR head with an explicit strategy
   (destructive write, separately disabled by default).
 - `gh_commit_files`: atomically create or replace files in one branch commit
@@ -112,13 +127,14 @@ the sole public primitives for their mutation classes, while label callers choos
 explicit `gh_create_label` or `gh_edit_label` semantics. Do not restore retired tools
 or reinterpret historical 0.7.x inventory records as current runtime authority.
 
-## 0.8.0 architecture and evidence contract
+## 0.9.0 architecture and evidence contract
 
 `src/mcp_gh_server/server.py` is the composition root; public read implementations live
-in cohesive domain modules under `src/mcp_gh_server/tools/`, while the 18 public writes
-are registered exactly once from `src/mcp_gh_server/write_tool_schema.py`. GitHub
-request execution is centralized through the shared `GitHubRequestGovernor` rather
-than duplicated in individual tools.
+in cohesive domain modules under `src/mcp_gh_server/tools/`, while the 20 public writes
+are registered exactly once from `src/mcp_gh_server/current_write_tool_schema.py`. That
+facade keeps the pre-review-split writes and delegates the three formal review writes to
+`src/mcp_gh_server/pr_review_tool_schema.py`. GitHub request execution is centralized
+through the shared `GitHubRequestGovernor` rather than duplicated in individual tools.
 
 Writes remain default-off. Exact-state tools preserve expected state/SHA preconditions
 where applicable, perform one mutation attempt, and require authoritative readback
@@ -137,10 +153,10 @@ The conservative read surface includes exact-state evidence such as
 identity, policy, or bounded-source completeness cannot be established. See the
 focused documents under `docs/` for each contract.
 
-0.8.1 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public
+0.9.0 intentionally does not expose arbitrary public `gh <args...>`, arbitrary public
 `gh api`, a generic shell/subprocess MCP tool, administrator bypasses, automatic
 mutation replay, artifact/log deletion, or branch-protection/ruleset mutation. See
-`docs/release_gate_0_8_1.md` for the current release acceptance mapping.
+`docs/release_gate_0_9_0.md` for the current release acceptance mapping.
 
 ## Install
 
@@ -217,7 +233,7 @@ the same command/args and place the entry under `mcpServers`.
 
 ### ChatGPT plan and gateway limitations
 
-The action surface is version `0.8.1`, but availability in ChatGPT depends on the
+The action surface is version `0.9.0`, but availability in ChatGPT depends on the
 account plan and integration surface:
 
 - OpenAI currently limits full custom MCP apps, including write/modify actions,
@@ -303,7 +319,7 @@ MCP tool invocation reached server: tool=gh_get_pr
 ```
 
 After deploying the current release, delete and reinstall the Plus custom plugin and
-verify `gh_server_info` reports both versions as 0.8.1. An immediate namespace-disabled
+verify `gh_server_info` reports both versions as 0.9.0. An immediate namespace-disabled
 response with no `gh_get_pr` marker still proves rejection occurred in the host before
 the revised server operation. It does not indicate GitHub authentication, repository,
 PR, or readback failure and must not be retried as though a GitHub write partially ran.
@@ -607,14 +623,14 @@ uv run pytest
 git diff --check
 ```
 
-The 0.8.1 release passes only when package/server/tool-schema/lock versions, the exact
-58/40/18 executable inventory, schema snapshots, canonical registration invariants,
+The 0.9.0 release passes only when package/server/tool-schema/lock versions, the exact
+61/41/20 executable inventory, schema snapshots, canonical registration invariants,
 compatibility-path absence, focused negative/fail-closed regressions, static checks,
 and the full test suite agree on the same exact candidate SHA. Any source change
 invalidates affected validation and requires rerunning it.
 
-Historical 0.7.0, 0.7.1, and 0.8.0 release mappings remain under `docs/`; current release
-authority is `docs/release_gate_0_8_1.md` and `tests/test_release_gate_0_8_1.py`.
+Historical 0.7.0, 0.7.1, 0.8.0, and 0.8.1 release mappings remain under `docs/`; current
+release authority is `docs/release_gate_0_9_0.md` and `tests/test_release_gate_0_9_0.py`.
 
 ## Known boundaries
 
