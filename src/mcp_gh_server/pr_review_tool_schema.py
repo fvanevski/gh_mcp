@@ -7,7 +7,11 @@ from typing import Annotated
 from mcp.server.mcpserver import Context
 from pydantic import Field
 
-from .pr_write_models import PullRequestReviewSubmission
+from .pr_write_models import (
+    PullRequestApproval,
+    PullRequestChangesRequested,
+    PullRequestCommentReview,
+)
 from .tooling import ADD_EXTERNAL, AppContext
 from .tools.pr_review_writes import (
     gh_approve_pr as _gh_approve_pr,
@@ -55,8 +59,8 @@ async def gh_approve_pr(
         Body,
         Field(description="Optional Markdown body for the APPROVED review."),
     ] = "",
-) -> PullRequestReviewSubmission:
-    return await _gh_approve_pr(
+) -> PullRequestApproval:
+    result = await _gh_approve_pr(
         owner,
         repo,
         number,
@@ -65,6 +69,7 @@ async def gh_approve_pr(
         ctx=ctx,
         body=body,
     )
+    return PullRequestApproval.model_validate(result.model_dump())
 
 
 async def gh_request_pr_changes(
@@ -85,8 +90,8 @@ async def gh_request_pr_changes(
     ],
     *,
     ctx: Context[AppContext],
-) -> PullRequestReviewSubmission:
-    return await _gh_request_pr_changes(
+) -> PullRequestChangesRequested:
+    result = await _gh_request_pr_changes(
         owner,
         repo,
         number,
@@ -95,6 +100,7 @@ async def gh_request_pr_changes(
         ctx=ctx,
         body=body,
     )
+    return PullRequestChangesRequested.model_validate(result.model_dump())
 
 
 async def gh_comment_pr_review(
@@ -119,8 +125,8 @@ async def gh_comment_pr_review(
     ],
     *,
     ctx: Context[AppContext],
-) -> PullRequestReviewSubmission:
-    return await _gh_comment_pr_review(
+) -> PullRequestCommentReview:
+    result = await _gh_comment_pr_review(
         owner,
         repo,
         number,
@@ -128,14 +134,15 @@ async def gh_comment_pr_review(
         ctx=ctx,
         body=body,
     )
+    return PullRequestCommentReview.model_validate(result.model_dump())
 
 
 PR_REVIEW_WRITE_METADATA: dict[str, WriteToolMetadata] = {
     "gh_approve_pr": WriteToolMetadata(
         "Approve pull request at exact head",
         (
-            "Additive external write: submit exactly one formal GitHub APPROVED review for "
-            "the supplied exact pull-request head through the server-configured independent "
+            "Additive write: submit exactly one formal GitHub APPROVED review for the "
+            "supplied exact pull-request head through the server-configured independent "
             "reviewer principal. Before the review POST the server verifies repository write "
             "policy, current head, expected reviewer login, authenticated reviewer login, "
             "and reviewer != PR author. The caller cannot select credentials. The write is "
@@ -148,23 +155,23 @@ PR_REVIEW_WRITE_METADATA: dict[str, WriteToolMetadata] = {
     "gh_request_pr_changes": WriteToolMetadata(
         "Request pull request changes at exact head",
         (
-            "Additive external write: submit exactly one formal GitHub CHANGES_REQUESTED "
-            "review for the supplied exact pull-request head through the server-configured "
-            "reviewer principal. The exact expected reviewer login is a compare-only "
-            "precondition and cannot select credentials. The review POST is attempted once "
-            "and immutable review-ID readback verifies state, actor, head, and body. It "
-            "cannot approve, merge, dismiss reviews, or replay an ambiguous mutation."
+            "Additive write: submit exactly one formal GitHub CHANGES_REQUESTED review for "
+            "the supplied exact pull-request head through the server-configured reviewer "
+            "principal. The exact expected reviewer login is a compare-only precondition "
+            "and cannot select credentials. The review POST is attempted once and immutable "
+            "review-ID readback verifies state, actor, head, and body. It cannot approve, "
+            "merge, dismiss reviews, or replay an ambiguous mutation."
         ),
         ADD_EXTERNAL,
     ),
     "gh_comment_pr_review": WriteToolMetadata(
         "Comment on pull request as formal review at exact head",
         (
-            "Additive external write: submit exactly one formal GitHub COMMENTED review "
-            "through the ordinary authenticated GitHub principal for the supplied exact PR "
-            "head. This is the explicit same-author fallback for recording an external or "
-            "Central disposition; COMMENTED is never reported as GitHub APPROVED. The write "
-            "is attempted once and immutable review-ID readback verifies actor, state, head, "
+            "Additive write: submit exactly one formal GitHub COMMENTED review through the "
+            "ordinary authenticated GitHub principal for the supplied exact PR head. This "
+            "is the explicit same-author fallback for recording an external or Central "
+            "disposition; COMMENTED is never reported as GitHub APPROVED. The write is "
+            "attempted once and immutable review-ID readback verifies actor, state, head, "
             "and body. It cannot select reviewer credentials, approve, merge, or retry an "
             "ambiguous mutation automatically."
         ),
