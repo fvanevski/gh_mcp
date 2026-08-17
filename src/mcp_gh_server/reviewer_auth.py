@@ -193,7 +193,8 @@ class ReviewerPrincipal:
         if key_file is None:
             raise RuntimeError("GitHub App reviewer private key file is not configured")
         if not Path(key_file).is_file():
-            raise RuntimeError(f"Reviewer GitHub App private key file does not exist: {key_file}")
+            # Do not disclose deployment filesystem paths through a public tool error.
+            raise RuntimeError("Reviewer GitHub App private key file does not exist")
 
         now = int(time())
         header = {"alg": "RS256", "typ": "JWT"}
@@ -222,7 +223,7 @@ class ReviewerPrincipal:
             ) from exc
 
         try:
-            stdout, stderr = await asyncio.wait_for(
+            stdout, _ = await asyncio.wait_for(
                 process.communicate(signing_input),
                 timeout=float(self.settings.command_timeout_seconds),
             )
@@ -232,9 +233,9 @@ class ReviewerPrincipal:
             raise RuntimeError("Reviewer GitHub App JWT signing timed out") from exc
 
         if process.returncode != 0 or not stdout:
-            detail = (stderr or b"").decode(errors="replace").strip()[:1000]
-            suffix = f": {detail}" if detail else ""
-            raise RuntimeError(f"Unable to sign reviewer GitHub App JWT{suffix}")
+            # OpenSSL diagnostics can contain local filesystem details. Keep the
+            # public failure bounded to the operation instead of reflecting stderr.
+            raise RuntimeError("Unable to sign reviewer GitHub App JWT")
 
         return (
             signing_input.decode("ascii")
@@ -365,8 +366,7 @@ def _safe_error_detail(error: HTTPError) -> str:
     try:
         raw = error.read(16_384)
         parsed = json.loads(raw)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        del exc
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return ""
     if not isinstance(parsed, dict):
         return ""
