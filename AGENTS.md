@@ -29,7 +29,9 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 | `src/mcp_gh_server/server.py` | Composition root — registers every public write exactly once and imports self-registered reads |
 | `src/mcp_gh_server/tooling.py` | Shared helpers: annotations, write gates, repository validation, evidence |
 | `src/mcp_gh_server/tools/` | Read-only tools plus canonical write implementations by domain |
-| `src/mcp_gh_server/write_tool_schema.py` | Canonical public write facade: bounded schemas, titles, descriptions, annotations |
+| `src/mcp_gh_server/current_write_tool_schema.py` | Canonical current 0.9.0 public write inventory — 17 non-review writes plus 3 action-specific formal-review writes |
+| `src/mcp_gh_server/pr_review_tool_schema.py` | Dedicated action-specific formal-review facade for approve/request-changes/comment-review |
+| `src/mcp_gh_server/write_tool_schema.py` | Internal facade source for the current non-review writes; not the current public-inventory authority |
 | `src/mcp_gh_server/write_contracts.py` | Shared exact-state and tri-state mutation/readback contract |
 | `src/mcp_gh_server/models.py` | Pydantic result schemas used by tests and tool annotations |
 | `src/mcp_gh_server/settings.py` | Runtime config, loaded once via cached `get_settings()` |
@@ -39,10 +41,12 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 | `tests/test_mcp_protocol.py` | Protocol-level registration/schema/annotation contract tests |
 | `tests/test_integration.py` | Live-GitHub integration tests requiring `GITHUB_TOKEN` |
 
-Key invariant: `write_tool_schema.py` owns the host-facing public write schema and delegates
-to one canonical domain implementation. `server.py` is the sole MCP registration path for
-the 20 public write names; it does not remove and re-add compatibility registrations.
-Canonical write implementation modules do not independently register those same names.
+Key invariant: `current_write_tool_schema.py` owns the current host-facing public write
+inventory, composing 17 non-review wrappers from `write_tool_schema.py` with the 3 dedicated
+formal-review wrappers from `pr_review_tool_schema.py`. `server.py` is the sole MCP
+registration path for those 20 current public write names. `gh_submit_pr_review` is retired
+from the current inventory and must not be restored merely because its internal legacy
+wrapper remains available to historical code/tests.
 
 The obsolete `legacy_*write*` compatibility adapters, `legacy_write_support.py`,
 `legacy_assignee_support.py`, and the `legacy_write_status` projection are not part of the
