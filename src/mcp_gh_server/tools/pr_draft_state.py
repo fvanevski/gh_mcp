@@ -50,7 +50,7 @@ def _parse_pr_draft_snapshot(
     is_draft = raw.get("draft")
     url = raw.get("html_url")
 
-    if number != expected_number:
+    if not isinstance(number, int) or isinstance(number, bool) or number != expected_number:
         raise RuntimeError("GitHub pull-request draft-state readback returned a different number")
     if not isinstance(head_sha, str) or not OBJECT_SHA_RE.fullmatch(head_sha):
         raise RuntimeError("GitHub did not return a valid pull-request head SHA")

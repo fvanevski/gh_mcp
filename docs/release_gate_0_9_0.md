@@ -11,7 +11,8 @@ Version 0.9.0 exposes 61 public MCP tools: 41 read-only and 20 write.
 
 For the 0.9.0 candidate, the authoritative sources are:
 
-- package version: `pyproject.toml`;
+- package version and Pyrefly project configuration: `pyproject.toml`;
+- Pyrefly executable version: `requirements-typecheck.txt`;
 - server/tool-schema version: `src/mcp_gh_server/__init__.py`, consumed by `gh_server_info`;
 - locked editable package version: `uv.lock`;
 - executable tool inventory: `src/mcp_gh_server/server.py` / `mcp.list_tools()`;
@@ -19,7 +20,8 @@ For the 0.9.0 candidate, the authoritative sources are:
   `tests/test_tool_return_models.py`; and
 - release integration assertions in `tests/test_release_gate_0_9_0.py`.
 
-Those sources must all report `0.9.0` and the 61/41/20 inventory for the release candidate.
+Those sources must all report `0.9.0` and the 61/41/20 inventory for the release candidate,
+and the committed Pyrefly pin/configuration must remain present without a general baseline.
 
 ## Scope
 
@@ -149,6 +151,8 @@ credentials are configured.
   including the four new review tool schemas and the absence of `gh_submit_pr_review`.
 - `tests/test_write_surface_contract.py` — pins all 20 public write facades and canonical
   module provenance, including the three review writes bound to `pr_review_tool_schema`.
+- `tests/test_release_gate_0_9_0.py` — also pins the repository's Pyrefly authority,
+  checker version file, no-baseline policy, and current validation documentation.
 - `docs/pr-review-evidence-contract.md` and `docs/write-schema-contract.md` — describe the
   0.9.0 review surface and host-facing write contracts.
 
@@ -171,19 +175,21 @@ uv run pytest tests/test_release_gate_0_9_0.py \
 
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy
+uv run --with-requirements requirements-typecheck.txt pyrefly check
 uv run pytest
 git diff --check
 ```
 
 The release passes only when package version, server version, tool-schema version, `uv.lock`,
-runtime inventory, schema snapshots, documentation, static checks, focused negative/fail-closed
-regressions, and the full suite agree on the same exact candidate SHA.
+runtime inventory, schema snapshots, documentation, Pyrefly, Ruff, focused
+negative/fail-closed regressions, and the full suite agree on the same exact candidate SHA.
 
-The repository currently has no committed Pyrefly pin/configuration/baseline. A workflow that
-requires Pyrefly must report that gate as unavailable rather than installing, regenerating, or
-weakening type-check policy inside issue #75. The repository's existing mypy command remains
-supplementary evidence and is not represented as Pyrefly.
+Pyrefly is the sole Python static type-check authority for normal CI/review/release decisions.
+`requirements-typecheck.txt` pins `pyrefly==1.1.1`, and `[tool.pyrefly]` in `pyproject.toml`
+defines the no-argument project scope. Changed test files are supplied explicitly during PR
+changed-scope validation. No general `pyrefly-baseline.json`, broad suppression, scope weakening,
+or checker substitution is part of the release contract. Mypy may remain installed for
+historical developer use but is not release validation authority.
 
 ## Ambiguity and replay policy
 

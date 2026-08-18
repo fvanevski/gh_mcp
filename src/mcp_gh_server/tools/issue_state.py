@@ -61,7 +61,7 @@ def _parse_issue_state_snapshot(raw: object, *, expected_number: int) -> _IssueS
     updated_at = raw.get("updated_at")
     url = raw.get("html_url")
 
-    if number != expected_number:
+    if not isinstance(number, int) or isinstance(number, bool) or number != expected_number:
         raise RuntimeError("GitHub issue state readback returned a different issue number")
     if not isinstance(state, str) or state not in _VALID_STATES:
         raise RuntimeError("GitHub issue state readback returned an unsupported state")
@@ -86,15 +86,6 @@ def _parse_issue_state_snapshot(raw: object, *, expected_number: int) -> _IssueS
     )
 
 
-def _write_updated_at(raw: object) -> str | None:
-    """Extract the transition update timestamp from a confirmed REST mutation response."""
-
-    if not isinstance(raw, dict):
-        return None
-    updated_at = raw.get("updated_at")
-    return updated_at if isinstance(updated_at, str) else None
-
-
 async def _read_issue_state(
     app: AppContext,
     owner: str,
@@ -110,6 +101,15 @@ async def _read_issue_state(
         "GET",
     )
     return _parse_issue_state_snapshot(result, expected_number=number)
+
+
+def _write_updated_at(raw: object) -> str | None:
+    """Extract the transition update timestamp from a confirmed REST mutation response."""
+
+    if not isinstance(raw, dict):
+        return None
+    updated_at = raw.get("updated_at")
+    return updated_at if isinstance(updated_at, str) else None
 
 
 def _validate_transition(

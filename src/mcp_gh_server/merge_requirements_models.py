@@ -10,6 +10,14 @@ from .models import PullRequestCheck
 from .pr_review_models import PullRequestReview, PullRequestReviewThread, ReviewDecision
 
 MergeMethod = Literal["merge", "squash", "rebase"]
+MergeEvidenceStatus = Literal[
+    "complete",
+    "present",
+    "absent",
+    "unavailable",
+    "truncated",
+    "head_mismatch",
+]
 
 
 class RequiredStatusCheck(BaseModel):
@@ -17,6 +25,24 @@ class RequiredStatusCheck(BaseModel):
 
     context: str = Field(min_length=1)
     integration_id: int | None = None
+
+
+class RequiredStatusCheckObservation(PullRequestCheck):
+    """One exact-head required-check observation bound to its policy identity."""
+
+    integration_id: int | None = None
+
+
+class MergeRequirementEvidenceSource(BaseModel):
+    """Bounded diagnostic for one source contributing to merge-readiness evidence."""
+
+    source: str = Field(min_length=1, max_length=80)
+    status: MergeEvidenceStatus
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    reason: str | None = Field(default=None, max_length=512)
+    blocks_policy_evidence: bool = False
+    blocks_checks_evidence: bool = False
+    blocks_allowed_merge_methods: bool = False
 
 
 class PullRequestMergeRequirements(BaseModel):
@@ -36,7 +62,7 @@ class PullRequestMergeRequirements(BaseModel):
     review_evidence_complete: bool
     up_to_date_evidence_complete: bool
     required_status_checks: list[RequiredStatusCheck] = Field(default_factory=list)
-    current_required_checks: list[PullRequestCheck] = Field(default_factory=list)
+    current_required_checks: list[RequiredStatusCheckObservation] = Field(default_factory=list)
     required_approvals: int | None = Field(default=None, ge=0)
     current_valid_approvals: list[PullRequestReview] = Field(default_factory=list)
     current_valid_approval_count: int | None = Field(default=None, ge=0)
@@ -50,4 +76,5 @@ class PullRequestMergeRequirements(BaseModel):
     up_to_date: bool | None = None
     allowed_merge_methods: list[MergeMethod] = Field(default_factory=list)
     allowed_merge_methods_complete: bool
+    evidence_sources: list[MergeRequirementEvidenceSource] = Field(default_factory=list)
     warning: str | None = None

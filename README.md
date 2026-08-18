@@ -413,8 +413,8 @@ server-configured reviewer login against the PR author. GitHub documents that PR
 authors cannot approve their own pull requests, so an exact match is rejected before
 the POST with an explicit `no review was attempted` error. `gh_comment_pr_review`
 remains available to the author. GitHub's public review documentation does not
-explicitly state the equivalent author rule for `request_changes`, so the server does
-not invent one: GitHub remains authoritative.
+explicitly state the equivalent author rule for `request_changes`, so the server
+does not invent one: GitHub remains authoritative.
 
 When GitHub rejects any review write, including HTTP 422 validation failures, the
 client now preserves a bounded, sanitized JSON error summary containing GitHub's
@@ -620,14 +620,23 @@ must not be retried automatically.
 
 ## Validation
 
+Pyrefly is the sole Python static type-check authority for CI/review and release decisions.
+`requirements-typecheck.txt` pins the checker independently from the runtime/dev lock, and
+`[tool.pyrefly]` in `pyproject.toml` defines project scope. Mypy may remain installed for
+historical developer use but is not a validation substitute.
+
 ```bash
-uv run pytest tests/test_release_gate_0_8_1.py
+uv run pytest tests/test_release_gate_0_9_0.py
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy
+uv run --with-requirements requirements-typecheck.txt pyrefly check
 uv run pytest
 git diff --check
 ```
+
+For PR review, changed Python tests must also be passed explicitly to the changed-scope
+`pyrefly check <paths...>` invocation even though the no-argument project scope excludes the
+historical test corpus.
 
 The 0.9.0 release passes only when package/server/tool-schema/lock versions, the exact
 61/41/20 executable inventory, schema snapshots, canonical registration invariants,

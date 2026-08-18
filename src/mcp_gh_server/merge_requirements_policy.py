@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
-from .merge_requirements_models import MergeMethod, RequiredStatusCheck
+from .merge_requirements_models import (
+    MergeEvidenceStatus,
+    MergeMethod,
+    MergeRequirementEvidenceSource,
+    RequiredStatusCheck,
+)
 from .request_governor import GitHubRequestError
 from .tooling import AppContext
 
@@ -30,6 +35,47 @@ class MergePolicy:
     allowed_merge_methods: set[MergeMethod] = field(default_factory=lambda: set(_MERGE_METHODS))
     linear_history_required: bool = False
     unmodeled_policy_requirements: set[str] = field(default_factory=set)
+
+
+@dataclass(slots=True)
+class MergePolicyRead:
+    """Effective policy plus bounded source-level completeness diagnostics."""
+
+    policy: MergePolicy | None
+    complete: bool
+    warnings: list[str]
+    evidence_sources: list[MergeRequirementEvidenceSource]
+
+
+@dataclass(slots=True)
+class RepositoryMergeMethodsRead:
+    """Repository merge switches plus bounded source-level diagnostics."""
+
+    methods: set[MergeMethod]
+    complete: bool
+    warnings: list[str]
+    evidence_source: MergeRequirementEvidenceSource
+
+
+def _evidence(
+    source: str,
+    status: MergeEvidenceStatus,
+    *,
+    http_status: int | None = None,
+    reason: str | None = None,
+    blocks_policy: bool = False,
+    blocks_checks: bool = False,
+    blocks_methods: bool = False,
+) -> MergeRequirementEvidenceSource:
+    return MergeRequirementEvidenceSource(
+        source=source,
+        status=status,
+        http_status=http_status,
+        reason=reason,
+        blocks_policy_evidence=blocks_policy,
+        blocks_checks_evidence=blocks_checks,
+        blocks_allowed_merge_methods=blocks_methods,
+    )
 
 
 def _read_bool(mapping: dict[str, Any], key: str, *, label: str) -> bool:
@@ -86,16 +132,24 @@ def _apply_classic_protection(policy: MergePolicy, protection: dict[str, Any]) -
             label="classic required-status strictness",
         )
         raw_checks = status_checks.get("checks")
+        classic_check_contexts: set[str] = set()
         if raw_checks is not None:
             if not isinstance(raw_checks, list):
                 raise RuntimeError("GitHub returned malformed classic required check list")
             for item in raw_checks:
                 if not isinstance(item, dict):
                     raise RuntimeError("GitHub returned a malformed classic required check")
+                context = item.get("context")
+                if not isinstance(context, str) or not context:
+                    raise RuntimeError(
+                        "GitHub returned classic required check without a valid context"
+                    )
+                classic_check_contexts.add(context)
+                app_id = item.get("app_id")
                 _add_required_check(
                     policy,
-                    context=item.get("context"),
-                    integration_id=item.get("app_id"),
+                    context=context,
+                    integration_id=None if app_id == -1 else app_id,
                     label="classic required check",
                 )
         raw_contexts = status_checks.get("contexts", [])
@@ -104,7 +158,12 @@ def _apply_classic_protection(policy: MergePolicy, protection: dict[str, Any]) -
         for context in raw_contexts:
             if not isinstance(context, str) or not context:
                 raise RuntimeError("GitHub returned an invalid classic status-check context")
-            if not any(key[0] == context for key in policy.required_status_checks):
+            # GitHub's legacy contexts field can mirror entries represented more precisely
+            # by this same classic source's checks field. Do not turn that projection into
+            # an extra any-app requirement. A context not represented by classic checks,
+            # however, remains an independent context-only requirement even if another
+            # policy source already contributed a same-context pinned identity.
+            if context not in classic_check_contexts:
                 _add_required_check(
                     policy,
                     context=context,
@@ -195,9 +254,6 @@ def _apply_ruleset_rules(policy: MergePolicy, rules: list[Any]) -> None:
             continue
 
         if rule_type != "pull_request":
-            # The active-rules endpoint can add new rule types over time. Any rule this
-            # aggregate does not explicitly model is treated as material uncertainty,
-            # rather than silently interpreted as "no merge requirement".
             policy.unmodeled_policy_requirements.add(f"ruleset:{rule_type}")
             continue
 
@@ -259,8 +315,13 @@ async def _read_active_rules(
     owner: str,
     repo: str,
     base_ref: str,
-) -> tuple[list[Any], bool, list[str]]:
-    """Read one bounded active-rule page and probe whether additional policy exists."""
+) -> tuple[
+    list[Any],
+    bool,
+    list[str],
+    MergeRequirementEvidenceSource,
+]:
+    """Read one bounded active-rule page and prove whether more policy exists."""
 
     endpoint = f"repos/{owner}/{repo}/rules/branches/{quote(base_ref, safe='')}"
     limit = max(1, min(app.settings.hard_max_results, _RULES_PER_PAGE_MAX))
@@ -276,12 +337,34 @@ async def _read_active_rules(
             f"per_page={limit}",
         )
     except GitHubRequestError as exc:
-        return [], False, [_visibility_warning("Active ruleset policy", exc)]
+        return (
+            [],
+            False,
+            [_visibility_warning("Active ruleset policy", exc)],
+            _evidence(
+                "effective_branch_rules",
+                "unavailable",
+                http_status=exc.status_code,
+                reason="Active rules for the exact base branch could not be read.",
+                blocks_policy=True,
+                blocks_checks=True,
+                blocks_methods=True,
+            ),
+        )
 
     if not isinstance(result, list) or len(result) > limit:
         raise RuntimeError("GitHub returned malformed or over-bound active ruleset evidence")
     if len(result) < limit:
-        return result, True, []
+        return (
+            result,
+            True,
+            [],
+            _evidence(
+                "effective_branch_rules",
+                "complete",
+                reason="All active rules for the exact base branch were read within the bound.",
+            ),
+        )
 
     try:
         following = await app.client.run(
@@ -295,7 +378,20 @@ async def _read_active_rules(
             "per_page=1",
         )
     except GitHubRequestError as exc:
-        return [], False, [_visibility_warning("Active ruleset pagination probe", exc)]
+        return (
+            [],
+            False,
+            [_visibility_warning("Active ruleset pagination probe", exc)],
+            _evidence(
+                "effective_branch_rules",
+                "unavailable",
+                http_status=exc.status_code,
+                reason="The active-rules completeness probe could not be read.",
+                blocks_policy=True,
+                blocks_checks=True,
+                blocks_methods=True,
+            ),
+        )
     if not isinstance(following, list) or len(following) > 1:
         raise RuntimeError("GitHub returned malformed active-rules pagination evidence")
     if following:
@@ -306,8 +402,82 @@ async def _read_active_rules(
                 "Active ruleset policy exceeds the configured evidence bound; "
                 "merge-policy evidence is incomplete."
             ],
+            _evidence(
+                "effective_branch_rules",
+                "truncated",
+                reason="Active branch rules exceed the configured evidence bound.",
+                blocks_policy=True,
+                blocks_checks=True,
+                blocks_methods=True,
+            ),
         )
-    return result, True, []
+    return (
+        result,
+        True,
+        [],
+        _evidence(
+            "effective_branch_rules",
+            "complete",
+            reason="All active rules for the exact base branch were read within the bound.",
+        ),
+    )
+
+
+async def _verify_classic_admin_read(
+    app: AppContext,
+    owner: str,
+    repo: str,
+) -> tuple[bool, list[str], MergeRequirementEvidenceSource]:
+    """Prove Administration(read) independently of classic-protection existence."""
+
+    endpoint = f"repos/{owner}/{repo}/rulesets/rule-suites"
+    try:
+        result = await app.client.run(
+            "api",
+            endpoint,
+            "-X",
+            "GET",
+            "-f",
+            "page=1",
+            "-f",
+            "per_page=1",
+        )
+    except GitHubRequestError as exc:
+        return (
+            False,
+            [
+                _visibility_warning(
+                    "Classic-protection Administration(read) permission probe",
+                    exc,
+                )
+            ],
+            _evidence(
+                "classic_protection_admin_permission",
+                "unavailable",
+                http_status=exc.status_code,
+                reason=(
+                    "Repository Administration(read) could not be independently verified "
+                    "after the classic-protection 404."
+                ),
+                blocks_policy=True,
+                blocks_checks=True,
+                blocks_methods=True,
+            ),
+        )
+    if not isinstance(result, list) or len(result) > 1:
+        raise RuntimeError("GitHub returned malformed classic-protection permission evidence")
+    return (
+        True,
+        [],
+        _evidence(
+            "classic_protection_admin_permission",
+            "complete",
+            reason=(
+                "Repository Administration(read) was independently verified through "
+                "the rule-suites read endpoint."
+            ),
+        ),
+    )
 
 
 async def _read_classic_protection(
@@ -315,55 +485,162 @@ async def _read_classic_protection(
     owner: str,
     repo: str,
     base_ref: str,
-) -> tuple[dict[str, Any] | None, bool, list[str]]:
-    """Read classic protection when the branch reports any active protection."""
+) -> tuple[
+    dict[str, Any] | None,
+    bool,
+    list[str],
+    list[MergeRequirementEvidenceSource],
+]:
+    """Read classic protection and distinguish verified absence from unreadability."""
 
     branch_endpoint = f"repos/{owner}/{repo}/branches/{quote(base_ref, safe='')}"
     try:
         branch = await app.client.run("api", branch_endpoint, "-X", "GET")
     except GitHubRequestError as exc:
-        branch = None
-        warnings = [_visibility_warning("Base-branch protection marker", exc)]
-    else:
-        warnings = []
-        if not isinstance(branch, dict):
-            raise RuntimeError("GitHub returned malformed base-branch metadata")
+        return (
+            None,
+            False,
+            [_visibility_warning("Base-branch protection marker", exc)],
+            [
+                _evidence(
+                    "classic_branch_protection",
+                    "unavailable",
+                    http_status=exc.status_code,
+                    reason="The exact base branch could not be read before protection evaluation.",
+                    blocks_policy=True,
+                    blocks_checks=True,
+                    blocks_methods=True,
+                )
+            ],
+        )
+    if not isinstance(branch, dict):
+        raise RuntimeError("GitHub returned malformed base-branch metadata")
 
-    protected = branch.get("protected") if isinstance(branch, dict) else None
+    protected = branch.get("protected")
     if protected is not None and not isinstance(protected, bool):
         raise RuntimeError("GitHub returned malformed base-branch protection state")
     if protected is False:
-        return None, True, warnings
+        return (
+            None,
+            True,
+            [],
+            [
+                _evidence(
+                    "classic_branch_protection",
+                    "absent",
+                    reason="The exact base branch authoritatively reports protected=false.",
+                )
+            ],
+        )
 
     endpoint = f"repos/{owner}/{repo}/branches/{quote(base_ref, safe='')}/protection"
     try:
         protection = await app.client.run("api", endpoint, "-X", "GET")
     except GitHubRequestError as exc:
-        warnings.append(_visibility_warning("Classic branch protection", exc))
-        return None, False, warnings
+        if exc.status_code != 404:
+            return (
+                None,
+                False,
+                [_visibility_warning("Classic branch protection", exc)],
+                [
+                    _evidence(
+                        "classic_branch_protection",
+                        "unavailable",
+                        http_status=exc.status_code,
+                        reason="Classic branch protection could not be read.",
+                        blocks_policy=True,
+                        blocks_checks=True,
+                        blocks_methods=True,
+                    )
+                ],
+            )
+
+        (
+            permission_verified,
+            permission_warnings,
+            permission_source,
+        ) = await _verify_classic_admin_read(app, owner, repo)
+        if permission_verified:
+            return (
+                None,
+                True,
+                [],
+                [
+                    _evidence(
+                        "classic_branch_protection",
+                        "absent",
+                        http_status=404,
+                        reason=(
+                            "Classic protection returned HTTP 404 for the existing exact "
+                            "base branch, and repository Administration(read) was independently "
+                            "verified."
+                        ),
+                    ),
+                    permission_source,
+                ],
+            )
+        return (
+            None,
+            False,
+            [
+                "Classic branch protection returned HTTP 404, but absence cannot be "
+                "established because repository Administration(read) was not independently "
+                "verified; merge-policy evidence is incomplete.",
+                *permission_warnings,
+            ],
+            [
+                _evidence(
+                    "classic_branch_protection",
+                    "unavailable",
+                    http_status=404,
+                    reason=(
+                        "HTTP 404 is ambiguous without independent repository "
+                        "Administration(read) proof."
+                    ),
+                    blocks_policy=True,
+                    blocks_checks=True,
+                    blocks_methods=True,
+                ),
+                permission_source,
+            ],
+        )
     if not isinstance(protection, dict):
         raise RuntimeError("GitHub returned malformed classic branch protection")
-    return protection, protected is not None, warnings
+    return (
+        protection,
+        True,
+        [],
+        [
+            _evidence(
+                "classic_branch_protection",
+                "present",
+                reason="Classic branch protection was read successfully.",
+            )
+        ],
+    )
 
 
-async def read_effective_merge_policy(
+async def read_effective_merge_policy_evidence(
     app: AppContext,
     owner: str,
     repo: str,
     base_ref: str,
-) -> tuple[MergePolicy | None, bool, list[str]]:
-    """Read and combine only fully modeled rulesets plus classic protection."""
+) -> MergePolicyRead:
+    """Read effective policy with source-level completeness diagnostics."""
 
-    rules, rules_complete, warnings = await _read_active_rules(app, owner, repo, base_ref)
-    classic, classic_complete, classic_warnings = await _read_classic_protection(
+    rules, rules_complete, warnings, rules_source = await _read_active_rules(
+        app, owner, repo, base_ref
+    )
+    classic, classic_complete, classic_warnings, classic_sources = await _read_classic_protection(
         app,
         owner,
         repo,
         base_ref,
     )
     warnings.extend(classic_warnings)
+    evidence_sources = [rules_source, *classic_sources]
     if not (rules_complete and classic_complete):
-        return None, False, warnings
+        return MergePolicyRead(None, False, warnings, evidence_sources)
 
     policy = MergePolicy()
     _apply_ruleset_rules(policy, rules)
@@ -375,23 +652,63 @@ async def read_effective_merge_policy(
             "Active ruleset policy contains requirements this aggregate does not model "
             f"({unmodeled}); merge-policy evidence is incomplete."
         )
-        return None, False, warnings
+        evidence_sources.append(
+            _evidence(
+                "policy_composition",
+                "unavailable",
+                reason=f"Unmodeled effective policy requirements: {unmodeled}",
+                blocks_policy=True,
+                blocks_checks=True,
+                blocks_methods=True,
+            )
+        )
+        return MergePolicyRead(None, False, warnings, evidence_sources)
     if policy.linear_history_required:
         policy.allowed_merge_methods.discard("merge")
-    return policy, True, warnings
+    evidence_sources.append(
+        _evidence(
+            "policy_composition",
+            "complete",
+            reason="All observed merge-relevant policy requirements were modeled.",
+        )
+    )
+    return MergePolicyRead(policy, True, warnings, evidence_sources)
 
 
-async def read_repository_merge_methods(
+async def read_effective_merge_policy(
     app: AppContext,
     owner: str,
     repo: str,
-) -> tuple[set[MergeMethod], bool, list[str]]:
-    """Read repository-level merge-method switches without guessing omitted settings."""
+    base_ref: str,
+) -> tuple[MergePolicy | None, bool, list[str]]:
+    """Compatibility wrapper returning the historical policy tuple."""
+
+    result = await read_effective_merge_policy_evidence(app, owner, repo, base_ref)
+    return result.policy, result.complete, result.warnings
+
+
+async def read_repository_merge_methods_evidence(
+    app: AppContext,
+    owner: str,
+    repo: str,
+) -> RepositoryMergeMethodsRead:
+    """Read repository merge switches with source-level diagnostics."""
 
     try:
         result = await app.client.run("api", f"repos/{owner}/{repo}", "-X", "GET")
     except GitHubRequestError as exc:
-        return set(), False, [_visibility_warning("Repository merge-method settings", exc)]
+        return RepositoryMergeMethodsRead(
+            set(),
+            False,
+            [_visibility_warning("Repository merge-method settings", exc)],
+            _evidence(
+                "repository_merge_settings",
+                "unavailable",
+                http_status=exc.status_code,
+                reason="Repository merge-method switches could not be read.",
+                blocks_methods=True,
+            ),
+        )
     if not isinstance(result, dict):
         raise RuntimeError("GitHub returned malformed repository metadata")
 
@@ -404,14 +721,41 @@ async def read_repository_merge_methods(
     for field_name, method in mapping:
         value = result.get(field_name)
         if not isinstance(value, bool):
-            return (
+            warning = (
+                "Repository merge-method settings are not visible in the response; "
+                "allowed merge methods are indeterminate."
+            )
+            return RepositoryMergeMethodsRead(
                 set(),
                 False,
-                [
-                    "Repository merge-method settings are not visible in the response; "
-                    "allowed merge methods are indeterminate."
-                ],
+                [warning],
+                _evidence(
+                    "repository_merge_settings",
+                    "unavailable",
+                    reason=f"Repository field {field_name} is absent or malformed.",
+                    blocks_methods=True,
+                ),
             )
         if value:
             methods.add(method)
-    return methods, True, []
+    return RepositoryMergeMethodsRead(
+        methods,
+        True,
+        [],
+        _evidence(
+            "repository_merge_settings",
+            "complete",
+            reason="Repository merge/squash/rebase switches were read successfully.",
+        ),
+    )
+
+
+async def read_repository_merge_methods(
+    app: AppContext,
+    owner: str,
+    repo: str,
+) -> tuple[set[MergeMethod], bool, list[str]]:
+    """Compatibility wrapper returning the historical repository-method tuple."""
+
+    result = await read_repository_merge_methods_evidence(app, owner, repo)
+    return result.methods, result.complete, result.warnings
