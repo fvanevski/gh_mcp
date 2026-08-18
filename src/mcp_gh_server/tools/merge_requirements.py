@@ -348,9 +348,7 @@ def _effective_required_checks(policy: MergePolicy) -> list[RequiredStatusCheck]
 
     normalized: dict[tuple[str, int | None], RequiredStatusCheck] = {}
     for required in policy.required_status_checks.values():
-        integration_id = (
-            None if required.integration_id == -1 else required.integration_id
-        )
+        integration_id = None if required.integration_id == -1 else required.integration_id
         key = (required.context, integration_id)
         normalized[key] = RequiredStatusCheck(
             context=required.context,
@@ -458,9 +456,7 @@ async def gh_get_merge_requirements(
     warnings = list(policy_read.warnings)
     evidence_sources = list(policy_read.evidence_sources)
     effective_requirements = (
-        _effective_required_checks(policy)
-        if policy_complete and policy is not None
-        else []
+        _effective_required_checks(policy) if policy_complete and policy is not None else []
     )
 
     methods_read = await read_repository_merge_methods_evidence(app, owner, repo)
@@ -518,8 +514,8 @@ async def gh_get_merge_requirements(
             ) == (base_sha, initial_head)
 
             if policy_complete and policy is not None:
-                checks_policy_consistent, consistency_warnings = (
-                    _required_check_policy_consistent(effective_requirements, current_checks)
+                checks_policy_consistent, consistency_warnings = _required_check_policy_consistent(
+                    effective_requirements, current_checks
                 )
                 warnings.extend(consistency_warnings)
 
@@ -531,11 +527,7 @@ async def gh_get_merge_requirements(
                     integration_id is not None
                     for _context, integration_id in all_required_identities
                 )
-                if (
-                    has_pinned_requirements
-                    and checks_read_complete
-                    and checks_identity_matches
-                ):
+                if has_pinned_requirements and checks_read_complete and checks_identity_matches:
                     try:
                         pinned_read = await read_pinned_required_check_evidence(
                             app,
@@ -561,9 +553,7 @@ async def gh_get_merge_requirements(
                     else:
                         pinned_checks = pinned_read.checks
                         checks_truncated |= pinned_read.truncated
-                        checks_read_complete = (
-                            checks_read_complete and pinned_read.complete
-                        )
+                        checks_read_complete = checks_read_complete and pinned_read.complete
                         checks_identity_matches = (
                             checks_identity_matches and pinned_read.identity_matches
                         )

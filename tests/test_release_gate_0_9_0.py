@@ -207,9 +207,7 @@ def test_release_documentation_matches_runtime_authority() -> None:
     readme = (ROOT / "README.md").read_text()
     gate = (ROOT / "docs" / "release_gate_0_9_0.md").read_text()
     surface = "Version 0.9.0 exposes 61 public MCP tools: 41 read-only and 20 write."
-    pyrefly_command = (
-        "uv run --with-requirements requirements-typecheck.txt pyrefly check"
-    )
+    pyrefly_command = "uv run --with-requirements requirements-typecheck.txt pyrefly check"
 
     assert surface in readme
     assert surface in gate

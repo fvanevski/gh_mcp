@@ -61,9 +61,7 @@ def _check_run(
         "conclusion": state if state not in {"PENDING", "IN_PROGRESS"} else None,
         "startedAt": started_at,
         "completedAt": (
-            "2026-08-18T20:00:30Z"
-            if state not in {"PENDING", "IN_PROGRESS"}
-            else None
+            "2026-08-18T20:00:30Z" if state not in {"PENDING", "IN_PROGRESS"} else None
         ),
         "detailsUrl": f"https://example.test/{workflow or 'external'}/{name}",
         "isRequired": True,
@@ -220,10 +218,9 @@ async def test_pinned_required_check_deduplicates_only_same_logical_rerun() -> N
     )
 
     assert read.complete is True
-    assert [
-        (check.workflow, check.event, check.state)
-        for check in read.checks
-    ] == [("CI", "pull_request", "SUCCESS")]
+    assert [(check.workflow, check.event, check.state) for check in read.checks] == [
+        ("CI", "pull_request", "SUCCESS")
+    ]
 
 
 async def test_pinned_required_check_falls_back_when_workflow_event_is_unsupported() -> None:
@@ -339,8 +336,7 @@ async def test_mixed_context_only_and_pinned_observations_are_compatible() -> No
     assert read.complete is True
     assert read.warnings == []
     assert [
-        (check.name, check.integration_id, check.workflow, check.state)
-        for check in read.checks
+        (check.name, check.integration_id, check.workflow, check.state) for check in read.checks
     ] == [("lint", 42, "CI", "SUCCESS")]
 
 

@@ -251,9 +251,7 @@ def _pinned_check_graphql(
                 "__typename": "CheckRun",
                 "name": name,
                 "status": "COMPLETED" if state not in {"PENDING", "IN_PROGRESS"} else state,
-                "conclusion": (
-                    state if state not in {"PENDING", "IN_PROGRESS"} else None
-                ),
+                "conclusion": (state if state not in {"PENDING", "IN_PROGRESS"} else None),
                 "startedAt": f"2026-08-12T10:0{index}:00Z",
                 "completedAt": (
                     f"2026-08-12T10:0{index}:30Z"
@@ -263,11 +261,7 @@ def _pinned_check_graphql(
                 "detailsUrl": f"https://example.test/check/{name}/{integration_id}",
                 "isRequired": True,
                 "checkSuite": {
-                    "app": (
-                        {"databaseId": integration_id}
-                        if integration_id is not None
-                        else None
-                    )
+                    "app": ({"databaseId": integration_id} if integration_id is not None else None)
                 },
             }
         )
@@ -457,13 +451,9 @@ async def test_merge_requirements_layers_policy_and_uses_current_valid_reviews()
     graphql_calls = [args for args, _ in client.calls if args[:2] == ("api", "graphql")]
     assert len(graphql_calls) == 2
     assert any(
-        any("PullRequestRequiredCheckIdentities" in arg for arg in args)
-        for args in graphql_calls
+        any("PullRequestRequiredCheckIdentities" in arg for arg in args) for args in graphql_calls
     )
-    assert any(
-        any(arg.startswith("query=query ") for arg in args)
-        for args in graphql_calls
-    )
+    assert any(any(arg.startswith("query=query ") for arg in args) for args in graphql_calls)
 
 
 async def test_merge_requirements_counts_preserved_stale_approval_when_policy_allows_it() -> None:
@@ -819,9 +809,9 @@ async def test_merge_requirements_classic_any_app_sentinel_is_context_only() -> 
     )
 
     assert result.checks_evidence_complete is True
-    assert [
-        (check.context, check.integration_id) for check in result.required_status_checks
-    ] == [("lint", None)]
+    assert [(check.context, check.integration_id) for check in result.required_status_checks] == [
+        ("lint", None)
+    ]
     assert [
         (check.name, check.integration_id, check.state, check.bucket)
         for check in result.current_required_checks
@@ -869,9 +859,10 @@ async def test_merge_requirements_pinned_check_uses_authoritative_app_identity()
 
     assert result.policy_evidence_complete is True
     assert result.checks_evidence_complete is True
-    assert [
-        (check.context, check.integration_id) for check in result.required_status_checks
-    ] == [("lint", 42), ("ci", None)]
+    assert [(check.context, check.integration_id) for check in result.required_status_checks] == [
+        ("lint", 42),
+        ("ci", None),
+    ]
     assert {
         (check.name, check.integration_id, check.state, check.bucket)
         for check in result.current_required_checks
@@ -919,9 +910,10 @@ async def test_merge_requirements_same_context_pinned_identities_remain_distinct
     )
 
     assert result.checks_evidence_complete is True
-    assert [
-        (check.context, check.integration_id) for check in result.required_status_checks
-    ] == [("lint", 42), ("lint", 43)]
+    assert [(check.context, check.integration_id) for check in result.required_status_checks] == [
+        ("lint", 42),
+        ("lint", 43),
+    ]
     assert [
         (check.name, check.integration_id, check.state, check.bucket)
         for check in result.current_required_checks
@@ -1012,17 +1004,14 @@ async def test_merge_requirements_incomplete_pinned_identity_read_does_not_infer
     assert result.exact_head_evidence is True
     assert result.checks_evidence_complete is False
     assert [
-        (check.name, check.integration_id, check.state)
-        for check in result.current_required_checks
+        (check.name, check.integration_id, check.state) for check in result.current_required_checks
     ] == [("lint", 42, "SUCCESS")]
     assert not any(
         check.integration_id == 43 and check.state == "UNKNOWN"
         for check in result.current_required_checks
     )
     current_checks_source = next(
-        source
-        for source in result.evidence_sources
-        if source.source == "current_required_checks"
+        source for source in result.evidence_sources if source.source == "current_required_checks"
     )
     assert current_checks_source.status == "truncated"
     assert current_checks_source.blocks_checks_evidence is True
@@ -1067,17 +1056,14 @@ async def test_merge_requirements_pinned_identity_read_failure_is_incomplete() -
     assert result.exact_head_evidence is True
     assert result.checks_evidence_complete is False
     assert [
-        (check.name, check.integration_id, check.state)
-        for check in result.current_required_checks
+        (check.name, check.integration_id, check.state) for check in result.current_required_checks
     ] == [("ci", None, "SUCCESS")]
     assert not any(
         check.name == "lint" and check.state == "UNKNOWN"
         for check in result.current_required_checks
     )
     current_checks_source = next(
-        source
-        for source in result.evidence_sources
-        if source.source == "current_required_checks"
+        source for source in result.evidence_sources if source.source == "current_required_checks"
     )
     assert current_checks_source.status == "unavailable"
     assert current_checks_source.blocks_checks_evidence is True
@@ -1121,8 +1107,7 @@ async def test_pinned_status_context_without_app_identity_is_incomplete() -> Non
 
     assert result.checks_evidence_complete is False
     assert [
-        (check.name, check.integration_id, check.state)
-        for check in result.current_required_checks
+        (check.name, check.integration_id, check.state) for check in result.current_required_checks
     ] == [("ci", None, "SUCCESS")]
     assert result.warning is not None
     assert "has no GitHub App identity" in result.warning
@@ -1163,8 +1148,7 @@ async def test_merge_requirements_unexpected_github_required_context_fails_close
 
     assert result.checks_evidence_complete is False
     assert [
-        (check.name, check.integration_id, check.state)
-        for check in result.current_required_checks
+        (check.name, check.integration_id, check.state) for check in result.current_required_checks
     ] == [("ci", None, "SUCCESS")]
     assert result.warning is not None
     assert "absent from the composed required-check policy" in result.warning
