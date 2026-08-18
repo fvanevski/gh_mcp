@@ -379,21 +379,26 @@ validation. The read-only MCP tools are not a substitute for that environment.
 
 `gh_create_comment` creates an issue-style conversation comment; it does not submit
 a GitHub pull-request review and cannot produce the formal `APPROVED`,
-`CHANGES_REQUESTED`, or `COMMENTED` review states. Use `gh_submit_pr_review` when a
-formal disposition is required.
+`CHANGES_REQUESTED`, or `COMMENTED` review states. Use the action-specific review
+writes — `gh_approve_pr`, `gh_request_pr_changes`, or `gh_comment_pr_review` — when
+a formal disposition is required.
 
 The safe completion sequence is:
 
 1. Read and review the PR using `gh_get_pr`, `gh_get_pr_diff`, file pages, commit
    pages, and exact-ref file reads. Record the returned `head_sha`.
-2. Call `gh_submit_pr_review` with that SHA and one of `approve`,
-   `request_changes`, or `comment`. A body is mandatory for the latter two actions.
-3. Confirm the structured result's `state`, `commit_sha`, and `review_id`. The tool
+2. Optionally run the read-only `gh_get_pr_review_eligibility` preflight with that
+   SHA to see which formal review states are currently eligible.
+3. Call the action-specific write for that SHA: `gh_approve_pr` (optional body) or
+   `gh_request_pr_changes` (mandatory body) through the server-configured reviewer
+   principal with `expected_reviewer_login`, or `gh_comment_pr_review`
+   (mandatory body) through the ordinary principal.
+4. Confirm the structured result's `state`, `commit_sha`, and `review_id`. The tool
    submits the review with GitHub's `commit_id` field and rejects a stale head before
    writing.
-4. If merge is separately authorized, call `gh_merge_pr` with the same exact head
+5. If merge is separately authorized, call `gh_merge_pr` with the same exact head
    SHA and an explicit `merge`, `squash`, or `rebase` strategy.
-5. Treat the PR as merged only when the result reports `merged: true`. A successful
+6. Treat the PR as merged only when the result reports `merged: true`. A successful
    command may instead report a merge queue or unmet requirements; formal review
    submission by itself never merges or closes the PR.
 
@@ -403,12 +408,13 @@ are transferred through a temporary JSON input file; merge bodies are supplied o
 controlled stdin. If a write succeeds but readback fails, the response is marked as
 partial success and instructs the caller not to retry automatically.
 
-Before an `approve` write, the server reads the authenticated GitHub login and PR
-author. GitHub documents that PR authors cannot approve their own pull requests, so
-an exact login match is rejected before the POST with an explicit `no review was
-attempted` error. `comment` remains available to the author. GitHub's public review
-documentation does not explicitly state the equivalent author rule for
-`request_changes`, so the server does not invent one: GitHub remains authoritative.
+Before an `approve` or `request_changes` write, the server compares the
+server-configured reviewer login against the PR author. GitHub documents that PR
+authors cannot approve their own pull requests, so an exact match is rejected before
+the POST with an explicit `no review was attempted` error. `gh_comment_pr_review`
+remains available to the author. GitHub's public review documentation does not
+explicitly state the equivalent author rule for `request_changes`, so the server does
+not invent one: GitHub remains authoritative.
 
 When GitHub rejects any review write, including HTTP 422 validation failures, the
 client now preserves a bounded, sanitized JSON error summary containing GitHub's

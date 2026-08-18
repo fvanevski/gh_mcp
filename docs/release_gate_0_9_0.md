@@ -222,8 +222,8 @@ A stale host namespace must be classified separately from the server's executabl
 
 ## Disposable live exercise
 
-The deterministic suite is necessary but not sufficient for issue #75. Before the issue or
-release gate is closed, bind the following evidence to one exact disposable PR head:
+The deterministic suite is necessary but not sufficient for issue #75. The live
+exercise required the following evidence to be bound to one exact disposable PR head:
 
 | Scenario | Required result |
 | --- | --- |
@@ -239,8 +239,82 @@ If an App approval is intended to satisfy a repository required-review policy, v
 policy separately. The existence of an `APPROVED` review object is not evidence that a
 ruleset or branch-protection rule counts that App's approval.
 
-The gate remains open while any required live scenario is unexecuted or while the ChatGPT
-connector still advertises a stale formal-review schema.
+All required live scenarios in the table above have been executed; the completed record
+is "Final live evidence" below. The only remaining gate action after that record is a
+fresh exact-head review of the final head before merge.
+
+## Final live evidence
+
+The completed issue #75 live acceptance record:
+
+1. **Deterministic validation** — the focused fail-closed, no-blind-replay, and
+   reviewer-isolation regressions in `tests/test_reviewer_auth.py`,
+   `tests/test_pr_review_identity.py`, and `tests/test_reviewer_client_isolation.py`
+   pass at the validated implementation head. The deterministic tri-state and
+   no-blind-replay tests remain the authoritative coverage for transport ambiguity.
+
+2. **Reviewer/App configuration** — the dedicated reviewer principal is
+   `gh-mcp-reviewer[bot]` (reviewer kind `github_app`), distinct from the ordinary
+   principal `fvanevski`. The App is installed on `fvanevski/gh_mcp` with
+   `pull_requests=write`, mints repository-scoped installation credentials, and
+   authenticates as `gh-mcp-reviewer[bot]`. App authentication and configuration:
+   COMPLETE. No App secrets, installation-token values, JWTs, or private-key
+   contents are recorded in this document.
+
+3. **Connector/runtime surface** — backend version 0.9.0, tool-schema version 0.9.0,
+   61 total tools (41 read-only, 20 write). The current action-specific review
+   surface is `gh_get_pr_review_eligibility`, `gh_approve_pr`,
+   `gh_request_pr_changes`, and `gh_comment_pr_review`; the retired
+   `gh_submit_pr_review` is absent from the authoritative current executable MCP
+   inventory.
+
+4. **Completed live scenario matrix**
+   - **Wrong expected reviewer**: COMPLETE — rejected before the formal-review POST;
+     no review created.
+   - **Stale/moved expected head**: COMPLETE — rejected before the formal-review POST;
+     no review created.
+   - **Reviewer is PR author**: COMPLETE — disposable PR #77 (author
+     `gh-mcp-reviewer[bot]`) reported `approval_eligible=false` with
+     `reason=reviewer_is_pr_author`. Its exactly one `gh_approve_pr` attempt was
+     rejected with the explicit error that the configured reviewer
+     `gh-mcp-reviewer[bot]` is the pull request author and cannot approve its own
+     pull request, with no review attempted. Pre- and post-review counts were 0.
+     The disposable PR was closed without merging and its branch was deleted.
+   - **Same-author COMMENTED**: COMPLETE — PR #76 review 4955099421 by `fvanevski`
+     is `COMMENTED` at commit
+     206d3f2b81517b774d8939829af8754845c7c083. COMMENTED is not APPROVED, and no
+     silent approve-to-comment fallback occurred.
+   - **Distinct reviewer APPROVED**: COMPLETE — PR #76 review 4956014379 by
+     `gh-mcp-reviewer[bot]` is `APPROVED` at the same commit with
+     `precondition_checked`, `write_completed`, `readback_completed`, and
+     `state_matches_requested` all true. This is the successful live-acceptance
+     artifact for the implementation head
+     206d3f2b81517b774d8939829af8754845c7c083; it is not the final
+     current-head approval after later commits.
+
+5. **Immutable review IDs** — 4955099421 (`fvanevski`, COMMENTED) and
+   4956014379 (`gh-mcp-reviewer[bot]`, APPROVED), both recorded at commit
+   206d3f2b81517b774d8939829af8754845c7c083.
+
+6. **Merge/policy readback** — at the accepted implementation head:
+   `required_approvals=0`, `required_status_checks=[]`,
+   `conversation_resolution_required=false`, `up_to_date_required=false`,
+   `up_to_date=true`, `mergeable=true`, `merge_state=clean`, and the allowed merge
+   methods were `merge`, `squash`, and `rebase`. No required-review policy was in
+   force, so policy satisfaction was "not required"; this is not evidence that the
+   App was proven to satisfy a one-review branch-protection requirement.
+
+7. **Ambiguity disposition** — live ambiguity injection was NOT SAFELY INDUCED: no
+   deterministic fault-injection mechanism exists that can safely induce an
+   ambiguous non-idempotent formal-review POST without risking an unknown duplicate
+   mutation. The deterministic tri-state and no-blind-retry tests remain
+   authoritative for that case. This is not an outstanding blocker; the live
+   exercise contract required the ambiguity scenario only when safely and
+   supportably inducible.
+
+8. **Exact-head consequence** — any later documentation-only commit moves the PR
+   head and supersedes review 4956014379 for final exact-head approval. A fresh
+   exact-head review must be obtained before merging the new head.
 
 ## Non-goals
 

@@ -198,4 +198,5 @@ def test_release_documentation_matches_runtime_authority() -> None:
     assert "Do not retry" in gate
     assert "tests/test_reviewer_client_isolation.py" in gate
     assert "## Disposable live exercise" in gate
-    assert "The gate remains open" in gate
+    assert "## Final live evidence" in gate
+    assert "NOT SAFELY INDUCED" in gate
