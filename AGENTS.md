@@ -34,14 +34,14 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 | `src/mcp_gh_server/models.py` | Pydantic result schemas used by tests and tool annotations |
 | `src/mcp_gh_server/settings.py` | Runtime config, loaded once via cached `get_settings()` |
 | `src/mcp_gh_server/serialization.py` | JSON-safe serialization helpers |
-| `tests/test_release_gate_0_8_1.py` | Current package/schema/inventory/registration release gate |
+| `tests/test_release_gate_0_9_0.py` | Current package/schema/inventory/registration release gate |
 | `tests/test_write_wrappers.py` | Broad regression coverage for write and adjacent read tools |
 | `tests/test_mcp_protocol.py` | Protocol-level registration/schema/annotation contract tests |
 | `tests/test_integration.py` | Live-GitHub integration tests requiring `GITHUB_TOKEN` |
 
 Key invariant: `write_tool_schema.py` owns the host-facing public write schema and delegates
 to one canonical domain implementation. `server.py` is the sole MCP registration path for
-the 18 public write names; it does not remove and re-add compatibility registrations.
+the 20 public write names; it does not remove and re-add compatibility registrations.
 Canonical write implementation modules do not independently register those same names.
 
 The obsolete `legacy_*write*` compatibility adapters, `legacy_write_support.py`,
@@ -97,6 +97,9 @@ server-side identity restriction; GitHub remains authoritative.
 
 ## PR review workflow
 
+For issue #75 / version 0.9.0 review workflows, require `server_version` and
+`tool_schema_version` >= `0.9.0` before relying on the dedicated formal-review surface.
+
 1. `gh_get_pr` → record exact `head_sha` and `base_sha`.
 2. `gh_get_pr_diff` → read bounded diff/patch. Check `truncated`, `bytes_returned`,
    `total_bytes`, and `sha256`.
@@ -104,9 +107,14 @@ server-side identity restriction; GitHub remains authoritative.
    reviewing workflow requires current numbered-PR evidence.
 4. Use `gh_get_file_contents` at exact SHAs for complete file content.
 5. If the PR head changes, invalidate the old review and restart from the new exact head.
+6. Use `gh_get_pr_review_eligibility` as the exact-head preflight for formal review.
+7. Use `gh_approve_pr` for an independent APPROVED review, `gh_request_pr_changes` for
+   CHANGES_REQUESTED, or `gh_comment_pr_review` for the ordinary-principal COMMENTED
+   fallback when GitHub approval is not eligible.
 
-Formal review requires `gh_submit_pr_review` (not `gh_create_comment`). Merge requires
-`gh_merge_pr` with the same exact reviewed head SHA and an explicit strategy.
+`gh_submit_pr_review` is retired and must not be used or restored as the current formal-review
+interface. Merge requires `gh_merge_pr` with the same exact reviewed head SHA and an explicit
+strategy.
 
 ## Commands agents will need
 
@@ -115,7 +123,7 @@ Formal review requires `gh_submit_pr_review` (not `gh_create_comment`). Merge re
 gh --version
 
 # Current release gate and focused contracts
-uv run pytest tests/test_release_gate_0_8_1.py
+uv run pytest tests/test_release_gate_0_9_0.py
 
 # Full validation suite
 uv run ruff check .
@@ -145,9 +153,9 @@ MCP_GH_TRANSPORT=streamable-http uv run mcp-gh
   explicit `@pytest.mark.asyncio` decorators.
 - Integration tests live in `tests/test_integration.py` and skip without `GITHUB_TOKEN`.
 - Never commit `.env` files. `.env.example` is the canonical template.
-- Historical `tests/test_release_gate_0_7_0.py` and `tests/test_release_gate_0_7_1.py`
-  preserve documentary release history; current executable authority belongs to
-  `tests/test_release_gate_0_8_1.py`.
+- Historical `tests/test_release_gate_0_7_0.py`, `tests/test_release_gate_0_7_1.py`, and
+  `tests/test_release_gate_0_8_1.py` preserve documentary release history; current executable
+  authority belongs to `tests/test_release_gate_0_9_0.py`.
 - Never relax an exact-state assertion, negative/fail-closed regression, schema bound,
   fine gate, or no-blind-retry invariant merely to make the suite green.
 
@@ -176,12 +184,12 @@ to bypass a failed gate.
 
 ## Release authority
 
-Version 0.8.1 release authority is `docs/release_gate_0_8_1.md` plus
-`tests/test_release_gate_0_8_1.py`. Required closure evidence must belong to one exact
-candidate SHA and includes package/server/tool-schema/lock agreement, exact 58/40/18 tool
+Version 0.9.0 release authority is `docs/release_gate_0_9_0.md` plus
+`tests/test_release_gate_0_9_0.py`. Required closure evidence must belong to one exact
+candidate SHA and includes package/server/tool-schema/lock agreement, exact 61/41/20 tool
 inventory, schema snapshots, canonical single-registration proof, compatibility-path absence,
 focused write/readback and fail-closed tests, Ruff, format, mypy, full pytest, and the
-representative live replay required by issues #61 and #72.
+representative live replay required by the current 0.9.0 gate.
 
 Host interception during live replay is classified separately from server fine-gate
 rejection, GitHub failure/ambiguity, and completed authoritative readback. Do not weaken
@@ -199,6 +207,6 @@ truthful metadata or safety contracts solely to move an action past host interce
   naming layer.
 - Result serialization converts `Decimal` → string, `bytes` → `base64:` prefix,
   infinities → string, and datetimes → ISO 8601.
-- Detailed current contracts live under `docs/`, especially `docs/release_gate_0_8_1.md`,
+- Detailed current contracts live under `docs/`, especially `docs/release_gate_0_9_0.md`,
   `docs/search-read-contract.md`, `docs/write-schema-contract.md`,
   `docs/pr-review-evidence-contract.md`, and the focused Git/ref/workflow/release documents.

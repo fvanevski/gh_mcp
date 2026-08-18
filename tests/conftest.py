@@ -2,11 +2,39 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 _WRITE_WRAPPER_REPO_TARGET_TESTS = {
     "test_create_repo_uses_visibility_and_readme_then_reads_repo",
 }
+_FORMAL_REVIEW_PROTOCOL_TEST = "test_streamable_http_formal_review_then_merge_without_nested_input"
+
+
+@pytest.fixture(autouse=True)
+def isolate_static_reviewer_protocol_test(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the static-reviewer protocol regression independent of deployment config."""
+
+    if not (
+        request.module.__name__.endswith("test_mcp_protocol")
+        and request.node.name == _FORMAL_REVIEW_PROTOCOL_TEST
+    ):
+        return
+
+    project = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("MCP_GH_ENV_FILE", str(project / ".env.example"))
+    for name in (
+        "MCP_GH_REVIEWER_APP_ID",
+        "MCP_GH_REVIEWER_INSTALLATION_ID",
+        "MCP_GH_REVIEWER_PRIVATE_KEY_FILE",
+        "MCP_GH_REVIEWER_LOGIN",
+        "MCP_GH_REVIEWER_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)
