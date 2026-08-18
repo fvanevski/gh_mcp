@@ -41,10 +41,10 @@ from mcp_gh_server.server import (
     gh_merge_pr,
     gh_run_workflow_exact,
     gh_server_info,
-    gh_submit_pr_review,
     gh_watch_run,
 )
 from mcp_gh_server.settings import Settings
+from mcp_gh_server.write_tool_schema import gh_submit_pr_review
 
 
 @dataclass
@@ -97,10 +97,10 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     result = await gh_server_info(ctx=_context(client))
 
     assert result.server_name == "mcp-gh-server"
-    assert result.server_version == "0.8.1"
-    assert result.tool_schema_version == "0.8.1"
+    assert result.server_version == "0.9.0"
+    assert result.tool_schema_version == "0.9.0"
     assert result.transport == "stdio"
-    assert result.tool_count == 58
+    assert result.tool_count == 61
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert result.pr_merge_enabled is True

@@ -316,7 +316,7 @@ def test_gh_subprocess_boundary_has_no_parallel_source_bypass() -> None:
         for path in package.rglob("*.py")
         if "create_subprocess_exec" in path.read_text()
     }
-    assert subprocess_boundaries == {"gh_client.py", "binary_evidence.py"}
+    assert subprocess_boundaries == {"gh_client.py", "binary_evidence.py", "reviewer_auth.py"}
 
 
 def _fake_gh(tmp_path: Path, source: str) -> Path:

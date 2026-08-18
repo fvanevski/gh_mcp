@@ -233,6 +233,8 @@ if args[:2] == ["api", "repos/octo/repo/pulls/224"]:
     }))
 elif args[:2] == ["api", "user"]:
     print(json.dumps({"login": "reviewer"}))
+elif args[:2] == ["api", "graphql"]:
+    print(json.dumps({"data": {"viewer": {"login": "reviewer"}}}))
 elif args[:2] == ["api", "repos/octo/repo/pulls/224/reviews"]:
     payload = json.loads(pathlib.Path(args[args.index("--input") + 1]).read_text())
     assert payload == {
@@ -271,9 +273,10 @@ else:
 async def test_registered_tool_schemas_and_annotations() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 58
+    assert len(tools) == 61
     assert "gh_run_workflow" not in tools
     assert "gh_create_release" not in tools
+    assert "gh_submit_pr_review" not in tools
     assert "gh_server_info" in tools
     assert "gh_get_api_rate_status" in tools
     assert "gh_get_file_contents" in tools
@@ -284,7 +287,10 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert "gh_get_pr_diff" in tools
     assert "gh_list_pr_files" in tools
     assert "gh_list_pr_commits" in tools
-    assert "gh_submit_pr_review" in tools
+    assert "gh_get_pr_review_eligibility" in tools
+    assert "gh_approve_pr" in tools
+    assert "gh_request_pr_changes" in tools
+    assert "gh_comment_pr_review" in tools
     assert "gh_merge_pr" in tools
     assert "gh_set_issue_state" in tools
     assert "gh_set_pr_draft_state" in tools
@@ -305,8 +311,16 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert tools["gh_create_branch_from_sha"].annotations.read_only_hint is False
     assert tools["gh_run_workflow_exact"].annotations.destructive_hint is True
     assert tools["gh_commit_files"].annotations.destructive_hint is True
-    assert tools["gh_submit_pr_review"].annotations.read_only_hint is False
-    assert tools["gh_submit_pr_review"].annotations.destructive_hint is False
+    assert tools["gh_approve_pr"].annotations.read_only_hint is False
+    assert tools["gh_approve_pr"].annotations.destructive_hint is False
+    assert tools["gh_approve_pr"].annotations.idempotent_hint is False
+    assert tools["gh_request_pr_changes"].annotations.read_only_hint is False
+    assert tools["gh_request_pr_changes"].annotations.destructive_hint is False
+    assert tools["gh_comment_pr_review"].annotations.read_only_hint is False
+    assert tools["gh_comment_pr_review"].annotations.destructive_hint is False
+    assert tools["gh_get_pr_review_eligibility"].annotations.read_only_hint is True
+    assert tools["gh_get_pr_review_eligibility"].annotations.destructive_hint is False
+    assert tools["gh_get_pr_review_eligibility"].annotations.idempotent_hint is True
     assert tools["gh_merge_pr"].annotations.destructive_hint is True
     assert tools["gh_set_issue_state"].annotations.read_only_hint is False
     assert tools["gh_set_issue_state"].annotations.destructive_hint is True
@@ -416,10 +430,20 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert artifact_read_schema["artifact_id"]["minimum"] == 1
     assert artifact_read_schema["path"]["maxLength"] == 4096
     assert artifact_read_schema["max_bytes"]["anyOf"][0]["maximum"] == 1_000_000
-    review_schema = tools["gh_submit_pr_review"].input_schema["properties"]
-    assert review_schema["expected_head_sha"]["pattern"]
-    assert review_schema["action"]["enum"] == ["approve", "request_changes", "comment"]
-    assert review_schema["body"]["maxLength"] == 65_536
+    approve_schema = tools["gh_approve_pr"].input_schema["properties"]
+    assert approve_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert approve_schema["expected_reviewer_login"]["maxLength"] == 100
+    assert approve_schema["body"]["maxLength"] == 65_536
+    changes_schema = tools["gh_request_pr_changes"].input_schema["properties"]
+    assert changes_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert changes_schema["expected_reviewer_login"]["maxLength"] == 100
+    assert changes_schema["body"]["maxLength"] == 65_536
+    comment_review_schema = tools["gh_comment_pr_review"].input_schema["properties"]
+    assert "expected_reviewer_login" not in comment_review_schema
+    assert comment_review_schema["body"]["maxLength"] == 65_536
+    eligibility_schema = tools["gh_get_pr_review_eligibility"].input_schema["properties"]
+    assert eligibility_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert "expected_reviewer_login" not in eligibility_schema
     merge_schema = tools["gh_merge_pr"].input_schema["properties"]
     assert merge_schema["expected_head_sha"]["pattern"]
     assert merge_schema["method"]["enum"] == ["merge", "squash", "rebase"]
@@ -513,7 +537,7 @@ async def test_stdio_write_denial_does_not_elicit_or_lock_session() -> None:
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is True
         tools_after_failure = await session.list_tools()
-        assert len(tools_after_failure.tools) == 58
+        assert len(tools_after_failure.tools) == 61
 
 
 @pytest.mark.asyncio
@@ -549,7 +573,7 @@ async def test_stdio_write_executes_once_without_elicitation_using_fake_gh(tmp_p
         )
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is False
-        assert len((await session.list_tools()).tools) == 58
+        assert len((await session.list_tools()).tools) == 61
 
 
 @pytest.mark.asyncio
@@ -623,7 +647,7 @@ async def test_streamable_http_write_denial_keeps_session_usable(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is True
-            assert len((await session.list_tools()).tools) == 58
+            assert len((await session.list_tools()).tools) == 61
     finally:
         get_settings.cache_clear()
 
@@ -656,7 +680,7 @@ async def test_streamable_http_write_executes_without_nested_input_round(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is False
-            assert len((await session.list_tools()).tools) == 58
+            assert len((await session.list_tools()).tools) == 61
     finally:
         get_settings.cache_clear()
 
@@ -702,8 +726,8 @@ async def test_streamable_http_exact_sha_branch_keeps_session_live(
 
             server_info = await session.call_tool("gh_server_info", {})
             assert server_info.is_error is False
-            assert server_info.structured_content["server_version"] == "0.8.1"
-            assert len((await session.list_tools()).tools) == 58
+            assert server_info.structured_content["server_version"] == "0.9.0"
+            assert len((await session.list_tools()).tools) == 61
     finally:
         get_settings.cache_clear()
 
@@ -745,16 +769,16 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             ClientSession(*streams) as session,
         ):
             initialized = await session.initialize()
-            assert initialized.server_info.version == "0.8.1"
+            assert initialized.server_info.version == "0.9.0"
 
             server_info = await session.call_tool("gh_server_info", {})
             assert server_info.is_error is False
             assert server_info.structured_content == {
                 "server_name": "mcp-gh-server",
-                "server_version": "0.8.1",
-                "tool_schema_version": "0.8.1",
+                "server_version": "0.9.0",
+                "tool_schema_version": "0.9.0",
                 "transport": "streamable-http",
-                "tool_count": 58,
+                "tool_count": 61,
                 "write_commands_enabled": False,
                 "content_commits_enabled": False,
                 "pr_merge_enabled": False,
@@ -859,7 +883,10 @@ async def test_streamable_http_content_route_keeps_namespace_live(
                 "gh_create_branch_from_sha",
                 "gh_list_workflows",
                 "gh_run_workflow_exact",
-                "gh_submit_pr_review",
+                "gh_get_pr_review_eligibility",
+                "gh_approve_pr",
+                "gh_request_pr_changes",
+                "gh_comment_pr_review",
                 "gh_merge_pr",
                 "gh_set_issue_state",
                 "gh_set_pr_draft_state",
@@ -912,13 +939,13 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_exact_branch.content[0].text
 
             denied_review = await session.call_tool(
-                "gh_submit_pr_review",
+                "gh_approve_pr",
                 {
                     "owner": "octo",
                     "repo": "repo",
                     "number": 224,
                     "expected_head_sha": "d" * 40,
-                    "action": "approve",
+                    "expected_reviewer_login": "reviewer",
                 },
                 allow_input_required=True,
             )
@@ -959,11 +986,11 @@ async def test_streamable_http_content_route_keeps_namespace_live(
 
             server_info_after_denial = await session.call_tool("gh_server_info", {})
             assert server_info_after_denial.is_error is False
-            assert server_info_after_denial.structured_content["server_version"] == "0.8.1"
+            assert server_info_after_denial.structured_content["server_version"] == "0.9.0"
 
             second_file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert second_file_result.is_error is False
-            assert len((await session.list_tools()).tools) == 58
+            assert len((await session.list_tools()).tools) == 61
     finally:
         get_settings.cache_clear()
 
@@ -978,7 +1005,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
     assert sum("tool=gh_list_pr_commits" in message for message in messages) == 1
     assert sum("tool=gh_commit_files" in message for message in messages) == 1
     assert sum("tool=gh_create_branch_from_sha" in message for message in messages) == 1
-    assert sum("tool=gh_submit_pr_review" in message for message in messages) == 1
+    assert sum("tool=gh_approve_pr" in message for message in messages) == 1
     assert sum("tool=gh_merge_pr" in message for message in messages) == 1
     assert sum("tool=gh_server_info" in message for message in messages) == 2
 
@@ -996,6 +1023,8 @@ async def test_streamable_http_formal_review_then_merge_without_nested_input(
     monkeypatch.setenv("MCP_GH_ALLOW_RELEASE_CREATION", "false")
     monkeypatch.setenv("MCP_GH_ALLOW_WORKFLOW_DISPATCH", "false")
     monkeypatch.setenv("MCP_GH_ALLOWED_REPOSITORIES", "octo/repo")
+    monkeypatch.setenv("MCP_GH_REVIEWER_TOKEN", "ghp_reviewer_static_token")
+    monkeypatch.setenv("MCP_GH_REVIEWER_LOGIN", "reviewer")
     monkeypatch.setenv("MCP_GH_TRANSPORT", "streamable-http")
     get_settings.cache_clear()
     base_url = "http://127.0.0.1:8766"
@@ -1011,13 +1040,13 @@ async def test_streamable_http_formal_review_then_merge_without_nested_input(
         ):
             await session.initialize()
             review = await session.call_tool(
-                "gh_submit_pr_review",
+                "gh_approve_pr",
                 {
                     "owner": "octo",
                     "repo": "repo",
                     "number": 224,
                     "expected_head_sha": "b" * 40,
-                    "action": "approve",
+                    "expected_reviewer_login": "reviewer",
                     "body": "Reviewed exact revision.",
                 },
                 allow_input_required=True,
@@ -1048,6 +1077,6 @@ async def test_streamable_http_formal_review_then_merge_without_nested_input(
             assert not isinstance(merge, InputRequiredResult)
             assert merge.is_error is False
             assert merge.structured_content["merged"] is True
-            assert len((await session.list_tools()).tools) == 58
+            assert len((await session.list_tools()).tools) == 61
     finally:
         get_settings.cache_clear()

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import find_dotenv
-from pydantic import AliasChoices, Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +31,21 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GITHUB_TOKEN", "MCP_GH_GITHUB_TOKEN"),
     )
+
+    # Reviewer credentials are deployment-only and never caller-selectable.
+    reviewer_app_id: int | None = Field(default=None, ge=1)
+    reviewer_installation_id: int | None = Field(default=None, ge=1)
+    reviewer_private_key_file: Path | None = None
+    reviewer_login: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        pattern=(
+            r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})|"
+            r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,94})\[bot\])$"
+        ),
+    )
+    reviewer_token: SecretStr | None = None
 
     allow_write_commands: bool = False
     allowed_repositories: str = ""
@@ -63,10 +78,52 @@ class Settings(BaseSettings):
     http_port: int = Field(default=8766, ge=1, le=65_535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    @field_validator(
+        "reviewer_app_id",
+        "reviewer_installation_id",
+        "reviewer_private_key_file",
+        "reviewer_login",
+        "reviewer_token",
+        mode="before",
+    )
+    @classmethod
+    def _blank_reviewer_values_are_unset(cls, value: object) -> object:
+        """Blank reviewer entries (e.g. an unedited .env.example) mean unconfigured."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @property
+    def reviewer_configured(self) -> bool:
+        return self.reviewer_token is not None or self.reviewer_app_id is not None
+
     @model_validator(mode="after")
-    def validate_limits(self) -> Settings:
+    def validate_limits_and_reviewer(self) -> Settings:
         if self.default_max_results > self.hard_max_results:
             raise ValueError("MCP_GH_DEFAULT_MAX_RESULTS cannot exceed MCP_GH_HARD_MAX_RESULTS")
+
+        app_credentials = (
+            self.reviewer_app_id,
+            self.reviewer_installation_id,
+            self.reviewer_private_key_file,
+        )
+        app_configured = any(value is not None for value in app_credentials)
+        if app_configured and not all(value is not None for value in app_credentials):
+            raise ValueError(
+                "GitHub App reviewer configuration requires MCP_GH_REVIEWER_APP_ID, "
+                "MCP_GH_REVIEWER_INSTALLATION_ID, and MCP_GH_REVIEWER_PRIVATE_KEY_FILE together"
+            )
+        if app_configured and self.reviewer_login is None:
+            raise ValueError(
+                "GitHub App reviewer configuration requires MCP_GH_REVIEWER_LOGIN "
+                "for exact reviewer identity preconditions"
+            )
+        if app_configured and self.reviewer_token is not None:
+            raise ValueError(
+                "Configure either the reviewer GitHub App or MCP_GH_REVIEWER_TOKEN, not both"
+            )
+        if self.reviewer_login is not None and not app_configured and self.reviewer_token is None:
+            raise ValueError("MCP_GH_REVIEWER_LOGIN requires reviewer credentials")
         return self
 
 

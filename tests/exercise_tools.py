@@ -15,8 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-EXPECTED_VERSION = "0.8.1"
-EXPECTED_TOOL_COUNT = 58
+EXPECTED_VERSION = "0.9.0"
+EXPECTED_TOOL_COUNT = 61
 REQUIRED_0_8_0_READ_TOOLS = {
     "gh_get_merge_requirements",
     "gh_compare_commits",

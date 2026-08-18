@@ -10,7 +10,7 @@ from .write_contracts import ExactWriteResult
 
 
 class PullRequestReviewSubmission(ExactWriteResult):
-    """Authoritative outcome of one formal pull-request review attempt."""
+    """Shared authoritative outcome fields for one formal pull-request review attempt."""
 
     number: int
     review_id: int = Field(ge=0)
@@ -22,6 +22,24 @@ class PullRequestReviewSubmission(ExactWriteResult):
     commit_sha: str
     url: str
     message: str
+
+
+class PullRequestApproval(PullRequestReviewSubmission):
+    """Outcome of one action-specific GitHub APPROVED review attempt."""
+
+    action: Literal["approve"] = "approve"
+
+
+class PullRequestChangesRequested(PullRequestReviewSubmission):
+    """Outcome of one action-specific GitHub CHANGES_REQUESTED review attempt."""
+
+    action: Literal["request_changes"] = "request_changes"
+
+
+class PullRequestCommentReview(PullRequestReviewSubmission):
+    """Outcome of one action-specific GitHub COMMENTED review attempt."""
+
+    action: Literal["comment"] = "comment"
 
 
 class PullRequestMerge(ExactWriteResult):

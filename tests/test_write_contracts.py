@@ -13,7 +13,7 @@ from mcp_gh_server.request_governor import (
     GitHubRequestMetadata,
     GitHubRequestResult,
 )
-from mcp_gh_server.server import AppContext, gh_merge_pr, gh_submit_pr_review
+from mcp_gh_server.server import AppContext, gh_merge_pr
 from mcp_gh_server.settings import Settings
 from mcp_gh_server.write_contracts import (
     ExactWriteResult,
@@ -21,6 +21,7 @@ from mcp_gh_server.write_contracts import (
     execute_write_readback,
     require_write_precondition,
 )
+from mcp_gh_server.write_tool_schema import gh_submit_pr_review
 
 
 def test_exact_write_result_exposes_required_contract_fields() -> None:

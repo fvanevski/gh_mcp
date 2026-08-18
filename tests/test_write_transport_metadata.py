@@ -71,14 +71,14 @@ async def test_canonical_json_write_does_not_infer_bare_runtimeerror_text() -> N
     assert len(client.calls) == 1
 
 
-def test_release_documentation_describes_final_080_inventory() -> None:
+def test_release_documentation_describes_current_090_inventory() -> None:
     readme = Path("README.md").read_text()
     contract = Path("docs/write-schema-contract.md").read_text()
 
-    assert "0.8.1" in readme
-    assert "58 public MCP tools" in readme
-    assert "40 read-only" in readme
-    assert "18 write" in readme
-    assert "0.8.1" in contract
-    assert "58" in contract
-    assert "18" in contract
+    assert "0.9.0" in readme
+    assert "61 public MCP tools" in readme
+    assert "41 read-only" in readme
+    assert "20 write" in readme
+    assert "0.9.0" in contract
+    assert "61" in contract
+    assert "20" in contract

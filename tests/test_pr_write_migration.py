@@ -1,32 +1,19 @@
-"""Focused regressions for canonical pull-request write migration."""
+"""Focused regressions for canonical non-review pull-request write migration."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import mcp_gh_server.write_tool_schema as write_tool_schema
-from mcp_gh_server.pr_write_models import (
-    PullRequestCreate,
-    PullRequestEdit,
-    PullRequestMerge,
-    PullRequestReviewSubmission,
-)
+from mcp_gh_server.pr_write_models import PullRequestCreate, PullRequestEdit, PullRequestMerge
 from mcp_gh_server.request_governor import (
     GitHubRequestError,
     GitHubRequestMetadata,
     GitHubRequestResult,
 )
-from mcp_gh_server.server import (
-    AppContext,
-    gh_create_pr,
-    gh_edit_pr,
-    gh_merge_pr,
-    gh_submit_pr_review,
-    mcp,
-)
+from mcp_gh_server.server import AppContext, gh_create_pr, gh_edit_pr, gh_merge_pr, mcp
 from mcp_gh_server.settings import Settings
 
 
@@ -37,15 +24,9 @@ class FakeCanonicalClient:
     write_results: list[Any] = field(default_factory=list)
     read_results: list[Any] = field(default_factory=list)
     calls: list[tuple[str, tuple[str, ...], dict[str, Any]]] = field(default_factory=list)
-    payloads: list[dict[str, Any]] = field(default_factory=list)
 
     async def run_with_metadata(self, *args: str, **kwargs: Any) -> GitHubRequestResult[Any]:
         self.calls.append(("write", args, kwargs))
-        if "--input" in args:
-            payload_path = Path(args[args.index("--input") + 1])
-            import json
-
-            self.payloads.append(json.loads(payload_path.read_text()))
         result = self.write_results.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -171,36 +152,6 @@ async def test_create_pr_semantic_readback_mismatch_is_explicit() -> None:
     assert len(_write_calls(client)) == 1
 
 
-async def test_review_readback_failure_is_partial_success_without_replay() -> None:
-    head = "b" * 40
-    client = FakeCanonicalClient(
-        write_results=[{"id": 91, "state": "COMMENTED", "html_url": "review-url"}],
-        read_results=[
-            {"head": {"sha": head}, "user": {"login": "author"}},
-            RuntimeError("readback unavailable"),
-        ],
-    )
-
-    result = await gh_submit_pr_review(
-        "octo",
-        "repo",
-        9,
-        head,
-        "comment",
-        ctx=_context(client),
-        body="Reviewed.",
-    )
-
-    assert isinstance(result, PullRequestReviewSubmission)
-    assert result.precondition_checked is True
-    assert result.write_completed is True
-    assert result.readback_completed is False
-    assert result.state_matches_requested is None
-    assert result.warning is not None
-    assert "Do not retry automatically" in result.warning
-    assert len(_write_calls(client)) == 1
-
-
 async def test_merge_ambiguous_transport_uses_readback_without_replay() -> None:
     head = "b" * 40
     merge_sha = "c" * 40
@@ -242,28 +193,6 @@ async def test_merge_ambiguous_transport_uses_readback_without_replay() -> None:
     assert len(_write_calls(client)) == 1
 
 
-async def test_review_stale_head_fails_before_mutation() -> None:
-    client = FakeCanonicalClient(
-        read_results=[{"head": {"sha": "b" * 40}, "user": {"login": "author"}}]
-    )
-
-    try:
-        await gh_submit_pr_review(
-            "octo",
-            "repo",
-            9,
-            "c" * 40,
-            "comment",
-            ctx=_context(client),
-            body="Reviewed.",
-        )
-    except RuntimeError as exc:
-        assert "precondition mismatch" in str(exc)
-    else:
-        raise AssertionError("stale review head must fail before mutation")
-    assert _write_calls(client) == []
-
-
 async def test_merge_stale_head_fails_before_mutation() -> None:
     client = FakeCanonicalClient(read_results=[{"head": {"sha": "b" * 40}}])
 
@@ -273,24 +202,6 @@ async def test_merge_stale_head_fails_before_mutation() -> None:
         assert "precondition mismatch" in str(exc)
     else:
         raise AssertionError("stale merge head must fail before mutation")
-    assert _write_calls(client) == []
-
-
-async def test_review_rejects_self_approval_before_mutation() -> None:
-    head = "b" * 40
-    client = FakeCanonicalClient(
-        read_results=[
-            {"login": "AUTHOR"},
-            {"head": {"sha": head}, "user": {"login": "author"}},
-        ]
-    )
-
-    try:
-        await gh_submit_pr_review("octo", "repo", 9, head, "approve", ctx=_context(client))
-    except ValueError as exc:
-        assert "cannot approve its own pull request" in str(exc)
-    else:
-        raise AssertionError("self approval must fail before mutation")
     assert _write_calls(client) == []
 
 
@@ -333,15 +244,14 @@ async def test_migrated_public_output_schemas_expose_shared_outcome_metadata() -
         "warning",
         "request_id",
     }
-    for name in ("gh_create_pr", "gh_edit_pr", "gh_submit_pr_review", "gh_merge_pr"):
+    for name in ("gh_create_pr", "gh_edit_pr", "gh_merge_pr"):
         assert outcome_fields <= set(tools[name].output_schema["properties"])
 
 
-def test_public_facade_delegates_migrated_pr_writes_to_canonical_module() -> None:
+def test_public_facade_delegates_non_review_pr_writes_to_canonical_module() -> None:
     for implementation in (
         write_tool_schema._gh_create_pr,
         write_tool_schema._gh_edit_pr,
-        write_tool_schema._gh_submit_pr_review,
         write_tool_schema._gh_merge_pr,
     ):
         assert implementation.__module__ == "mcp_gh_server.tools.pr_writes"

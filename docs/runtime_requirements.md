@@ -37,6 +37,23 @@ log reads fail at the CLI argument-parsing boundary. Do not add an implicit comp
 fallback for older `gh` versions without treating that as a deliberate runtime-compatibility
 design change and adding corresponding regression coverage.
 
+## OpenSSL for reviewer GitHub Apps
+
+The preferred issue-#75 reviewer-principal path requires the deployment `openssl` executable
+to sign short-lived GitHub App JWTs with the configured RSA private key. The server invokes
+`openssl` directly without a shell, passes only the private-key file path in argv, and passes
+the JWT signing input on stdin. Private-key contents are never placed in argv.
+
+This requirement applies only when `MCP_GH_REVIEWER_APP_ID` /
+`MCP_GH_REVIEWER_INSTALLATION_ID` / `MCP_GH_REVIEWER_PRIVATE_KEY_FILE` are configured.
+Static `MCP_GH_REVIEWER_TOKEN` compatibility deployments do not use `openssl`.
+
+Confirm availability before enabling the App reviewer path:
+
+```bash
+openssl version
+```
+
 ## Validation expectations
 
 For changes affecting GitHub CLI invocation, validate both the focused subprocess/protocol
@@ -49,6 +66,11 @@ uv run ruff format --check .
 uv run mypy
 uv run pytest
 ```
+
+The commands above reproduce the repository's current 0.9.0 validation documentation.
+Issue work governed by the newer project workflow must additionally run the repository-pinned
+Pyrefly gate when that tooling exists. Issue #75 does not silently add, regenerate, or weaken
+type-check tooling or a Pyrefly baseline.
 
 Subprocess tests for the Actions log path should assert the complete expected `gh` argv rather
 than checking only for the presence of an endpoint substring or a single flag. This prevents a
