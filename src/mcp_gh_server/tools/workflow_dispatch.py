@@ -276,7 +276,7 @@ def _parse_dispatch_run(
     status = raw.get("status")
     head_sha = raw.get("head_sha")
     event = raw.get("event")
-    if run_id != expected_run_id:
+    if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id != expected_run_id:
         raise RuntimeError("GitHub workflow dispatch readback returned a different run id")
     if not isinstance(workflow_id, int) or workflow_id < 1:
         raise RuntimeError("GitHub returned no positive workflow id during dispatch readback")
