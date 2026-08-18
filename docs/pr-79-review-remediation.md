@@ -16,10 +16,11 @@ Resolved in `required_check_evidence.py` and `tools/merge_requirements.py`.
 
 A policy identity such as `(lint, 42)` can have more than one required CheckRun at one
 exact head. GitHub CLI keeps distinct CheckRun rows by check name plus workflow/event and
-deduplicates reruns only within that logical row. The merge-requirements reader now
-mirrors that safety property:
+deduplicates reruns only within that logical row. The merge-requirements reader mirrors
+that safety property:
 
-- the exact-head GraphQL identity read collects workflow name and event;
+- the exact-head GraphQL identity read collects workflow name and, when the host schema
+  supports it, workflow event;
 - pinned observations are keyed by `(name, integration_id, workflow, event)`;
 - only a newer rerun of that same logical row replaces an older observation;
 - reconciliation groups by the policy identity but emits every retained logical row.
@@ -27,10 +28,23 @@ mirrors that safety property:
 A passing row therefore cannot erase a failing or pending required row merely because
 both have the same check name and GitHub App ID.
 
+#### GitHub host compatibility
+
+`WorkflowRun.event` is not assumed to exist on every GitHub host. The reader first uses
+the richer query. If GitHub returns GraphQL errors on that query, it introspects the
+`WorkflowRun` type. Only when the schema proves `event` is absent does it retry the same
+read-only page without that field; if the schema reports `event` present, the original
+error remains fail-closed. Subsequent pages use the established query shape.
+
+This matches the upstream `gh pr checks` compatibility boundary: modern hosts can retain
+distinct event provenance, while older schemas fall back to workflow-only logical
+identity rather than failing merely because `event` is unavailable.
+
 Regression authority:
-`tests/test_issue_78_review_remediation.py::test_pinned_required_check_keeps_distinct_workflow_event_rows`
-and
-`::test_pinned_required_check_deduplicates_only_same_logical_rerun`.
+`tests/test_issue_78_review_remediation.py::test_pinned_required_check_keeps_distinct_workflow_event_rows`,
+`::test_pinned_required_check_deduplicates_only_same_logical_rerun`,
+`::test_pinned_required_check_falls_back_when_workflow_event_is_unsupported`, and
+`::test_pinned_required_check_does_not_mask_noncompatibility_graphql_error`.
 
 ### Blocking: mixed context-only and integration-pinned identities
 
@@ -98,7 +112,7 @@ into this remediation.
 
 ## Codex Review automated suggestions
 
-At Central remediation preflight, GitHub exposed:
+At Central remediation preflight and the subsequent exact-head rereads, GitHub exposed:
 
 - zero PR conversation comments;
 - zero review threads;
@@ -106,23 +120,22 @@ At Central remediation preflight, GitHub exposed:
 
 Accordingly, there was no concrete Codex Review suggestion to implement or dismiss.
 Unseen suggestions are not treated as resolved. Central must re-read reviews, threads,
-comments, and checks after the remediation commit and again before final review closure;
+comments, and checks after each remediation commit and again before final review closure;
 any newly observable automated suggestion must receive an explicit disposition.
 
-## Test/documentation gap
+## Test/documentation gaps
 
 The pre-remediation PR body described `8252afbc8850baa3290b9caa554609a4bc1f80c8`
 as current/validated even though the reviewed head had advanced to
 `94e365789b11ef1436c54dd11ff5f4e1d0811e1f`, and it reported mypy as type-validation
-evidence.
+evidence. That metadata was rewritten after Central remediation to use the new exact head,
+identify Pyrefly as authority, and mark host-dependent validation **PENDING**.
 
-After this Central commit, the PR body must be rewritten to:
-
-- identify the new exact Central remediation head;
-- describe the independent-review findings and implemented fixes;
-- identify Pyrefly as the sole static type authority;
-- mark local exact-head validation as **PENDING**, not inferred from prior heads;
-- record the current Codex-review visibility result without inventing unseen suggestions.
+The repository-level validation documentation also must agree with this authority. The
+current README validation block and `docs/release_gate_0_9_0.md` are part of the release
+contract and are updated in the final Central documentation commit to invoke the pinned
+Pyrefly requirement rather than mypy. `tests/test_release_gate_0_9_0.py` pins that policy so
+documentation cannot silently drift back to a non-authoritative checker.
 
 ## Local OpenCode validation handoff
 
@@ -163,15 +176,15 @@ path set for changed-scope checks.
    - `uv run ruff check <ACMR.py ...>`
    - `uv run ruff format --check --diff <ACMR.py ...>`
 2. Pyrefly changed scope, including changed tests explicitly:
-   - install/run exactly the version pinned by `requirements-typecheck.txt`;
-   - `pyrefly check <ACMR.py ...>`
+   - `uv run --with-requirements requirements-typecheck.txt pyrefly check <ACMR.py ...>`
 3. Focused pytest, starting with:
    - `tests/test_issue_78_review_remediation.py`
    - `tests/test_issue_78_merge_policy_evidence.py`
    - `tests/test_merge_requirements.py`
    - `tests/test_merge_requirements_policy.py`
+   - `tests/test_release_gate_0_9_0.py`
 4. Full-project Pyrefly:
-   - `pyrefly check`
+   - `uv run --with-requirements requirements-typecheck.txt pyrefly check`
 5. Relevant broader repository authorities, including the complete pytest suite and any
    schema/return-model/release-gate tests implicated by this PR.
 6. Final integrity:

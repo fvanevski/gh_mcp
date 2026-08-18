@@ -44,10 +44,11 @@ def _check_run(
     workflow: str | None,
     event: str | None,
     started_at: str,
+    include_event: bool = True,
 ) -> dict[str, Any]:
     workflow_run = (
         {
-            "event": event,
+            **({"event": event} if include_event else {}),
             "workflow": {"name": workflow} if workflow is not None else None,
         }
         if workflow is not None or event is not None
@@ -111,6 +112,16 @@ def _required_graphql(
                         ]
                     },
                 }
+            }
+        }
+    }
+
+
+def _workflow_run_feature_graphql(*fields: str) -> dict[str, Any]:
+    return {
+        "data": {
+            "__type": {
+                "fields": [{"name": field} for field in fields],
             }
         }
     }
@@ -213,6 +224,78 @@ async def test_pinned_required_check_deduplicates_only_same_logical_rerun() -> N
         (check.workflow, check.event, check.state)
         for check in read.checks
     ] == [("CI", "pull_request", "SUCCESS")]
+
+
+async def test_pinned_required_check_falls_back_when_workflow_event_is_unsupported() -> None:
+    head = "b" * 40
+    client = FakeGhClient(
+        [
+            {"errors": [{"message": "Cannot query field 'event' on type 'WorkflowRun'."}]},
+            _workflow_run_feature_graphql("workflow"),
+            _required_graphql(
+                _check_run(
+                    "lint",
+                    42,
+                    "SUCCESS",
+                    workflow="CI",
+                    event=None,
+                    started_at="2026-08-18T20:00:00Z",
+                    include_event=False,
+                ),
+                head_sha=head,
+            ),
+        ]
+    )
+
+    read = await read_pinned_required_check_evidence(
+        _app(client),
+        "octo",
+        "repo",
+        21,
+        base_sha="a" * 40,
+        head_sha=head,
+        required_identities={("lint", 42)},
+        limit=100,
+    )
+
+    assert read.complete is True
+    assert read.warnings == []
+    assert [
+        (check.name, check.integration_id, check.workflow, check.event, check.state)
+        for check in read.checks
+    ] == [("lint", 42, "CI", None, "SUCCESS")]
+    assert len(client.calls) == 3
+    first_query = next(arg for arg in client.calls[0][0] if arg.startswith("query="))
+    feature_query = next(arg for arg in client.calls[1][0] if arg.startswith("query="))
+    fallback_query = next(arg for arg in client.calls[2][0] if arg.startswith("query="))
+    assert "event" in first_query
+    assert "__type" in feature_query
+    assert "event" not in fallback_query
+
+
+async def test_pinned_required_check_does_not_mask_noncompatibility_graphql_error() -> None:
+    client = FakeGhClient(
+        [
+            {"errors": [{"message": "unrelated GraphQL failure"}]},
+            _workflow_run_feature_graphql("event", "workflow"),
+        ]
+    )
+
+    try:
+        await read_pinned_required_check_evidence(
+            _app(client),
+            "octo",
+            "repo",
+            21,
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            required_identities={("lint", 42)},
+            limit=100,
+        )
+    except RuntimeError as exc:
+        assert "GraphQL returned errors" in str(exc)
+    else:
+        raise AssertionError("non-compatibility GraphQL errors must remain fail-closed")
 
 
 async def test_mixed_context_only_and_pinned_observations_are_compatible() -> None:

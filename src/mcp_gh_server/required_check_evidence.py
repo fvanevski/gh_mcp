@@ -67,6 +67,19 @@ query PullRequestRequiredCheckIdentities(
   }
 }
 """.strip()
+_REQUIRED_CHECK_IDENTITIES_QUERY_WITHOUT_EVENT = _REQUIRED_CHECK_IDENTITIES_QUERY.replace(
+    "                        event\n",
+    "",
+)
+_WORKFLOW_RUN_EVENT_FEATURE_QUERY = """
+query RequiredCheckWorkflowRunFeatures {
+  __type(name: "WorkflowRun") {
+    fields(includeDeprecated: true) {
+      name
+    }
+  }
+}
+""".strip()
 
 
 @dataclass(slots=True)
@@ -275,6 +288,113 @@ def _logical_check_key(
     )
 
 
+def _required_check_query_args(
+    *,
+    owner: str,
+    repo: str,
+    number: int,
+    first: int,
+    after: str | None,
+    include_event: bool,
+) -> list[str]:
+    query = (
+        _REQUIRED_CHECK_IDENTITIES_QUERY
+        if include_event
+        else _REQUIRED_CHECK_IDENTITIES_QUERY_WITHOUT_EVENT
+    )
+    args = [
+        "api",
+        "graphql",
+        "-f",
+        f"query={query}",
+        "-F",
+        f"owner={owner}",
+        "-F",
+        f"repo={repo}",
+        "-F",
+        f"number={number}",
+        "-F",
+        f"first={first}",
+    ]
+    if after is not None:
+        args.extend(["-F", f"after={after}"])
+    return args
+
+
+def _workflow_run_event_supported(payload: Any) -> bool:
+    """Interpret the same WorkflowRun.event schema feature that upstream gh detects."""
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub did not return structured WorkflowRun feature evidence")
+    if payload.get("errors"):
+        raise RuntimeError("GitHub GraphQL returned errors while detecting WorkflowRun.event")
+    data = payload.get("data")
+    workflow_run = data.get("__type") if isinstance(data, dict) else None
+    if not isinstance(workflow_run, dict):
+        raise RuntimeError("GitHub GraphQL did not return the WorkflowRun type")
+    fields = workflow_run.get("fields")
+    if not isinstance(fields, list):
+        raise RuntimeError("GitHub returned malformed WorkflowRun field evidence")
+
+    names: set[str] = set()
+    for field in fields:
+        name = field.get("name") if isinstance(field, dict) else None
+        if not isinstance(name, str) or not name:
+            raise RuntimeError("GitHub returned malformed WorkflowRun field identity")
+        names.add(name)
+    return "event" in names
+
+
+async def _read_required_check_page(
+    app: AppContext,
+    *,
+    owner: str,
+    repo: str,
+    number: int,
+    first: int,
+    after: str | None,
+    include_event: bool | None,
+) -> tuple[Any, bool]:
+    """Read one page, falling back only when schema evidence proves event is unsupported."""
+
+    requested_event = include_event is not False
+    payload = await app.client.run(
+        *_required_check_query_args(
+            owner=owner,
+            repo=repo,
+            number=number,
+            first=first,
+            after=after,
+            include_event=requested_event,
+        )
+    )
+    if include_event is not None or not isinstance(payload, dict) or not payload.get("errors"):
+        return payload, requested_event
+
+    feature_payload = await app.client.run(
+        "api",
+        "graphql",
+        "-f",
+        f"query={_WORKFLOW_RUN_EVENT_FEATURE_QUERY}",
+    )
+    if _workflow_run_event_supported(feature_payload):
+        # The schema supports event, so the original GraphQL error is not a compatibility
+        # condition. Return it unchanged so the ordinary parser fails closed.
+        return payload, True
+
+    fallback = await app.client.run(
+        *_required_check_query_args(
+            owner=owner,
+            repo=repo,
+            number=number,
+            first=first,
+            after=after,
+            include_event=False,
+        )
+    )
+    return fallback, False
+
+
 async def read_pinned_required_check_evidence(
     app: AppContext,
     owner: str,
@@ -309,6 +429,7 @@ async def read_pinned_required_check_evidence(
     seen_nodes = 0
     after: str | None = None
     identity_matches = True
+    include_event: bool | None = None
 
     while True:
         first = min(_GITHUB_CHECK_CONTEXTS_PAGE_MAX, bounded_limit - seen_nodes)
@@ -324,23 +445,15 @@ async def read_pinned_required_check_evidence(
                 warnings,
             )
 
-        args = [
-            "api",
-            "graphql",
-            "-f",
-            f"query={_REQUIRED_CHECK_IDENTITIES_QUERY}",
-            "-F",
-            f"owner={owner}",
-            "-F",
-            f"repo={repo}",
-            "-F",
-            f"number={number}",
-            "-F",
-            f"first={first}",
-        ]
-        if after is not None:
-            args.extend(["-F", f"after={after}"])
-        payload = await app.client.run(*args)
+        payload, include_event = await _read_required_check_page(
+            app,
+            owner=owner,
+            repo=repo,
+            number=number,
+            first=first,
+            after=after,
+            include_event=include_event,
+        )
         nodes, has_next, end_cursor, page_identity_matches = _page_payload(
             payload,
             expected_base_sha=base_sha,
