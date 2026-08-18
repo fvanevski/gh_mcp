@@ -45,6 +45,12 @@ query PullRequestRequiredCheckIdentities(
                       app {
                         databaseId
                       }
+                      workflowRun {
+                        event
+                        workflow {
+                          name
+                        }
+                      }
                     }
                   }
                 }
@@ -112,6 +118,29 @@ def _required_status_context(payload: Any) -> str | None:
     return context
 
 
+def _workflow_identity(check_suite: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return workflow/event provenance used to distinguish logical CheckRun rows."""
+
+    workflow_run = check_suite.get("workflowRun")
+    if workflow_run is None:
+        return None, None
+    if not isinstance(workflow_run, dict):
+        raise RuntimeError("GitHub returned a required check with malformed workflow-run identity")
+
+    event = _optional_string(workflow_run.get("event"), label="required-check event")
+    workflow_payload = workflow_run.get("workflow")
+    if workflow_payload is None:
+        workflow = None
+    elif isinstance(workflow_payload, dict):
+        workflow = _optional_string(
+            workflow_payload.get("name"),
+            label="required-check workflow name",
+        )
+    else:
+        raise RuntimeError("GitHub returned a required check with malformed workflow identity")
+    return workflow, event
+
+
 def _check_run_observation(payload: Any) -> RequiredStatusCheckObservation | None:
     if not isinstance(payload, dict):
         raise RuntimeError("GitHub returned a malformed required-check node")
@@ -142,6 +171,8 @@ def _check_run_observation(payload: Any) -> RequiredStatusCheckObservation | Non
     ):
         raise RuntimeError("GitHub returned a required check with invalid app database id")
 
+    workflow, event = _workflow_identity(check_suite)
+
     status = payload.get("status")
     conclusion = payload.get("conclusion")
     if status is not None and not isinstance(status, str):
@@ -156,6 +187,8 @@ def _check_run_observation(payload: Any) -> RequiredStatusCheckObservation | Non
         integration_id=integration_id,
         state=state,
         bucket=_bucket(state),
+        workflow=workflow,
+        event=event,
         started_at=_optional_string(payload.get("startedAt"), label="required-check start time"),
         completed_at=_optional_string(
             payload.get("completedAt"), label="required-check completion time"
@@ -226,6 +259,22 @@ def _page_payload(
     return nodes, has_next, end_cursor, identity_matches
 
 
+def _logical_check_key(
+    observation: RequiredStatusCheckObservation,
+) -> tuple[str, int, str | None, str | None]:
+    """Identify one logical required CheckRun while retaining independent workflows/events."""
+
+    integration_id = observation.integration_id
+    if integration_id is None:
+        raise RuntimeError("Pinned required-check observation is missing app identity")
+    return (
+        observation.name,
+        integration_id,
+        observation.workflow,
+        observation.event,
+    )
+
+
 async def read_pinned_required_check_evidence(
     app: AppContext,
     owner: str,
@@ -234,17 +283,28 @@ async def read_pinned_required_check_evidence(
     *,
     base_sha: str,
     head_sha: str,
-    required_identities: set[tuple[str, int]],
+    required_identities: set[tuple[str, int | None]],
     limit: int,
 ) -> PinnedRequiredCheckRead:
-    """Read app identity for every integration-pinned required check at one PR head."""
+    """Read exact app identity for pinned requirements without rejecting valid context-only rows."""
 
-    if not required_identities:
+    pinned_identities = {
+        (context, integration_id)
+        for context, integration_id in required_identities
+        if integration_id is not None
+    }
+    if not pinned_identities:
         return PinnedRequiredCheckRead([], True, False, True, [])
 
+    context_only = {
+        context for context, integration_id in required_identities if integration_id is None
+    }
+    pinned_contexts = {context for context, _integration_id in pinned_identities}
     bounded_limit = max(1, min(limit, 1_000))
-    pinned_contexts = {context for context, _integration_id in required_identities}
-    observations: dict[tuple[str, int], RequiredStatusCheckObservation] = {}
+    observations: dict[
+        tuple[str, int, str | None, str | None],
+        RequiredStatusCheckObservation,
+    ] = {}
     warnings: list[str] = []
     seen_nodes = 0
     after: str | None = None
@@ -295,11 +355,13 @@ async def read_pinned_required_check_evidence(
 
         for node in nodes:
             status_context = _required_status_context(node)
-            if status_context is not None and status_context in pinned_contexts:
-                warnings.append(
-                    f"GitHub reports required status context {status_context!r}, which has no "
-                    "GitHub App identity; integration-pinned check evidence is incomplete."
-                )
+            if status_context is not None:
+                if status_context in pinned_contexts and status_context not in context_only:
+                    warnings.append(
+                        f"GitHub reports required status context {status_context!r}, which has no "
+                        "GitHub App identity and is absent from the composed context-only policy; "
+                        "integration-pinned check evidence is incomplete."
+                    )
                 continue
 
             observation = _check_run_observation(node)
@@ -307,21 +369,28 @@ async def read_pinned_required_check_evidence(
                 continue
             integration_id = observation.integration_id
             if integration_id is None:
-                warnings.append(
-                    f"GitHub reports required check {observation.name!r} without app identity; "
-                    "integration-pinned check evidence is incomplete."
-                )
+                if observation.name not in context_only:
+                    warnings.append(
+                        f"GitHub reports required check {observation.name!r} without app identity, "
+                        "and no compatible context-only requirement exists; "
+                        "integration-pinned check evidence is incomplete."
+                    )
                 continue
-            key = (observation.name, integration_id)
-            if key not in required_identities:
-                warnings.append(
-                    f"GitHub reports required check {observation.name!r} from app "
-                    f"{integration_id}, which is absent from the composed required-check policy."
-                )
+
+            identity = (observation.name, integration_id)
+            if identity not in pinned_identities:
+                if observation.name not in context_only:
+                    warnings.append(
+                        f"GitHub reports required check {observation.name!r} from app "
+                        f"{integration_id}, which is absent from the composed "
+                        "required-check policy."
+                    )
                 continue
-            previous = observations.get(key)
+
+            logical_key = _logical_check_key(observation)
+            previous = observations.get(logical_key)
             if previous is None or (observation.started_at or "") > (previous.started_at or ""):
-                observations[key] = observation
+                observations[logical_key] = observation
 
         if not has_next:
             break

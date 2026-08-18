@@ -132,16 +132,23 @@ def _apply_classic_protection(policy: MergePolicy, protection: dict[str, Any]) -
             label="classic required-status strictness",
         )
         raw_checks = status_checks.get("checks")
+        classic_check_contexts: set[str] = set()
         if raw_checks is not None:
             if not isinstance(raw_checks, list):
                 raise RuntimeError("GitHub returned malformed classic required check list")
             for item in raw_checks:
                 if not isinstance(item, dict):
                     raise RuntimeError("GitHub returned a malformed classic required check")
+                context = item.get("context")
+                if not isinstance(context, str) or not context:
+                    raise RuntimeError(
+                        "GitHub returned classic required check without a valid context"
+                    )
+                classic_check_contexts.add(context)
                 app_id = item.get("app_id")
                 _add_required_check(
                     policy,
-                    context=item.get("context"),
+                    context=context,
                     integration_id=None if app_id == -1 else app_id,
                     label="classic required check",
                 )
@@ -151,7 +158,12 @@ def _apply_classic_protection(policy: MergePolicy, protection: dict[str, Any]) -
         for context in raw_contexts:
             if not isinstance(context, str) or not context:
                 raise RuntimeError("GitHub returned an invalid classic status-check context")
-            if not any(key[0] == context for key in policy.required_status_checks):
+            # GitHub's legacy contexts field can mirror entries represented more precisely
+            # by this same classic source's checks field. Do not turn that projection into
+            # an extra any-app requirement. A context not represented by classic checks,
+            # however, remains an independent context-only requirement even if another
+            # policy source already contributed a same-context pinned identity.
+            if context not in classic_check_contexts:
                 _add_required_check(
                     policy,
                     context=context,
@@ -680,7 +692,7 @@ async def read_repository_merge_methods_evidence(
     owner: str,
     repo: str,
 ) -> RepositoryMergeMethodsRead:
-    """Read repository merge switches with source-level completeness diagnostics."""
+    """Read repository merge switches with source-level diagnostics."""
 
     try:
         result = await app.client.run("api", f"repos/{owner}/{repo}", "-X", "GET")

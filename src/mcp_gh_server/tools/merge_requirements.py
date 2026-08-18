@@ -166,6 +166,36 @@ def _review_requirements_result(
     return None
 
 
+def _review_evidence_status(
+    review_state: PullRequestReviewState,
+) -> tuple[MergeEvidenceStatus, str]:
+    """Explain incomplete review evidence without conflating truncation with head movement."""
+
+    if not review_state.head_matches_expected:
+        return (
+            "head_mismatch",
+            "Review/thread evidence did not remain bound to the expected pull-request head.",
+        )
+    if review_state.exact_head_evidence:
+        return "complete", "Exact-head review/thread evidence is complete."
+    reviews_truncated = (
+        review_state.reviews_evidence is not None and review_state.reviews_evidence.truncated
+    )
+    threads_truncated = (
+        review_state.review_threads_evidence is not None
+        and review_state.review_threads_evidence.truncated
+    )
+    if reviews_truncated or threads_truncated:
+        return (
+            "truncated",
+            "Review or review-thread evidence exceeded the configured result bound.",
+        )
+    return (
+        "unavailable",
+        "Exact-head review/thread evidence is incomplete for a non-identity reason.",
+    )
+
+
 def _invalid_result(
     *,
     number: int,
@@ -264,7 +294,7 @@ def _reconcile_required_checks(
     *,
     absence_authoritative: bool,
 ) -> list[RequiredStatusCheckObservation]:
-    """Represent each effective required identity without collapsing integration ids."""
+    """Represent every effective identity while retaining distinct logical pinned rows."""
 
     if not requirements:
         return []
@@ -285,12 +315,18 @@ def _reconcile_required_checks(
     ]
     observed_unpinned = {check.name for check in reconciled}
 
-    pinned_by_identity = {
-        (check.name, check.integration_id): check
-        for check in pinned_checks
-        if check.integration_id is not None
-        and (check.name, check.integration_id) in pinned_identities
-    }
+    pinned_by_identity: dict[
+        tuple[str, int],
+        list[RequiredStatusCheckObservation],
+    ] = {}
+    for check in pinned_checks:
+        integration_id = check.integration_id
+        if integration_id is None:
+            continue
+        identity = (check.name, integration_id)
+        if identity not in pinned_identities:
+            continue
+        pinned_by_identity.setdefault(identity, []).append(check)
 
     for required in requirements:
         if required.integration_id is None:
@@ -298,9 +334,9 @@ def _reconcile_required_checks(
                 reconciled.append(_missing_observation(required))
             continue
 
-        observed = pinned_by_identity.get((required.context, required.integration_id))
-        if observed is not None:
-            reconciled.append(observed)
+        observed = pinned_by_identity.get((required.context, required.integration_id), [])
+        if observed:
+            reconciled.extend(observed)
         elif absence_authoritative:
             reconciled.append(_missing_observation(required))
 
@@ -487,13 +523,19 @@ async def gh_get_merge_requirements(
                 )
                 warnings.extend(consistency_warnings)
 
-                pinned_identities: set[tuple[str, int]] = set()
-                for required in effective_requirements:
-                    if required.integration_id is not None:
-                        pinned_identities.add(
-                            (required.context, required.integration_id)
-                        )
-                if pinned_identities and checks_read_complete and checks_identity_matches:
+                all_required_identities = {
+                    (required.context, required.integration_id)
+                    for required in effective_requirements
+                }
+                has_pinned_requirements = any(
+                    integration_id is not None
+                    for _context, integration_id in all_required_identities
+                )
+                if (
+                    has_pinned_requirements
+                    and checks_read_complete
+                    and checks_identity_matches
+                ):
                     try:
                         pinned_read = await read_pinned_required_check_evidence(
                             app,
@@ -502,7 +544,7 @@ async def gh_get_merge_requirements(
                             number,
                             base_sha=base_sha,
                             head_sha=initial_head,
-                            required_identities=pinned_identities,
+                            required_identities=all_required_identities,
                             limit=min(app.settings.hard_max_results, 1_000),
                         )
                     except GitHubRequestError as exc:
@@ -607,18 +649,12 @@ async def gh_get_merge_requirements(
             )
         )
     else:
-        review_status: MergeEvidenceStatus = (
-            "complete" if review_state.exact_head_evidence else "head_mismatch"
-        )
+        review_status, review_reason = _review_evidence_status(review_state)
         evidence_sources.append(
             _source(
                 "reviews_threads",
                 review_status,
-                reason=(
-                    "Exact-head review/thread evidence is complete."
-                    if review_state.exact_head_evidence
-                    else "Review/thread evidence did not remain bound to the expected head."
-                ),
+                reason=review_reason,
             )
         )
 

@@ -43,9 +43,12 @@ addopts = "-ra"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-packages = ["mcp_gh_server"]
-mypy_path = "src"
-no_implicit_optional = false
+[tool.pyrefly]
+# Pyrefly is the repository's sole authoritative Python static type checker for
+# CI/review decisions. The historical test corpus is outside the no-argument
+# project scope; changed tests are always passed explicitly during review.
+project-includes = ["src/**/*.py"]
+project-excludes = ["tests/**/*.py"]
+search-path = ["src", "."]
+python-platform = "linux"
+python-version = "3.12"
