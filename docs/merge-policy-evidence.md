@@ -36,8 +36,10 @@ merge-relevant rule types remain fail-closed.
 Required-check policy and current state are separate evidence layers.
 
 `required_status_checks` preserves the policy identity `(context, integration_id)`.
-A `null` integration ID is a context-only requirement. A non-null integration ID pins the
-requirement to a specific GitHub App.
+A `null` integration ID is a context-only requirement. A positive integration ID pins the
+requirement to a specific GitHub App. Classic protection's documented `app_id=-1` sentinel
+is normalized to the context-only form because it explicitly permits any app to provide
+the status.
 
 The ordinary `gh pr checks --required` projection is used for exact-head current state and
 GitHub-requiredness, but it does not expose the GitHub App identity needed to distinguish

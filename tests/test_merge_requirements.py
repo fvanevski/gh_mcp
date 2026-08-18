@@ -167,6 +167,24 @@ def _pinned_classic() -> dict[str, Any]:
     }
 
 
+def _any_app_classic() -> dict[str, Any]:
+    return {
+        "required_status_checks": {
+            "strict": False,
+            "contexts": [],
+            "checks": [{"context": "lint", "app_id": -1}],
+        },
+        "required_pull_request_reviews": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews": False,
+            "require_code_owner_reviews": False,
+            "require_last_push_approval": False,
+        },
+        "required_conversation_resolution": {"enabled": False},
+        "required_linear_history": {"enabled": False},
+    }
+
+
 def _multi_pinned_classic() -> dict[str, Any]:
     return {
         "required_status_checks": {
@@ -770,6 +788,51 @@ async def test_merge_requirements_missing_required_check_is_explicit_not_silentl
     assert result.warning is None
 
 
+async def test_merge_requirements_classic_any_app_sentinel_is_context_only() -> None:
+    head = "b" * 40
+    client = FakeGhClient(
+        [
+            _pr(head_sha=head),
+            [],
+            {"protected": True},
+            _any_app_classic(),
+            _repo_methods(),
+            _pr(head_sha=head),
+            [{"name": "lint", "state": "SUCCESS", "bucket": "pass", "workflow": "CI"}],
+            _pr(head_sha=head),
+            {"behind_by": 0},
+            _pr(head_sha=head),
+            [],
+            _requested(),
+            _graphql(decision=None),
+            _pr(head_sha=head),
+            _pr(head_sha=head),
+        ]
+    )
+
+    result = await gh_get_merge_requirements(
+        "octo",
+        "repo",
+        21,
+        head,
+        ctx=_context(client),
+    )
+
+    assert result.checks_evidence_complete is True
+    assert [
+        (check.context, check.integration_id) for check in result.required_status_checks
+    ] == [("lint", None)]
+    assert [
+        (check.name, check.integration_id, check.state, check.bucket)
+        for check in result.current_required_checks
+    ] == [("lint", None, "SUCCESS", "pass")]
+    assert not any(
+        any("PullRequestRequiredCheckIdentities" in arg for arg in args)
+        for args, _kwargs in client.calls
+        if args[:2] == ("api", "graphql")
+    )
+
+
 async def test_merge_requirements_pinned_check_uses_authoritative_app_identity() -> None:
     head = "b" * 40
     client = FakeGhClient(
@@ -1022,8 +1085,7 @@ async def test_merge_requirements_pinned_identity_read_failure_is_incomplete() -
     assert "HTTP 403" in result.warning
 
 
-async def test_merge_requirements_pinned_status_context_without_app_identity_is_incomplete(
-) -> None:
+async def test_pinned_status_context_without_app_identity_is_incomplete() -> None:
     head = "b" * 40
     client = FakeGhClient(
         [

@@ -307,6 +307,22 @@ def _reconcile_required_checks(
     return reconciled
 
 
+def _effective_required_checks(policy: MergePolicy) -> list[RequiredStatusCheck]:
+    """Normalize GitHub's any-app sentinel while preserving full effective identities."""
+
+    normalized: dict[tuple[str, int | None], RequiredStatusCheck] = {}
+    for required in policy.required_status_checks.values():
+        integration_id = (
+            None if required.integration_id == -1 else required.integration_id
+        )
+        key = (required.context, integration_id)
+        normalized[key] = RequiredStatusCheck(
+            context=required.context,
+            integration_id=integration_id,
+        )
+    return list(normalized.values())
+
+
 def _required_check_policy_consistent(
     requirements: list[RequiredStatusCheck],
     current_checks: list[PullRequestCheck],
@@ -406,7 +422,7 @@ async def gh_get_merge_requirements(
     warnings = list(policy_read.warnings)
     evidence_sources = list(policy_read.evidence_sources)
     effective_requirements = (
-        list(policy.required_status_checks.values())
+        _effective_required_checks(policy)
         if policy_complete and policy is not None
         else []
     )
@@ -471,21 +487,13 @@ async def gh_get_merge_requirements(
                 )
                 warnings.extend(consistency_warnings)
 
-                pinned_identities = {
-                    (required.context, required.integration_id)
-                    for required in effective_requirements
-                    if required.integration_id is not None
-                }
-                normalized_pinned_identities = {
-                    (context, integration_id)
-                    for context, integration_id in pinned_identities
-                    if integration_id is not None
-                }
-                if (
-                    normalized_pinned_identities
-                    and checks_read_complete
-                    and checks_identity_matches
-                ):
+                pinned_identities: set[tuple[str, int]] = set()
+                for required in effective_requirements:
+                    if required.integration_id is not None:
+                        pinned_identities.add(
+                            (required.context, required.integration_id)
+                        )
+                if pinned_identities and checks_read_complete and checks_identity_matches:
                     try:
                         pinned_read = await read_pinned_required_check_evidence(
                             app,
@@ -494,7 +502,7 @@ async def gh_get_merge_requirements(
                             number,
                             base_sha=base_sha,
                             head_sha=initial_head,
-                            required_identities=normalized_pinned_identities,
+                            required_identities=pinned_identities,
                             limit=min(app.settings.hard_max_results, 1_000),
                         )
                     except GitHubRequestError as exc:
@@ -660,7 +668,7 @@ async def gh_get_merge_requirements(
     )
     if policy_complete and policy is not None:
         policy_fields_known = True
-        requirements = list(policy.required_status_checks.values())
+        requirements = effective_requirements
         required_approvals = policy.required_approvals
         dismiss_stale_reviews_on_push: bool | None = policy.dismiss_stale_reviews_on_push
         code_owner_review_required = policy.code_owner_review_required
