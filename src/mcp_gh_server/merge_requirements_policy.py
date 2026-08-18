@@ -542,8 +542,8 @@ async def _read_classic_protection(
                 ],
             )
 
-        permission_verified, permission_warnings, permission_source = (
-            await _verify_classic_admin_read(app, owner, repo)
+        permission_verified, permission_warnings, permission_source = await _verify_classic_admin_read(
+            app, owner, repo
         )
         if permission_verified:
             return (
@@ -616,13 +616,11 @@ async def read_effective_merge_policy_evidence(
     rules, rules_complete, warnings, rules_source = await _read_active_rules(
         app, owner, repo, base_ref
     )
-    classic, classic_complete, classic_warnings, classic_sources = (
-        await _read_classic_protection(
-            app,
-            owner,
-            repo,
-            base_ref,
-        )
+    classic, classic_complete, classic_warnings, classic_sources = await _read_classic_protection(
+        app,
+        owner,
+        repo,
+        base_ref,
     )
     warnings.extend(classic_warnings)
     evidence_sources = [rules_source, *classic_sources]
