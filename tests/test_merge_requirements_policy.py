@@ -160,3 +160,35 @@ async def test_stale_review_dismissal_uses_most_restrictive_ruleset_value() -> N
     assert policy is not None
     assert policy.dismiss_stale_reviews_on_push is True
     assert warnings == []
+
+
+async def test_classic_any_app_sentinel_normalizes_to_context_only_identity() -> None:
+    protection = {
+        "required_status_checks": {
+            "strict": False,
+            "contexts": [],
+            "checks": [{"context": "lint", "app_id": -1}],
+        },
+        "required_pull_request_reviews": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews": False,
+            "require_code_owner_reviews": False,
+            "require_last_push_approval": False,
+        },
+        "required_conversation_resolution": {"enabled": False},
+        "required_linear_history": {"enabled": False},
+    }
+    client = FakeGhClient([[], {"protected": True}, protection])
+
+    policy, complete, warnings = await read_effective_merge_policy(
+        _app(client),
+        "octo",
+        "repo",
+        "main",
+    )
+
+    assert complete is True
+    assert policy is not None
+    assert list(policy.required_status_checks) == [("lint", None)]
+    assert policy.required_status_checks[("lint", None)].integration_id is None
+    assert warnings == []

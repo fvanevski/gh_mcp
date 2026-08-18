@@ -138,10 +138,11 @@ def _apply_classic_protection(policy: MergePolicy, protection: dict[str, Any]) -
             for item in raw_checks:
                 if not isinstance(item, dict):
                     raise RuntimeError("GitHub returned a malformed classic required check")
+                app_id = item.get("app_id")
                 _add_required_check(
                     policy,
                     context=item.get("context"),
-                    integration_id=item.get("app_id"),
+                    integration_id=None if app_id == -1 else app_id,
                     label="classic required check",
                 )
         raw_contexts = status_checks.get("contexts", [])
