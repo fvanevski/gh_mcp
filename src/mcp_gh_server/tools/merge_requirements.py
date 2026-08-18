@@ -12,6 +12,7 @@ from ..merge_requirements_models import (
     MergeMethod,
     MergeRequirementEvidenceSource,
     PullRequestMergeRequirements,
+    RequiredStatusCheck,
 )
 from ..merge_requirements_policy import (
     MergePolicy,
@@ -224,6 +225,41 @@ def _allowed_methods(
         ],
         True,
     )
+
+
+def _reconcile_required_checks(
+    requirements: list[RequiredStatusCheck],
+    current_checks: list[PullRequestCheck],
+) -> list[PullRequestCheck]:
+    """Ensure every required check identity keeps an explicit exact-head representation."""
+
+    if not requirements:
+        return list(current_checks)
+    observed_contexts = {check.name for check in current_checks}
+    reconciled = list(current_checks)
+    represented: set[str] = set()
+    for required in requirements:
+        if required.integration_id is None and (
+            required.context in observed_contexts or required.context in represented
+        ):
+            continue
+        if required.context in represented:
+            continue
+        description = (
+            "Required status check has no observation at the exact head."
+            if required.integration_id is None
+            else "No verified integration observation at the exact head."
+        )
+        reconciled.append(
+            PullRequestCheck(
+                name=required.context,
+                state="UNKNOWN",
+                bucket="pending",
+                description=description,
+            )
+        )
+        represented.add(required.context)
+    return reconciled
 
 
 @mcp.tool(
@@ -498,6 +534,8 @@ async def gh_get_merge_requirements(
         last_push_approval_required = None
         conversation_resolution_required = None
         up_to_date_required = None
+
+    current_checks = _reconcile_required_checks(requirements, current_checks)
 
     if review_state is None:
         current_approvals = []

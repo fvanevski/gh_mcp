@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+from mcp_gh_server.models import PullRequestCheck
 from mcp_gh_server.request_governor import GitHubRequestError
 from mcp_gh_server.server import AppContext
 from mcp_gh_server.settings import Settings
@@ -123,7 +124,11 @@ def _repo_methods(
     }
 
 
-def _classic_protection(*, dismiss_stale_reviews: bool = False) -> dict[str, Any]:
+def _classic_protection(
+    *,
+    dismiss_stale_reviews: bool = False,
+    linear_history: bool = False,
+) -> dict[str, Any]:
     return {
         "required_status_checks": {
             "strict": True,
@@ -134,6 +139,27 @@ def _classic_protection(*, dismiss_stale_reviews: bool = False) -> dict[str, Any
             "required_approving_review_count": 2,
             "dismiss_stale_reviews": dismiss_stale_reviews,
             "require_code_owner_reviews": True,
+            "require_last_push_approval": False,
+        },
+        "required_conversation_resolution": {"enabled": False},
+        "required_linear_history": {"enabled": linear_history},
+    }
+
+
+def _pinned_classic() -> dict[str, Any]:
+    return {
+        "required_status_checks": {
+            "strict": True,
+            "contexts": ["ci"],
+            "checks": [
+                {"context": "lint", "app_id": 42},
+                {"context": "ci", "app_id": None},
+            ],
+        },
+        "required_pull_request_reviews": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews": False,
+            "require_code_owner_reviews": False,
             "require_last_push_approval": False,
         },
         "required_conversation_resolution": {"enabled": False},
@@ -244,7 +270,14 @@ async def test_merge_requirements_layers_policy_and_uses_current_valid_reviews()
         ("ci", None),
         ("lint", 42),
     }
-    assert [check.name for check in result.current_required_checks] == ["ci", "lint"]
+    assert [check.name for check in result.current_required_checks] == [
+        "ci",
+        "lint",
+        "lint",
+    ]
+    integrated_placeholder = result.current_required_checks[2]
+    assert integrated_placeholder.state == "UNKNOWN"
+    assert integrated_placeholder.bucket == "pending"
     assert result.checks_evidence_complete is True
 
     assert result.required_approvals == 3
@@ -552,3 +585,143 @@ async def test_merge_requirements_bounded_ruleset_visibility_is_incomplete() -> 
     assert result.allowed_merge_methods_complete is False
     assert result.warning is not None
     assert "exceeds the configured evidence bound" in result.warning
+
+
+async def test_merge_requirements_missing_required_check_is_explicit_not_silently_dropped() -> None:
+    head = "b" * 40
+    client = FakeGhClient(
+        [
+            _pr(head_sha=head),
+            [],
+            {"protected": True},
+            _classic_protection(),
+            _repo_methods(),
+            _pr(head_sha=head),
+            [{"name": "lint", "state": "SUCCESS", "bucket": "pass", "workflow": "CI"}],
+            _pr(head_sha=head),
+            {"behind_by": 0},
+            _pr(head_sha=head),
+            [],
+            _requested(),
+            _graphql(decision="APPROVED"),
+            _pr(head_sha=head),
+            _pr(head_sha=head),
+        ]
+    )
+
+    result = await gh_get_merge_requirements(
+        "octo",
+        "repo",
+        21,
+        head,
+        ctx=_context(client),
+    )
+
+    assert result.head_matches_expected is True
+    assert result.exact_head_evidence is True
+    assert result.policy_evidence_complete is True
+    assert {(check.context, check.integration_id) for check in result.required_status_checks} == {
+        ("ci", None),
+    }
+    by_name = {check.name: check for check in result.current_required_checks}
+    assert [check.name for check in result.current_required_checks] == ["lint", "ci"]
+    assert by_name["lint"].state == "SUCCESS"
+    assert by_name["lint"].bucket == "pass"
+    assert by_name["ci"].state == "UNKNOWN"
+    assert by_name["ci"].bucket == "pending"
+    assert result.checks_evidence_complete is True
+    assert result.warning is None
+
+
+async def test_merge_requirements_pinned_check_not_satisfied_by_context_row() -> None:
+    head = "b" * 40
+    client = FakeGhClient(
+        [
+            _pr(head_sha=head),
+            [],
+            {"protected": True},
+            _pinned_classic(),
+            _repo_methods(),
+            _pr(head_sha=head),
+            [
+                {"name": "lint", "state": "SUCCESS", "bucket": "pass", "workflow": "CI"},
+                {"name": "ci", "state": "SUCCESS", "bucket": "pass", "workflow": "CI"},
+            ],
+            _pr(head_sha=head),
+            {"behind_by": 0},
+            _pr(head_sha=head),
+            [],
+            _requested(),
+            _graphql(decision=None),
+            _pr(head_sha=head),
+            _pr(head_sha=head),
+        ]
+    )
+
+    result = await gh_get_merge_requirements(
+        "octo",
+        "repo",
+        21,
+        head,
+        ctx=_context(client),
+    )
+
+    assert result.head_matches_expected is True
+    assert result.exact_head_evidence is True
+    assert result.policy_evidence_complete is True
+    assert {(check.context, check.integration_id) for check in result.required_status_checks} == {
+        ("ci", None),
+        ("lint", 42),
+    }
+    by_name: dict[str, list[PullRequestCheck]] = {}
+    for check in result.current_required_checks:
+        by_name.setdefault(check.name, []).append(check)
+    assert len(by_name["ci"]) == 1
+    assert by_name["ci"][0].state == "SUCCESS"
+    assert by_name["ci"][0].bucket == "pass"
+    assert len(by_name["lint"]) == 2
+    placeholder = next(check for check in by_name["lint"] if check.state == "UNKNOWN")
+    assert placeholder.bucket == "pending"
+    assert placeholder.description is not None
+    assert "integration" in placeholder.description
+    assert result.checks_evidence_complete is True
+    assert result.warning is None
+
+
+async def test_merge_requirements_classic_linear_history_removes_merge_method() -> None:
+    head = "b" * 40
+    client = FakeGhClient(
+        [
+            _pr(head_sha=head),
+            [],
+            {"protected": True},
+            _classic_protection(linear_history=True),
+            _repo_methods(),
+            _pr(head_sha=head),
+            _checks(),
+            _pr(head_sha=head),
+            {"behind_by": 0},
+            _pr(head_sha=head),
+            [],
+            _requested(),
+            _graphql(decision="APPROVED"),
+            _pr(head_sha=head),
+            _pr(head_sha=head),
+        ]
+    )
+
+    result = await gh_get_merge_requirements(
+        "octo",
+        "repo",
+        21,
+        head,
+        ctx=_context(client),
+    )
+
+    assert result.allowed_merge_methods == ["squash", "rebase"]
+    assert result.allowed_merge_methods_complete is True
+    classic_sources = [
+        source for source in result.evidence_sources if source.source == "classic_branch_protection"
+    ]
+    assert len(classic_sources) == 1
+    assert classic_sources[0].status == "present"
