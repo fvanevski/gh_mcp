@@ -542,9 +542,11 @@ async def _read_classic_protection(
                 ],
             )
 
-        permission_verified, permission_warnings, permission_source = await _verify_classic_admin_read(
-            app, owner, repo
-        )
+        (
+            permission_verified,
+            permission_warnings,
+            permission_source,
+        ) = await _verify_classic_admin_read(app, owner, repo)
         if permission_verified:
             return (
                 None,
