@@ -9,12 +9,11 @@ from pydantic import Field
 from .write_contracts import ExactWriteResult
 
 
-class PullRequestReviewSubmission(ExactWriteResult):
+class _PullRequestReviewSubmissionBase(ExactWriteResult):
     """Shared authoritative outcome fields for one formal pull-request review attempt."""
 
     number: int
     review_id: int = Field(ge=0)
-    action: Literal["approve", "request_changes", "comment"]
     state: str
     body: str
     author: str | None = None
@@ -24,19 +23,25 @@ class PullRequestReviewSubmission(ExactWriteResult):
     message: str
 
 
-class PullRequestApproval(PullRequestReviewSubmission):
+class PullRequestReviewSubmission(_PullRequestReviewSubmissionBase):
+    """Internal review result whose action is selected by the guarded write implementation."""
+
+    action: Literal["approve", "request_changes", "comment"]
+
+
+class PullRequestApproval(_PullRequestReviewSubmissionBase):
     """Outcome of one action-specific GitHub APPROVED review attempt."""
 
     action: Literal["approve"] = "approve"
 
 
-class PullRequestChangesRequested(PullRequestReviewSubmission):
+class PullRequestChangesRequested(_PullRequestReviewSubmissionBase):
     """Outcome of one action-specific GitHub CHANGES_REQUESTED review attempt."""
 
     action: Literal["request_changes"] = "request_changes"
 
 
-class PullRequestCommentReview(PullRequestReviewSubmission):
+class PullRequestCommentReview(_PullRequestReviewSubmissionBase):
     """Outcome of one action-specific GitHub COMMENTED review attempt."""
 
     action: Literal["comment"] = "comment"

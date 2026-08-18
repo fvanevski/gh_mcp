@@ -54,7 +54,9 @@ def _required_check_rule(context: str = "Pyrefly") -> dict[str, Any]:
 
 async def test_public_output_schema_exposes_bounded_evidence_sources() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
-    output_properties = tools["gh_get_merge_requirements"].output_schema["properties"]
+    merge_requirements_tool = tools["gh_get_merge_requirements"]
+    assert merge_requirements_tool.output_schema is not None
+    output_properties = merge_requirements_tool.output_schema["properties"]
     assert "evidence_sources" in output_properties
 
     source_schema = MergeRequirementEvidenceSource.model_json_schema()
