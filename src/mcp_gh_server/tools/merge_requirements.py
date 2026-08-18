@@ -7,38 +7,54 @@ from typing import Annotated, Any
 from mcp.server.mcpserver import Context
 from pydantic import Field
 
-from ..merge_requirements_models import MergeMethod, PullRequestMergeRequirements
+from ..merge_requirements_models import (
+    MergeEvidenceStatus,
+    MergeMethod,
+    MergeRequirementEvidenceSource,
+    PullRequestMergeRequirements,
+)
 from ..merge_requirements_policy import (
     MergePolicy,
-    read_effective_merge_policy,
-    read_repository_merge_methods,
+    read_effective_merge_policy_evidence,
+    read_repository_merge_methods_evidence,
 )
 from ..models import PullRequestCheck
 from ..pr_review_models import PullRequestReview, PullRequestReviewState
 from ..request_governor import GitHubRequestError
-from ..tooling import (
-    READ_EXTERNAL,
-    AppContext,
-    app_from_context,
-    logger,
-    mcp,
-    validate_repository,
-)
+from ..tooling import READ_EXTERNAL, AppContext, app_from_context, logger, mcp, validate_repository
 from .pr_reviews import gh_get_pr_review_state
 from .pull_requests import _extract_pr_shas, _get_pr_metadata, gh_get_pr_checks
 
 _MERGE_METHOD_ORDER: tuple[MergeMethod, ...] = ("merge", "squash", "rebase")
 
 
-def _pr_snapshot(metadata: dict[str, Any]) -> tuple[str, str, str, bool | None, str | None]:
-    """Validate the PR identity and mergeability fields used by the aggregate."""
+def _source(
+    source: str,
+    status: MergeEvidenceStatus,
+    *,
+    http_status: int | None = None,
+    reason: str | None = None,
+    blocks_policy: bool = False,
+    blocks_checks: bool = False,
+    blocks_methods: bool = False,
+) -> MergeRequirementEvidenceSource:
+    return MergeRequirementEvidenceSource(
+        source=source,
+        status=status,
+        http_status=http_status,
+        reason=reason,
+        blocks_policy_evidence=blocks_policy,
+        blocks_checks_evidence=blocks_checks,
+        blocks_allowed_merge_methods=blocks_methods,
+    )
 
+
+def _pr_snapshot(metadata: dict[str, Any]) -> tuple[str, str, str, bool | None, str | None]:
     base_sha, head_sha = _extract_pr_shas(metadata)
     base = metadata.get("base")
     base_ref = base.get("ref") if isinstance(base, dict) else None
     if not isinstance(base_ref, str) or not base_ref:
         raise RuntimeError("GitHub did not return a valid pull-request base ref")
-
     mergeable = metadata.get("mergeable")
     if mergeable is not None and not isinstance(mergeable, bool):
         raise RuntimeError("GitHub returned a malformed pull-request mergeable value")
@@ -49,22 +65,12 @@ def _pr_snapshot(metadata: dict[str, Any]) -> tuple[str, str, str, bool | None, 
 
 
 async def _read_up_to_date(
-    app: AppContext,
-    owner: str,
-    repo: str,
-    base_sha: str,
-    head_sha: str,
+    app: AppContext, owner: str, repo: str, base_sha: str, head_sha: str
 ) -> tuple[bool | None, bool, list[str]]:
-    """Compare exact base/head commits while returning only bounded freshness metadata."""
-
     try:
         result = await app.client.run(
-            "api",
-            f"repos/{owner}/{repo}/compare/{base_sha}...{head_sha}",
-            "-X",
-            "GET",
-            "--jq",
-            "{behind_by: .behind_by}",
+            "api", f"repos/{owner}/{repo}/compare/{base_sha}...{head_sha}",
+            "-X", "GET", "--jq", "{behind_by: .behind_by}",
         )
     except GitHubRequestError as exc:
         status = f"HTTP {exc.status_code}" if exc.status_code is not None else "unknown status"
@@ -78,32 +84,20 @@ async def _read_up_to_date(
 
 
 def _current_valid_approvals(
-    review_state: PullRequestReviewState,
-    *,
-    dismiss_stale_reviews_on_push: bool,
+    review_state: PullRequestReviewState, *, dismiss_stale_reviews_on_push: bool
 ) -> list[PullRequestReview]:
-    """Return latest decisive approvals that remain valid under effective merge policy."""
-
-    decisive = [
-        *review_state.current_head_approvals,
-        *review_state.current_head_change_requests,
-    ]
+    decisive = [*review_state.current_head_approvals, *review_state.current_head_change_requests]
     if not dismiss_stale_reviews_on_push:
         decisive.extend(review_state.stale_approvals)
         decisive.extend(review_state.stale_change_requests)
-
     latest: dict[str, PullRequestReview] = {}
     for review in decisive:
         if review.reviewer is None:
             continue
         key = review.reviewer.casefold()
         previous = latest.get(key)
-        if previous is None or (
-            review.submitted_at or "",
-            review.id,
-        ) > (
-            previous.submitted_at or "",
-            previous.id,
+        if previous is None or (review.submitted_at or "", review.id) > (
+            previous.submitted_at or "", previous.id
         ):
             latest[key] = review
     return sorted(
@@ -118,14 +112,9 @@ def _review_requirements_result(
     review_state: PullRequestReviewState | None,
     approval_count: int | None,
 ) -> bool | None:
-    """Combine policy count with GitHub's exact-head review decision conservatively."""
-
     if (
-        not policy_fields_known
-        or policy is None
-        or review_state is None
-        or not review_state.exact_head_evidence
-        or approval_count is None
+        not policy_fields_known or policy is None or review_state is None
+        or not review_state.exact_head_evidence or approval_count is None
     ):
         return None
     if approval_count < policy.required_approvals:
@@ -147,9 +136,13 @@ def _invalid_result(
     mergeable: bool | None,
     merge_state: str | None,
     reason: str,
+    evidence_sources: list[MergeRequirementEvidenceSource] | None = None,
 ) -> PullRequestMergeRequirements:
-    """Return identity only when head/base movement invalidates collected evidence."""
-
+    sources = list(evidence_sources or [])
+    sources.append(_source(
+        "pull_request_identity", "head_mismatch", reason=reason,
+        blocks_policy=True, blocks_checks=True, blocks_methods=True,
+    ))
     return PullRequestMergeRequirements(
         number=number,
         base_ref=base_ref,
@@ -165,6 +158,7 @@ def _invalid_result(
         review_evidence_complete=False,
         up_to_date_evidence_complete=False,
         allowed_merge_methods_complete=False,
+        evidence_sources=sources,
         warning=reason,
     )
 
@@ -177,14 +171,10 @@ def _allowed_methods(
 ) -> tuple[list[MergeMethod], bool]:
     if not policy_complete or policy is None or not repository_methods_complete:
         return [], False
-    return (
-        [
-            method
-            for method in _MERGE_METHOD_ORDER
-            if method in repository_methods and method in policy.allowed_merge_methods
-        ],
-        True,
-    )
+    return [
+        method for method in _MERGE_METHOD_ORDER
+        if method in repository_methods and method in policy.allowed_merge_methods
+    ], True
 
 
 @mcp.tool(
@@ -198,86 +188,50 @@ def _allowed_methods(
     annotations=READ_EXTERNAL,
 )
 async def gh_get_merge_requirements(
-    owner: Annotated[
-        str,
-        Field(
-            min_length=1,
-            max_length=39,
-            pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$",
-            description="Canonical GitHub repository owner.",
-        ),
-    ],
-    repo: Annotated[
-        str,
-        Field(
-            min_length=1,
-            max_length=100,
-            pattern=r"^[A-Za-z0-9_.-]+$",
-            description="Canonical GitHub repository name without path separators.",
-        ),
-    ],
+    owner: Annotated[str, Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$", description="Canonical GitHub repository owner.")],
+    repo: Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.-]+$", description="Canonical GitHub repository name without path separators.")],
     number: Annotated[int, Field(ge=1, description="Positive pull request number.")],
-    expected_head_sha: Annotated[
-        str,
-        Field(
-            pattern=r"^[0-9A-Fa-f]{40}$",
-            description="Exact pull-request head SHA whose merge requirements are requested.",
-        ),
-    ],
-    *,
-    ctx: Context[AppContext],
+    expected_head_sha: Annotated[str, Field(pattern=r"^[0-9A-Fa-f]{40}$", description="Exact pull-request head SHA whose merge requirements are requested.")],
+    *, ctx: Context[AppContext],
 ) -> PullRequestMergeRequirements:
-    """Return conservative merge requirements bound to one unchanged PR head/base."""
-
     logger.info("MCP tool invocation reached server: tool=gh_get_merge_requirements")
     app = app_from_context(ctx)
     validate_repository(owner, repo)
     expected = expected_head_sha.casefold()
 
     initial_metadata = await _get_pr_metadata(app, owner, repo, number)
-    base_ref, base_sha, initial_head, initial_mergeable, initial_merge_state = _pr_snapshot(
-        initial_metadata
-    )
+    base_ref, base_sha, initial_head, initial_mergeable, initial_merge_state = _pr_snapshot(initial_metadata)
     if initial_head != expected:
         return _invalid_result(
-            number=number,
-            base_ref=base_ref,
-            base_sha=base_sha,
-            expected_head_sha=expected,
-            current_head_sha=initial_head,
-            mergeable=initial_mergeable,
-            merge_state=initial_merge_state,
-            reason=(
-                f"Expected head {expected} does not match current head {initial_head}; "
-                "merge requirements were not evaluated."
-            ),
+            number=number, base_ref=base_ref, base_sha=base_sha,
+            expected_head_sha=expected, current_head_sha=initial_head,
+            mergeable=initial_mergeable, merge_state=initial_merge_state,
+            reason=f"Expected head {expected} does not match current head {initial_head}; merge requirements were not evaluated.",
         )
 
-    policy, policy_complete, warnings = await read_effective_merge_policy(
-        app,
-        owner,
-        repo,
-        base_ref,
-    )
-    (
-        repository_methods,
-        repository_methods_complete,
-        method_warnings,
-    ) = await read_repository_merge_methods(app, owner, repo)
-    warnings.extend(method_warnings)
+    policy_read = await read_effective_merge_policy_evidence(app, owner, repo, base_ref)
+    policy = policy_read.policy
+    policy_complete = policy_read.complete
+    warnings = list(policy_read.warnings)
+    evidence_sources = list(policy_read.evidence_sources)
+
+    methods_read = await read_repository_merge_methods_evidence(app, owner, repo)
+    repository_methods = methods_read.methods
+    repository_methods_complete = methods_read.complete
+    warnings.extend(methods_read.warnings)
+    evidence_sources.append(methods_read.evidence_source)
 
     checks_identity_matches = True
     if policy_complete and policy is not None and not policy.required_status_checks:
         current_checks: list[PullRequestCheck] = []
         checks_read_complete = True
+        evidence_sources.append(_source(
+            "current_required_checks", "complete", reason="Effective policy contains no required status checks."
+        ))
     else:
         try:
             check_state = await gh_get_pr_checks(
-                owner,
-                repo,
-                number,
-                ctx=ctx,
-                required_only=True,
+                owner, repo, number, ctx=ctx, required_only=True,
                 max_checks=min(app.settings.hard_max_results, 1_000),
             )
         except GitHubRequestError as exc:
@@ -285,76 +239,81 @@ async def gh_get_merge_requirements(
             current_checks = []
             checks_read_complete = False
             warnings.append(f"Current required-check evidence is unavailable ({status}).")
+            evidence_sources.append(_source(
+                "current_required_checks", "unavailable", http_status=exc.status_code,
+                reason="The exact-head required-check read failed.", blocks_checks=True,
+            ))
         else:
             current_checks = check_state.checks
             checks_read_complete = not check_state.truncated
             checks_identity_matches = (
-                check_state.base_sha.casefold(),
-                check_state.head_sha.casefold(),
+                check_state.base_sha.casefold(), check_state.head_sha.casefold()
             ) == (base_sha, initial_head)
+            check_status: MergeEvidenceStatus
             if check_state.truncated:
                 warnings.append(
-                    "Current required-check evidence exceeds the configured result bound; "
-                    "check evidence is incomplete."
+                    "Current required-check evidence exceeds the configured result bound; check evidence is incomplete."
                 )
+                check_status = "truncated"
+                check_reason = "The required-check read exceeded the configured result bound."
+            elif not checks_identity_matches:
+                check_status = "head_mismatch"
+                check_reason = "The required-check snapshot did not match the exact PR identity."
+            else:
+                check_status = "complete"
+                check_reason = "The exact-head required-check read is complete."
+            evidence_sources.append(_source(
+                "current_required_checks", check_status, reason=check_reason,
+                blocks_checks=(not policy_complete or not checks_read_complete or not checks_identity_matches),
+            ))
 
     up_to_date, freshness_complete, freshness_warnings = await _read_up_to_date(
-        app,
-        owner,
-        repo,
-        base_sha,
-        initial_head,
+        app, owner, repo, base_sha, initial_head
     )
     warnings.extend(freshness_warnings)
+    freshness_status: MergeEvidenceStatus = "complete" if freshness_complete else "unavailable"
+    evidence_sources.append(_source(
+        "base_freshness", freshness_status,
+        reason="Exact base/head freshness comparison completed." if freshness_complete else "Exact base/head freshness comparison is unavailable.",
+    ))
 
     review_state: PullRequestReviewState | None
     try:
-        review_state = await gh_get_pr_review_state(
-            owner,
-            repo,
-            number,
-            expected,
-            ctx=ctx,
-        )
+        review_state = await gh_get_pr_review_state(owner, repo, number, expected, ctx=ctx)
     except GitHubRequestError as exc:
         review_state = None
         status = f"HTTP {exc.status_code}" if exc.status_code is not None else "unknown status"
         warnings.append(f"Exact-head review evidence is unavailable ({status}).")
+        evidence_sources.append(_source(
+            "reviews_threads", "unavailable", http_status=exc.status_code,
+            reason="Exact-head review/thread evidence could not be read."
+        ))
+    else:
+        review_status: MergeEvidenceStatus = "complete" if review_state.exact_head_evidence else "head_mismatch"
+        evidence_sources.append(_source(
+            "reviews_threads", review_status,
+            reason="Exact-head review/thread evidence is complete." if review_state.exact_head_evidence else "Review/thread evidence did not remain bound to the expected head.",
+        ))
 
     final_metadata = await _get_pr_metadata(app, owner, repo, number)
-    (
-        final_base_ref,
-        final_base_sha,
-        final_head,
-        mergeable,
-        merge_state,
-    ) = _pr_snapshot(final_metadata)
-    identity_changed = (final_base_ref, final_base_sha, final_head) != (
-        base_ref,
-        base_sha,
-        initial_head,
-    )
+    final_base_ref, final_base_sha, final_head, mergeable, merge_state = _pr_snapshot(final_metadata)
+    identity_changed = (final_base_ref, final_base_sha, final_head) != (base_ref, base_sha, initial_head)
     review_observed_movement = review_state is not None and not review_state.head_matches_expected
     if identity_changed or review_observed_movement or not checks_identity_matches:
         return _invalid_result(
-            number=number,
-            base_ref=final_base_ref,
-            base_sha=final_base_sha,
-            expected_head_sha=expected,
-            current_head_sha=final_head,
-            mergeable=mergeable,
-            merge_state=merge_state,
-            reason=(
-                "Pull request base or head changed during the merge-requirements read; "
-                "collected requirement evidence was discarded."
-            ),
+            number=number, base_ref=final_base_ref, base_sha=final_base_sha,
+            expected_head_sha=expected, current_head_sha=final_head,
+            mergeable=mergeable, merge_state=merge_state,
+            reason="Pull request base or head changed during the merge-requirements read; collected requirement evidence was discarded.",
+            evidence_sources=evidence_sources,
         )
 
+    evidence_sources.append(_source(
+        "pull_request_identity", "complete",
+        reason="Initial and final base/head identity snapshots match the expected exact head."
+    ))
     allowed_methods, methods_complete = _allowed_methods(
-        policy,
-        policy_complete,
-        repository_methods,
-        repository_methods_complete,
+        policy, policy_complete, repository_methods, repository_methods_complete
     )
     if policy_complete and policy is not None:
         policy_fields_known = True
@@ -384,42 +343,24 @@ async def gh_get_merge_requirements(
     else:
         current_approvals = _current_valid_approvals(
             review_state,
-            dismiss_stale_reviews_on_push=(
-                dismiss_stale_reviews_on_push if dismiss_stale_reviews_on_push is not None else True
-            ),
+            dismiss_stale_reviews_on_push=dismiss_stale_reviews_on_push if dismiss_stale_reviews_on_push is not None else True,
         )
-        approval_count = (
-            len(current_approvals)
-            if review_state.exact_head_evidence and dismiss_stale_reviews_on_push is not None
-            else None
-        )
+        approval_count = len(current_approvals) if review_state.exact_head_evidence and dismiss_stale_reviews_on_push is not None else None
         unresolved_threads = review_state.unresolved_review_threads
         review_decision = review_state.review_decision
         review_complete = review_state.exact_head_evidence
         if review_state.warning:
             warnings.append(review_state.warning)
 
-    review_satisfied = _review_requirements_result(
-        policy,
-        policy_fields_known,
-        review_state,
-        approval_count,
-    )
+    review_satisfied = _review_requirements_result(policy, policy_fields_known, review_state, approval_count)
     warning = " ".join(dict.fromkeys(warnings)) or None
     return PullRequestMergeRequirements(
-        number=number,
-        base_ref=base_ref,
-        base_sha=base_sha,
-        expected_head_sha=expected,
-        current_head_sha=initial_head,
-        head_matches_expected=True,
-        exact_head_evidence=True,
-        mergeable=mergeable,
-        merge_state=merge_state,
+        number=number, base_ref=base_ref, base_sha=base_sha,
+        expected_head_sha=expected, current_head_sha=initial_head,
+        head_matches_expected=True, exact_head_evidence=True,
+        mergeable=mergeable, merge_state=merge_state,
         policy_evidence_complete=policy_fields_known,
-        checks_evidence_complete=(
-            policy_fields_known and checks_read_complete and checks_identity_matches
-        ),
+        checks_evidence_complete=policy_fields_known and checks_read_complete and checks_identity_matches,
         review_evidence_complete=review_complete,
         up_to_date_evidence_complete=freshness_complete,
         required_status_checks=requirements,
@@ -437,5 +378,6 @@ async def gh_get_merge_requirements(
         up_to_date=up_to_date,
         allowed_merge_methods=allowed_methods,
         allowed_merge_methods_complete=methods_complete,
+        evidence_sources=evidence_sources,
         warning=warning,
     )
