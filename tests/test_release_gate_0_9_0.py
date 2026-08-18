@@ -16,6 +16,7 @@ EXPECTED_VERSION = "0.9.0"
 EXPECTED_TOOL_COUNT = 61
 EXPECTED_READ_ONLY_COUNT = 41
 EXPECTED_WRITE_COUNT = 20
+EXPECTED_PYREFLY_REQUIREMENT = "pyrefly==1.1.1"
 EXPECTED_WRITE_TOOLS = {
     "gh_commit_files",
     "gh_create_branch",
@@ -70,6 +71,25 @@ def test_release_versions_and_lockfile_agree() -> None:
     assert project["project"]["version"] == EXPECTED_VERSION
     assert len(editable_packages) == 1
     assert editable_packages[0]["version"] == EXPECTED_VERSION
+
+
+def test_pyrefly_is_pinned_as_release_static_type_authority() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    requirements = [
+        line.strip()
+        for line in (ROOT / "requirements-typecheck.txt").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    pyrefly = project["tool"]["pyrefly"]
+
+    assert requirements == [EXPECTED_PYREFLY_REQUIREMENT]
+    assert pyrefly["project-includes"] == ["src/**/*.py"]
+    assert pyrefly["project-excludes"] == ["tests/**/*.py"]
+    assert pyrefly["search-path"] == ["src", "."]
+    assert pyrefly["python-platform"] == "linux"
+    assert pyrefly["python-version"] == "3.12"
+    assert "baseline" not in pyrefly
+    assert not (ROOT / "pyrefly-baseline.json").exists()
 
 
 async def test_release_tool_inventory_is_exact() -> None:
@@ -187,9 +207,16 @@ def test_release_documentation_matches_runtime_authority() -> None:
     readme = (ROOT / "README.md").read_text()
     gate = (ROOT / "docs" / "release_gate_0_9_0.md").read_text()
     surface = "Version 0.9.0 exposes 61 public MCP tools: 41 read-only and 20 write."
+    pyrefly_command = (
+        "uv run --with-requirements requirements-typecheck.txt pyrefly check"
+    )
 
     assert surface in readme
     assert surface in gate
+    assert pyrefly_command in readme
+    assert pyrefly_command in gate
+    assert "uv run mypy" not in readme
+    assert "uv run mypy" not in gate
     for tool_name in EXPECTED_WRITE_TOOLS:
         assert tool_name in gate
     for retired in RETIRED_PUBLIC_TOOLS:
