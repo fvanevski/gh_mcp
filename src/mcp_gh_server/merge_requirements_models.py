@@ -27,6 +27,12 @@ class RequiredStatusCheck(BaseModel):
     integration_id: int | None = None
 
 
+class RequiredStatusCheckObservation(PullRequestCheck):
+    """One exact-head required-check observation bound to its policy identity."""
+
+    integration_id: int | None = None
+
+
 class MergeRequirementEvidenceSource(BaseModel):
     """Bounded diagnostic for one source contributing to merge-readiness evidence."""
 
@@ -56,7 +62,7 @@ class PullRequestMergeRequirements(BaseModel):
     review_evidence_complete: bool
     up_to_date_evidence_complete: bool
     required_status_checks: list[RequiredStatusCheck] = Field(default_factory=list)
-    current_required_checks: list[PullRequestCheck] = Field(default_factory=list)
+    current_required_checks: list[RequiredStatusCheckObservation] = Field(default_factory=list)
     required_approvals: int | None = Field(default=None, ge=0)
     current_valid_approvals: list[PullRequestReview] = Field(default_factory=list)
     current_valid_approval_count: int | None = Field(default=None, ge=0)

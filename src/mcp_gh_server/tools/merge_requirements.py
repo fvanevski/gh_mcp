@@ -13,6 +13,7 @@ from ..merge_requirements_models import (
     MergeRequirementEvidenceSource,
     PullRequestMergeRequirements,
     RequiredStatusCheck,
+    RequiredStatusCheckObservation,
 )
 from ..merge_requirements_policy import (
     MergePolicy,
@@ -22,6 +23,7 @@ from ..merge_requirements_policy import (
 from ..models import PullRequestCheck
 from ..pr_review_models import PullRequestReview, PullRequestReviewState
 from ..request_governor import GitHubRequestError
+from ..required_check_evidence import read_pinned_required_check_evidence
 from ..tooling import (
     READ_EXTERNAL,
     AppContext,
@@ -227,39 +229,104 @@ def _allowed_methods(
     )
 
 
+def _observation(
+    check: PullRequestCheck,
+    *,
+    integration_id: int | None,
+) -> RequiredStatusCheckObservation:
+    return RequiredStatusCheckObservation.model_validate(
+        {
+            **check.model_dump(),
+            "integration_id": integration_id,
+        }
+    )
+
+
+def _missing_observation(required: RequiredStatusCheck) -> RequiredStatusCheckObservation:
+    pinned = required.integration_id is not None
+    return RequiredStatusCheckObservation(
+        name=required.context,
+        integration_id=required.integration_id,
+        state="UNKNOWN",
+        bucket="pending",
+        description=(
+            "No exact-head observation exists for this required check identity."
+            if pinned
+            else "Required status check has no observation at the exact head."
+        ),
+    )
+
+
 def _reconcile_required_checks(
     requirements: list[RequiredStatusCheck],
     current_checks: list[PullRequestCheck],
-) -> list[PullRequestCheck]:
-    """Ensure every required check identity keeps an explicit exact-head representation."""
+    pinned_checks: list[RequiredStatusCheckObservation],
+    *,
+    absence_authoritative: bool,
+) -> list[RequiredStatusCheckObservation]:
+    """Represent each effective required identity without collapsing integration ids."""
 
     if not requirements:
-        return list(current_checks)
-    observed_contexts = {check.name for check in current_checks}
-    reconciled = list(current_checks)
-    represented: set[str] = set()
+        return []
+
+    unpinned_contexts = {
+        required.context for required in requirements if required.integration_id is None
+    }
+    pinned_identities = {
+        (required.context, required.integration_id)
+        for required in requirements
+        if required.integration_id is not None
+    }
+
+    reconciled: list[RequiredStatusCheckObservation] = [
+        _observation(check, integration_id=None)
+        for check in current_checks
+        if check.name in unpinned_contexts
+    ]
+    observed_unpinned = {check.name for check in reconciled}
+
+    pinned_by_identity = {
+        (check.name, check.integration_id): check
+        for check in pinned_checks
+        if check.integration_id is not None
+        and (check.name, check.integration_id) in pinned_identities
+    }
+
     for required in requirements:
-        if required.integration_id is None and (
-            required.context in observed_contexts or required.context in represented
-        ):
+        if required.integration_id is None:
+            if required.context not in observed_unpinned and absence_authoritative:
+                reconciled.append(_missing_observation(required))
             continue
-        if required.context in represented:
-            continue
-        description = (
-            "Required status check has no observation at the exact head."
-            if required.integration_id is None
-            else "No verified integration observation at the exact head."
-        )
-        reconciled.append(
-            PullRequestCheck(
-                name=required.context,
-                state="UNKNOWN",
-                bucket="pending",
-                description=description,
-            )
-        )
-        represented.add(required.context)
+
+        observed = pinned_by_identity.get((required.context, required.integration_id))
+        if observed is not None:
+            reconciled.append(observed)
+        elif absence_authoritative:
+            reconciled.append(_missing_observation(required))
+
     return reconciled
+
+
+def _required_check_policy_consistent(
+    requirements: list[RequiredStatusCheck],
+    current_checks: list[PullRequestCheck],
+) -> tuple[bool, list[str]]:
+    """Fail closed if GitHub reports required contexts absent from composed policy."""
+
+    policy_contexts = {required.context for required in requirements}
+    unexpected = sorted(
+        {check.name for check in current_checks if check.name not in policy_contexts}
+    )
+    if not unexpected:
+        return True, []
+    rendered = ", ".join(unexpected)
+    return (
+        False,
+        [
+            "GitHub reports exact-head required checks that are absent from the composed "
+            f"required-check policy ({rendered}); check evidence is incomplete."
+        ],
+    )
 
 
 @mcp.tool(
@@ -338,6 +405,11 @@ async def gh_get_merge_requirements(
     policy_complete = policy_read.complete
     warnings = list(policy_read.warnings)
     evidence_sources = list(policy_read.evidence_sources)
+    effective_requirements = (
+        list(policy.required_status_checks.values())
+        if policy_complete and policy is not None
+        else []
+    )
 
     methods_read = await read_repository_merge_methods_evidence(app, owner, repo)
     repository_methods = methods_read.methods
@@ -346,6 +418,10 @@ async def gh_get_merge_requirements(
     evidence_sources.append(methods_read.evidence_source)
 
     checks_identity_matches = True
+    checks_policy_consistent = True
+    checks_truncated = False
+    pinned_checks: list[RequiredStatusCheckObservation] = []
+
     if policy_complete and policy is not None and not policy.required_status_checks:
         current_checks: list[PullRequestCheck] = []
         checks_read_complete = True
@@ -382,13 +458,69 @@ async def gh_get_merge_requirements(
             )
         else:
             current_checks = check_state.checks
-            checks_read_complete = not check_state.truncated
+            checks_truncated = check_state.truncated
+            checks_read_complete = not checks_truncated
             checks_identity_matches = (
                 check_state.base_sha.casefold(),
                 check_state.head_sha.casefold(),
             ) == (base_sha, initial_head)
+
+            if policy_complete and policy is not None:
+                checks_policy_consistent, consistency_warnings = (
+                    _required_check_policy_consistent(effective_requirements, current_checks)
+                )
+                warnings.extend(consistency_warnings)
+
+                pinned_identities = {
+                    (required.context, required.integration_id)
+                    for required in effective_requirements
+                    if required.integration_id is not None
+                }
+                normalized_pinned_identities = {
+                    (context, integration_id)
+                    for context, integration_id in pinned_identities
+                    if integration_id is not None
+                }
+                if (
+                    normalized_pinned_identities
+                    and checks_read_complete
+                    and checks_identity_matches
+                ):
+                    try:
+                        pinned_read = await read_pinned_required_check_evidence(
+                            app,
+                            owner,
+                            repo,
+                            number,
+                            base_sha=base_sha,
+                            head_sha=initial_head,
+                            required_identities=normalized_pinned_identities,
+                            limit=min(app.settings.hard_max_results, 1_000),
+                        )
+                    except GitHubRequestError as exc:
+                        status = (
+                            f"HTTP {exc.status_code}"
+                            if exc.status_code is not None
+                            else "unknown status"
+                        )
+                        checks_read_complete = False
+                        warnings.append(
+                            "Integration-pinned required-check identity evidence is "
+                            f"unavailable ({status})."
+                        )
+                    else:
+                        pinned_checks = pinned_read.checks
+                        checks_truncated |= pinned_read.truncated
+                        checks_read_complete = (
+                            checks_read_complete and pinned_read.complete
+                        )
+                        checks_identity_matches = (
+                            checks_identity_matches and pinned_read.identity_matches
+                        )
+                        warnings.extend(pinned_read.warnings)
+
             check_status: MergeEvidenceStatus
-            if check_state.truncated:
+            if checks_truncated:
                 warnings.append(
                     "Current required-check evidence exceeds the configured result bound; "
                     "check evidence is incomplete."
@@ -398,9 +530,18 @@ async def gh_get_merge_requirements(
             elif not checks_identity_matches:
                 check_status = "head_mismatch"
                 check_reason = "The required-check snapshot did not match the exact PR identity."
+            elif not checks_read_complete or not checks_policy_consistent:
+                check_status = "unavailable"
+                check_reason = (
+                    "Required-check state or integration identity could not be established "
+                    "completely from the exact-head evidence."
+                )
             else:
                 check_status = "complete"
-                check_reason = "The exact-head required-check read is complete."
+                check_reason = (
+                    "The exact-head required-check read, including integration identity where "
+                    "required by policy, is complete."
+                )
             evidence_sources.append(
                 _source(
                     "current_required_checks",
@@ -410,6 +551,7 @@ async def gh_get_merge_requirements(
                         not policy_complete
                         or not checks_read_complete
                         or not checks_identity_matches
+                        or not checks_policy_consistent
                     ),
                 )
             )
@@ -535,7 +677,18 @@ async def gh_get_merge_requirements(
         conversation_resolution_required = None
         up_to_date_required = None
 
-    current_checks = _reconcile_required_checks(requirements, current_checks)
+    check_evidence_complete = (
+        policy_fields_known
+        and checks_read_complete
+        and checks_identity_matches
+        and checks_policy_consistent
+    )
+    current_required_checks = _reconcile_required_checks(
+        requirements,
+        current_checks,
+        pinned_checks,
+        absence_authoritative=check_evidence_complete,
+    )
 
     if review_state is None:
         current_approvals = []
@@ -579,13 +732,11 @@ async def gh_get_merge_requirements(
         mergeable=mergeable,
         merge_state=merge_state,
         policy_evidence_complete=policy_fields_known,
-        checks_evidence_complete=(
-            policy_fields_known and checks_read_complete and checks_identity_matches
-        ),
+        checks_evidence_complete=check_evidence_complete,
         review_evidence_complete=review_complete,
         up_to_date_evidence_complete=freshness_complete,
         required_status_checks=requirements,
-        current_required_checks=current_checks,
+        current_required_checks=current_required_checks,
         required_approvals=required_approvals,
         current_valid_approvals=current_approvals,
         current_valid_approval_count=approval_count,
