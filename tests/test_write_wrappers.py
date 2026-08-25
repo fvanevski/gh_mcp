@@ -1,4 +1,4 @@
-"""Regression tests for write-command execution and structured readback."""
+"""Regression tests for exact write-command execution and structured readback."""
 
 from __future__ import annotations
 
