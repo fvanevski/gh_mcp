@@ -4,14 +4,17 @@ A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
 runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
-Version 0.9.0 exposes 61 public MCP tools: 41 read-only and 20 write.
+Version 0.9.0 exposes 62 public MCP tools: 41 read-only and 21 write.
 The 0.9.0 release splits the former generic `gh_submit_pr_review` into three
 action-specific formal pull-request review writes — `gh_approve_pr`,
 `gh_request_pr_changes`, and `gh_comment_pr_review` — and adds the read-only
 `gh_get_pr_review_eligibility` preflight. Each review write submits exactly one review
 through the server-configured reviewer principal, verifies the exact head and
 authenticated reviewer identity immediately before the review POST, and readbacks
-immutable review-ID state. The 0.8.0 release retired the weaker generic workflow-dispatch,
+immutable review-ID state. Issue #80 additionally adds `gh_patch_files`, a focused
+exact-context text-patch write that materializes all edits against immutable original
+blob snapshots before creating Git objects and then reuses the canonical content-commit
+CAS/readback state machine. The 0.8.0 release retired the weaker generic workflow-dispatch,
 release-creation, and label-upsert writes, removed obsolete write-compatibility
 infrastructure, and registered every public write exactly once through the canonical
 host-facing schema facade. Historical 0.7.0/0.7.1, 0.8.0, and 0.8.1 release records
@@ -81,7 +84,7 @@ remain available under `docs/` but do not define the current runtime inventory.
 - `gh_compare_commits`: compare two exact commit SHAs with explicit merge-base,
   ahead/behind status, independently bounded commit/file evidence, and digests.
 
-### Write (20)
+### Write (21)
 
 - `gh_create_issue`: create a new issue (write, disabled by default).
 - `gh_create_pr`: create a new pull request (write, disabled by default).
@@ -119,6 +122,9 @@ remain available under `docs/` but do not define the current runtime inventory.
   (destructive write, separately disabled by default).
 - `gh_commit_files`: atomically create or replace files in one branch commit
   (destructive write, separately disabled by default).
+- `gh_patch_files`: apply bounded exact-context UTF-8 text edits to existing files in one
+  branch commit, preserving supported file modes and reusing the content-commit exact-CAS
+  and authoritative readback contract (destructive write, separately disabled by default).
 
 Historical 0.7.1 additionally exposed the weaker generic `gh_run_workflow`,
 `gh_create_release`, and `gh_upsert_label` writes. They are retired in 0.8.0 rather
@@ -130,11 +136,13 @@ or reinterpret historical 0.7.x inventory records as current runtime authority.
 ## 0.9.0 architecture and evidence contract
 
 `src/mcp_gh_server/server.py` is the composition root; public read implementations live
-in cohesive domain modules under `src/mcp_gh_server/tools/`, while the 20 public writes
+in cohesive domain modules under `src/mcp_gh_server/tools/`, while the 21 public writes
 are registered exactly once from `src/mcp_gh_server/current_write_tool_schema.py`. That
-facade keeps the pre-review-split writes and delegates the three formal review writes to
-`src/mcp_gh_server/pr_review_tool_schema.py`. GitHub request execution is centralized
-through the shared `GitHubRequestGovernor` rather than duplicated in individual tools.
+facade keeps the non-review writes and delegates the three formal review writes to
+`src/mcp_gh_server/pr_review_tool_schema.py`. `gh_commit_files` and `gh_patch_files`
+share `src/mcp_gh_server/content_commit_service.py` as the sole materialized-content
+object/CAS/readback state machine. GitHub request execution is centralized through the
+shared `GitHubRequestGovernor` rather than duplicated in individual tools.
 
 Writes remain default-off. Exact-state tools preserve expected state/SHA preconditions
 where applicable, perform one mutation attempt, and require authoritative readback
@@ -241,9 +249,9 @@ account plan and integration surface:
 - A ChatGPT Plus user may be able to install or discover a custom plugin, but the
   plugin's MCP gateway is a separate, more limited integration. This project does
   not assume that gateway supports arbitrary custom MCP tools or write actions.
-- Seeing `gh_get_file_contents` or `gh_commit_files` in a discovery response proves
-  only that the server advertised the tools. It does not prove that the Plus plugin
-  gateway will route either invocation to the server.
+- Seeing `gh_get_file_contents`, `gh_commit_files`, or `gh_patch_files` in a discovery
+  response proves only that the server advertised the tools. It does not prove that
+  the Plus plugin gateway will route the invocation to the server.
 
 The Business/Enterprise **Action control**, action-refresh, and workspace-publish
 instructions do not apply to a Plus account. If the Plus gateway reports that the
@@ -282,11 +290,8 @@ See OpenAI's current
 and
 [plugin availability](https://help.openai.com/en/articles/20001256).
 
-At `INFO`, both repository-content tools log a content-free reachability marker:
-
-```text
-MCP tool invocation reached server: tool=gh_get_file_contents
-```
+At `INFO`, repository-content tools log content-free reachability markers using their
+own tool names, including `gh_get_file_contents`, `gh_commit_files`, and `gh_patch_files`.
 
 The four focused PR snapshot/review reads emit the same marker using their own tool
 name.
@@ -573,11 +578,26 @@ generic command input, nested MCP elicitation, interactive stdin, force option, 
 update, or issue-content mutation. Host approval remains the only interactive approval
 layer.
 
+### Repository content writes
+
 `gh_commit_files` accepts complete UTF-8 file contents, validates repository-relative
 paths, and creates all supplied files in one Git tree and one commit. It conditionally
 advances the named branch only if it still points to `expected_head_sha`; the update
 uses GitHub's atomic `updateRefs` mutation with `beforeOid` and never forces a ref.
-The operation does not support file deletion. Bound its request size with:
+The operation does not support file deletion.
+
+`gh_patch_files` is the narrow existing-file edit primitive. Every requested `old_text`
+must occur exactly once in the target file's immutable original blob snapshot. All edits
+for a file are resolved against that same original snapshot, so later edits cannot match
+text introduced by earlier edits; overlapping source spans fail closed. The tool rejects
+missing or non-unique context, stale or moved branch heads, symlinks and unsupported Git
+modes, binary/NUL content, and non-UTF-8 targets before creating content Git objects.
+It cannot create, delete, or rename files and preserves supported regular/executable modes.
+After all patch files have been materialized, it rechecks the branch head and delegates the
+one-commit/one-CAS mutation and bounded exact-ref reconciliation to the same canonical
+`content_commit_service.py` path used by `gh_commit_files`.
+
+Bound both content-write request families with:
 
 ```dotenv
 MCP_GH_MAX_COMMIT_FILES=100
@@ -585,9 +605,10 @@ MCP_GH_MAX_FILE_BYTES=1000000
 MCP_GH_MAX_COMMIT_BYTES=5000000
 ```
 
-If the final ref-update response is interrupted, the tool reads the branch before
-reporting the outcome. An indeterminate result explicitly requires a fresh read and
-must not be retried automatically.
+If the final ref-update response is interrupted, the content-write service reads the branch
+before reporting the outcome. An indeterminate result explicitly requires a fresh read and
+must not be retried automatically. See `docs/gh_patch_files.md` for the focused patch-write
+contract and regressions.
 
 ## Operational limits
 
@@ -639,7 +660,7 @@ For PR review, changed Python tests must also be passed explicitly to the change
 historical test corpus.
 
 The 0.9.0 release passes only when package/server/tool-schema/lock versions, the exact
-61/41/20 executable inventory, schema snapshots, canonical registration invariants,
+62/41/21 executable inventory, schema snapshots, canonical registration invariants,
 compatibility-path absence, focused negative/fail-closed regressions, static checks,
 and the full test suite agree on the same exact candidate SHA. Any source change
 invalidates affected validation and requires rerunning it.
@@ -653,6 +674,8 @@ release authority is `docs/release_gate_0_9_0.md` and `tests/test_release_gate_0
   calls inside focused tools; it does not expose a generic command or API executor.
   Rate limits, authentication, and permission scoping are governed by the `gh` CLI
   and the token in `GITHUB_TOKEN`.
+- `gh_patch_files` is deliberately text-only and existing-file-only; create/delete/rename,
+  binary edits, symlink edits, and mode changes remain outside that public primitive.
 - Commands like `gh release create` that require file uploads or complex multi-step
   flows are intentionally out of scope — they would need a dedicated maintenance tool.
 - The `gh` CLI must be installed and available on PATH.

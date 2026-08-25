@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from mcp_gh_server.models import CommitFile
 from mcp_gh_server.request_governor import (
     GitHubRequestError,
     GitHubRequestMetadata,
@@ -44,7 +43,7 @@ from mcp_gh_server.server import (
     gh_watch_run,
 )
 from mcp_gh_server.settings import Settings
-from mcp_gh_server.write_tool_schema import gh_submit_pr_review
+from mcp_gh_server.write_tool_schema import PublicCommitFile, gh_submit_pr_review
 
 
 @dataclass
@@ -100,7 +99,7 @@ async def test_server_info_is_local_bounded_and_subprocess_free() -> None:
     assert result.server_version == "0.9.0"
     assert result.tool_schema_version == "0.9.0"
     assert result.transport == "stdio"
-    assert result.tool_count == 61
+    assert result.tool_count == 62
     assert result.write_commands_enabled is True
     assert result.content_commits_enabled is True
     assert result.pr_merge_enabled is True
@@ -1236,7 +1235,7 @@ async def test_commit_files_requires_separate_content_commit_opt_in() -> None:
             "repo",
             "feature",
             "a" * 40,
-            [CommitFile(path="file.txt", content="content")],
+            [PublicCommitFile(path="file.txt", content="content")],
             "Commit",
             ctx=context,
         )
@@ -1266,8 +1265,8 @@ async def test_commit_files_creates_one_tree_commit_and_cas_ref_update() -> None
         ]
     )
     files = [
-        CommitFile(path="docs/one.md", content="one\n"),
-        CommitFile(path="scripts/run.sh", content="#!/bin/sh\n", mode="100755"),
+        PublicCommitFile(path="docs/one.md", content="one\n"),
+        PublicCommitFile(path="scripts/run.sh", content="#!/bin/sh\n", mode="100755"),
     ]
 
     result = await gh_commit_files(
@@ -1332,7 +1331,7 @@ async def test_commit_files_head_mismatch_creates_no_git_objects() -> None:
             "repo",
             "feature",
             head,
-            [CommitFile(path="file.txt", content="content")],
+            [PublicCommitFile(path="file.txt", content="content")],
             "Commit",
             ctx=_context(client),
         )
@@ -1366,7 +1365,7 @@ async def test_commit_files_ref_race_returns_branch_unchanged_result() -> None:
         "repo",
         "feature",
         head,
-        [CommitFile(path="file.txt", content="content")],
+        [PublicCommitFile(path="file.txt", content="content")],
         "Commit",
         ctx=_context(client),
     )
@@ -1408,7 +1407,7 @@ async def test_commit_files_unknown_ref_outcome_requires_read_before_retry() -> 
         "repo",
         "feature",
         head,
-        [CommitFile(path="file.txt", content="content")],
+        [PublicCommitFile(path="file.txt", content="content")],
         "Commit",
         ctx=_context(client),
     )

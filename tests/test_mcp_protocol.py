@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import httpx2
 import pytest
@@ -15,6 +16,14 @@ from mcp_types import InputRequiredResult
 
 from mcp_gh_server.server import mcp
 from mcp_gh_server.settings import get_settings
+
+
+def _first_text(result: Any) -> str:
+    content = result.content
+    assert content
+    text = getattr(content[0], "text", None)
+    assert isinstance(text, str)
+    return text
 
 
 def _write_fake_gh(tmp_path: Path) -> None:
@@ -271,9 +280,9 @@ else:
 
 @pytest.mark.asyncio
 async def test_registered_tool_schemas_and_annotations() -> None:
-    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    tools: dict[str, Any] = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 61
+    assert len(tools) == 62
     assert "gh_run_workflow" not in tools
     assert "gh_create_release" not in tools
     assert "gh_submit_pr_review" not in tools
@@ -283,6 +292,7 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert "gh_get_ref" in tools
     assert "gh_compare_commits" in tools
     assert "gh_commit_files" in tools
+    assert "gh_patch_files" in tools
     assert "gh_create_branch_from_sha" in tools
     assert "gh_get_pr_diff" in tools
     assert "gh_list_pr_files" in tools
@@ -311,6 +321,7 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert tools["gh_create_branch_from_sha"].annotations.read_only_hint is False
     assert tools["gh_run_workflow_exact"].annotations.destructive_hint is True
     assert tools["gh_commit_files"].annotations.destructive_hint is True
+    assert tools["gh_patch_files"].annotations.destructive_hint is True
     assert tools["gh_approve_pr"].annotations.read_only_hint is False
     assert tools["gh_approve_pr"].annotations.destructive_hint is False
     assert tools["gh_approve_pr"].annotations.idempotent_hint is False
@@ -537,7 +548,7 @@ async def test_stdio_write_denial_does_not_elicit_or_lock_session() -> None:
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is True
         tools_after_failure = await session.list_tools()
-        assert len(tools_after_failure.tools) == 61
+        assert len(tools_after_failure.tools) == 62
 
 
 @pytest.mark.asyncio
@@ -573,7 +584,7 @@ async def test_stdio_write_executes_once_without_elicitation_using_fake_gh(tmp_p
         )
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is False
-        assert len((await session.list_tools()).tools) == 61
+        assert len((await session.list_tools()).tools) == 62
 
 
 @pytest.mark.asyncio
@@ -647,7 +658,7 @@ async def test_streamable_http_write_denial_keeps_session_usable(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is True
-            assert len((await session.list_tools()).tools) == 61
+            assert len((await session.list_tools()).tools) == 62
     finally:
         get_settings.cache_clear()
 
@@ -680,7 +691,7 @@ async def test_streamable_http_write_executes_without_nested_input_round(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is False
-            assert len((await session.list_tools()).tools) == 61
+            assert len((await session.list_tools()).tools) == 62
     finally:
         get_settings.cache_clear()
 
@@ -727,7 +738,7 @@ async def test_streamable_http_exact_sha_branch_keeps_session_live(
             server_info = await session.call_tool("gh_server_info", {})
             assert server_info.is_error is False
             assert server_info.structured_content["server_version"] == "0.9.0"
-            assert len((await session.list_tools()).tools) == 61
+            assert len((await session.list_tools()).tools) == 62
     finally:
         get_settings.cache_clear()
 
@@ -778,7 +789,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
                 "server_version": "0.9.0",
                 "tool_schema_version": "0.9.0",
                 "transport": "streamable-http",
-                "tool_count": 61,
+                "tool_count": 62,
                 "write_commands_enabled": False,
                 "content_commits_enabled": False,
                 "pr_merge_enabled": False,
@@ -880,6 +891,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
                 "gh_get_ref",
                 "gh_compare_commits",
                 "gh_commit_files",
+                "gh_patch_files",
                 "gh_create_branch_from_sha",
                 "gh_list_workflows",
                 "gh_run_workflow_exact",
@@ -922,7 +934,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_write, InputRequiredResult)
             assert denied_write.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_write.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_write)
 
             denied_exact_branch = await session.call_tool(
                 "gh_create_branch_from_sha",
@@ -936,7 +948,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_exact_branch, InputRequiredResult)
             assert denied_exact_branch.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_exact_branch.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_exact_branch)
 
             denied_review = await session.call_tool(
                 "gh_approve_pr",
@@ -951,7 +963,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_review, InputRequiredResult)
             assert denied_review.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_review.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_review)
 
             denied_merge = await session.call_tool(
                 "gh_merge_pr",
@@ -966,7 +978,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_merge, InputRequiredResult)
             assert denied_merge.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_merge.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_merge)
 
             denied_issue_state = await session.call_tool(
                 "gh_set_issue_state",
@@ -982,7 +994,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_issue_state, InputRequiredResult)
             assert denied_issue_state.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_issue_state.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_issue_state)
 
             server_info_after_denial = await session.call_tool("gh_server_info", {})
             assert server_info_after_denial.is_error is False
@@ -990,7 +1002,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
 
             second_file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert second_file_result.is_error is False
-            assert len((await session.list_tools()).tools) == 61
+            assert len((await session.list_tools()).tools) == 62
     finally:
         get_settings.cache_clear()
 
@@ -1077,6 +1089,6 @@ async def test_streamable_http_formal_review_then_merge_without_nested_input(
             assert not isinstance(merge, InputRequiredResult)
             assert merge.is_error is False
             assert merge.structured_content["merged"] is True
-            assert len((await session.list_tools()).tools) == 61
+            assert len((await session.list_tools()).tools) == 62
     finally:
         get_settings.cache_clear()

@@ -7,7 +7,7 @@ define the current runtime inventory.
 
 ## Version and inventory authority
 
-Version 0.9.0 exposes 61 public MCP tools: 41 read-only and 20 write.
+Version 0.9.0 exposes 62 public MCP tools: 41 read-only and 21 write.
 
 For the 0.9.0 candidate, the authoritative sources are:
 
@@ -20,15 +20,17 @@ For the 0.9.0 candidate, the authoritative sources are:
   `tests/test_tool_return_models.py`; and
 - release integration assertions in `tests/test_release_gate_0_9_0.py`.
 
-Those sources must all report `0.9.0` and the 61/41/20 inventory for the release candidate,
+Those sources must all report `0.9.0` and the 62/41/21 inventory for the release candidate,
 and the committed Pyrefly pin/configuration must remain present without a general baseline.
 
 ## Scope
 
 0.9.0 is a surface-focused release that splits the former generic `gh_submit_pr_review`
-write into three action-specific formal pull-request review writes and adds one read-only
-eligibility preflight. It does not change the ordinary write gates, repository/owner target
-policies, or the exact-state and ambiguity contracts of the unchanged writes.
+write into three action-specific formal pull-request review writes, adds one read-only
+eligibility preflight, and adds the focused `gh_patch_files` exact-context repository-content
+write from issue #80. The patch addition preserves the ordinary write gates,
+repository/owner target policies, and the exact-state/ambiguity contract of the existing
+content-commit path by reusing one canonical materialized-content CAS/readback service.
 
 The 0.9.0 changes:
 
@@ -55,12 +57,20 @@ The 0.9.0 changes:
    APPROVED review or ordinary COMMENTED review is currently eligible. This advisory call
    performs no review write and never mints a reviewer installation token.
 
+5. **`gh_patch_files`** — destructive write: apply bounded exact-context UTF-8 text edits to
+   existing regular/executable files only. Every requested `old_text` is matched exactly once
+   against the immutable original blob snapshot; all edits for a file are resolved against
+   that same snapshot and overlapping source spans fail before mutation. The tool materializes
+   all files, rechecks the exact branch head immediately before the first Git-object write,
+   then delegates one commit, one exact `updateRefs` CAS, and bounded authoritative ref
+   reconciliation to the same canonical service used by `gh_commit_files`.
+
 The retired `gh_submit_pr_review` generic review action is not a public registration, alias,
 or compatibility shim in 0.9.0.
 
 ## Public write inventory
 
-The 20 public writes are:
+The 21 public writes are:
 
 - `gh_create_issue`
 - `gh_edit_issue`
@@ -78,6 +88,7 @@ The 20 public writes are:
 - `gh_merge_pr`
 - `gh_create_repo`
 - `gh_commit_files`
+- `gh_patch_files`
 - `gh_create_release_exact`
 - `gh_run_workflow_exact`
 - `gh_create_branch`
@@ -89,10 +100,47 @@ by the three action-specific review writes above. None are aliases, compatibilit
 hidden public registrations in 0.9.0.
 
 `src/mcp_gh_server/current_write_tool_schema.py` composes this inventory from an explicit
-17-tool non-review allowlist plus the three action-specific formal-review tools. It does not
+18-tool non-review allowlist plus the three action-specific formal-review tools. It does not
 derive the current authority by importing an older public inventory and subtracting a retired
-tool name. This keeps future changes to the historical/non-review facade from accidentally
-reintroducing a retired formal-review authority.
+tool name. `gh_patch_files` is explicitly imported from its focused host-facing facade rather
+than being routed through a generic command or compatibility adapter. This keeps future
+changes from accidentally reintroducing retired authority or a parallel content-write state
+machine.
+
+## Issue #80 exact-context patch contract
+
+The current patch-write authority is `src/mcp_gh_server/tools/patch_writes.py`, the
+host-facing schema in `src/mcp_gh_server/patch_write_schema.py`, the patch models in
+`src/mcp_gh_server/patch_models.py`, and the shared mutation service in
+`src/mcp_gh_server/content_commit_service.py`.
+
+Release acceptance requires all of the following invariants:
+
+- `gh_patch_files` accepts an exact `expected_head_sha` and rejects a stale head before any
+  content Git object is created;
+- patch targets must already exist at that immutable head and must be supported regular or
+  executable files; create, delete, rename, symlink edit, binary/NUL edit, non-UTF-8 edit,
+  and mode-change semantics are outside the tool;
+- every `old_text` must occur exactly once in the target file's original immutable blob;
+- every edit for one file is resolved against that same original snapshot, never against
+  text produced by an earlier edit;
+- overlapping original source spans fail closed;
+- every patch target is fully materialized and validated before the first blob/tree/commit
+  object is written;
+- the branch is re-read after materialization and immediately before Git-object creation, so
+  head movement during validation fails before content mutation;
+- supported `100644` and `100755` modes are preserved exactly;
+- all materialized files flow through the same `content_commit_service.py` object creation,
+  one-shot `updateRefs` compare-and-swap (`beforeOid`, `afterOid`, `force=False`), ambiguity,
+  and issue #73 bounded exact-ref reconciliation contract used by `gh_commit_files`;
+- one patch invocation creates at most one commit and attempts the ref CAS exactly once;
+- result evidence reports the exact previous head, created commit/tree when applicable,
+  tri-state ref/readback outcome, per-file original/result blob identities, changed paths,
+  file/edit counts, and warning/request identity metadata; and
+- `gh_commit_files` retains its existing full-content replacement public input/output contract.
+
+No patch-validation failure may be converted into a partial object write merely to simplify
+implementation. No ambiguous content CAS may be blindly replayed.
 
 ## Read-plane contract additions
 
@@ -107,9 +155,10 @@ These changes preserve:
 
 - public tool names for all unchanged tools;
 - read/write annotations;
-- the 41/20 split;
+- the 41/21 split;
 - write authorization or fine gates;
-- historical 0.7.x/0.8.x release-gate records.
+- historical 0.7.x/0.8.x release-gate records; and
+- the historical issue #75 live evidence recorded below at its original exact heads.
 
 ## Reviewer-principal hardening
 
@@ -147,19 +196,29 @@ credentials are configured.
   errors.
 - `tests/test_reviewer_client_isolation.py` — proves unrelated ordinary PR writes do not
   resolve or reuse reviewer credentials.
-- `tests/test_tool_schema_snapshot.py` — pins the complete current 61-tool schema surface,
-  including the four new review tool schemas and the absence of `gh_submit_pr_review`.
-- `tests/test_write_surface_contract.py` — pins all 20 public write facades and canonical
-  module provenance, including the three review writes bound to `pr_review_tool_schema`.
-- `tests/test_release_gate_0_9_0.py` — also pins the repository's Pyrefly authority,
-  checker version file, no-baseline policy, and current validation documentation.
+- `tests/test_patch_files.py` — issue #80 regression coverage for exact original-snapshot
+  replacement/deletion, multiple edits, missing/non-unique context, overlap rejection,
+  initial and mid-validation head movement, mode preservation, unsupported target rejection,
+  multi-file one-commit/one-CAS behavior, and ambiguous-CAS reconciliation without replay.
+- `tests/test_git_content_write_schema.py` — pins patch exact-outcome/evidence fields while
+  preserving the existing `gh_commit_files` public contract.
+- `tests/test_tool_schema_snapshot.py` — pins the complete current 62-tool schema surface,
+  including `gh_patch_files`, the four review tool schemas, and the absence of
+  `gh_submit_pr_review`.
+- `tests/test_write_surface_contract.py` — pins all 21 public write facades and canonical
+  module provenance, including the three review writes bound to `pr_review_tool_schema` and
+  `gh_patch_files` bound to its focused patch facade.
+- `tests/test_release_gate_0_9_0.py` — pins the 62/41/21 inventory, repository Pyrefly
+  authority, checker version file, no-baseline policy, and current validation documentation.
+- `docs/gh_patch_files.md` — records the focused exact-context patch-write contract and
+  acceptance/failure semantics.
 - `docs/pr-review-evidence-contract.md` and `docs/write-schema-contract.md` — describe the
   0.9.0 review surface and host-facing write contracts.
 
 ## Validation
 
-Validation is bound to one exact candidate SHA. Any source change invalidates affected
-results.
+Validation is bound to one exact candidate SHA. Any source or documentation change invalidates
+affected results.
 
 Required commands are:
 
@@ -168,6 +227,8 @@ uv run pytest tests/test_release_gate_0_9_0.py \
   tests/test_write_schema_policy.py \
   tests/test_tool_schema_snapshot.py \
   tests/test_write_surface_contract.py \
+  tests/test_git_content_write_schema.py \
+  tests/test_patch_files.py \
   tests/test_pr_review_identity.py \
   tests/test_reviewer_auth.py \
   tests/test_reviewer_client_isolation.py \
@@ -190,6 +251,14 @@ defines the no-argument project scope. Changed test files are supplied explicitl
 changed-scope validation. No general `pyrefly-baseline.json`, broad suppression, scope weakening,
 or checker substitution is part of the release contract. Mypy may remain installed for
 historical developer use but is not release validation authority.
+
+Issue #80 additionally requires a disposable live patch exercise on one exact branch head.
+The live acceptance record must demonstrate at least a small exact-context edit against a
+sufficiently large existing text file to show that the caller does not need to submit the full
+replacement payload, corroborate original/result blob identities and the exact branch ref,
+and show one commit/one CAS with authoritative readback. This documentation synchronization
+does **not** claim that live exercise has already been completed; it remains required until
+separately recorded against an exact implementation head.
 
 ## Ambiguity and replay policy
 
@@ -222,14 +291,15 @@ weakened merely to alter host classification.
 
 A deployed `gh_server_info` result is not sufficient to prove that a ChatGPT connector has
 refreshed its cached tool namespace. Before closing the gate, rediscover the connector and
-verify that `gh_get_pr_review_eligibility`, `gh_approve_pr`, `gh_request_pr_changes`, and
-`gh_comment_pr_review` are callable and that the retired `gh_submit_pr_review` is absent.
-A stale host namespace must be classified separately from the server's executable inventory.
+verify that `gh_get_pr_review_eligibility`, `gh_approve_pr`, `gh_request_pr_changes`,
+`gh_comment_pr_review`, and `gh_patch_files` are callable and that the retired
+`gh_submit_pr_review` is absent. A stale host namespace must be classified separately from
+the server's executable inventory.
 
-## Disposable live exercise
+## Disposable live exercise — issue #75 historical record
 
-The deterministic suite is necessary but not sufficient for issue #75. The live
-exercise required the following evidence to be bound to one exact disposable PR head:
+The deterministic suite was necessary but not sufficient for issue #75. Its live exercise
+required the following evidence to be bound to one exact disposable PR head:
 
 | Scenario | Required result |
 | --- | --- |
@@ -245,11 +315,11 @@ If an App approval is intended to satisfy a repository required-review policy, v
 policy separately. The existence of an `APPROVED` review object is not evidence that a
 ruleset or branch-protection rule counts that App's approval.
 
-All required live scenarios in the table above have been executed; the completed record
-is "Final live evidence" below. The only remaining gate action after that record is a
-fresh exact-head review of the final head before merge.
+All required issue #75 live scenarios in the table above were executed. The completed record
+is preserved below as historical evidence at its original exact revisions; its 61/41/20
+runtime count is intentionally not rewritten to the post-issue-#80 current 62/41/21 inventory.
 
-## Final live evidence
+## Final live evidence — issue #75 historical record
 
 The completed issue #75 live acceptance record:
 
@@ -267,12 +337,12 @@ The completed issue #75 live acceptance record:
    COMPLETE. No App secrets, installation-token values, JWTs, or private-key
    contents are recorded in this document.
 
-3. **Connector/runtime surface** — backend version 0.9.0, tool-schema version 0.9.0,
-   61 total tools (41 read-only, 20 write). The current action-specific review
-   surface is `gh_get_pr_review_eligibility`, `gh_approve_pr`,
-   `gh_request_pr_changes`, and `gh_comment_pr_review`; the retired
-   `gh_submit_pr_review` is absent from the authoritative current executable MCP
-   inventory.
+3. **Connector/runtime surface at the issue #75 accepted head** — backend version 0.9.0,
+   tool-schema version 0.9.0, 61 total tools (41 read-only, 20 write). The action-specific
+   review surface at that historical head was `gh_get_pr_review_eligibility`,
+   `gh_approve_pr`, `gh_request_pr_changes`, and `gh_comment_pr_review`; the retired
+   `gh_submit_pr_review` was absent from that executable MCP inventory. This is historical
+   exact-head evidence, not the current post-issue-#80 inventory authority.
 
 4. **Completed live scenario matrix**
    - **Wrong expected reviewer**: COMPLETE — rejected before the formal-review POST;
@@ -326,4 +396,5 @@ The completed issue #75 live acceptance record:
 
 0.9.0 does not add arbitrary public `gh api`, arbitrary `gh <args...>`, a generic
 shell/subprocess MCP tool, administrator merge bypass, automatic mutation replay,
-artifact/log deletion, or branch-protection/ruleset mutation.
+artifact/log deletion, branch-protection/ruleset mutation, repository file create/delete/rename
+through `gh_patch_files`, binary patching, symlink patching, or patch-driven mode changes.

@@ -13,12 +13,21 @@ tools are off-by-default and gated behind explicit environment flags.
 gh --version                 # requires gh >= 2.97.0
 cp .env.example .env        # add GITHUB_TOKEN
 uv sync --dev
-uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run --with-requirements requirements-typecheck.txt pyrefly check
+uv run pytest
 ```
 
 `gh >= 2.97.0` is a runtime requirement. Actions log readers depend on the
 `gh api --allow-escape-sequences` behavior introduced in 2.97.0. Do not validate against
 older releases without an explicit compatibility design change.
+
+Pyrefly is the sole authoritative Python static type checker for CI/review/release decisions.
+`requirements-typecheck.txt` pins its executable independently from the runtime/dev lock,
+and `[tool.pyrefly]` in `pyproject.toml` defines project scope. Changed Python tests must also
+be supplied explicitly to Pyrefly because the historical test corpus is excluded from the
+no-argument project scope.
 
 Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offline.
 
@@ -29,28 +38,33 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 | `src/mcp_gh_server/server.py` | Composition root — registers every public write exactly once and imports self-registered reads |
 | `src/mcp_gh_server/tooling.py` | Shared helpers: annotations, write gates, repository validation, evidence |
 | `src/mcp_gh_server/tools/` | Read-only tools plus canonical write implementations by domain |
-| `src/mcp_gh_server/current_write_tool_schema.py` | Canonical current 0.9.0 public write inventory — 17 non-review writes plus 3 action-specific formal-review writes |
+| `src/mcp_gh_server/current_write_tool_schema.py` | Canonical current 0.9.0 public write inventory — 18 non-review writes plus 3 action-specific formal-review writes |
+| `src/mcp_gh_server/patch_write_schema.py` | Focused host-facing facade for `gh_patch_files` |
 | `src/mcp_gh_server/pr_review_tool_schema.py` | Dedicated action-specific formal-review facade for approve/request-changes/comment-review |
-| `src/mcp_gh_server/write_tool_schema.py` | Internal facade source for the current non-review writes; not the current public-inventory authority |
+| `src/mcp_gh_server/write_tool_schema.py` | Internal facade source for the established non-review writes; not the complete current public-inventory authority |
+| `src/mcp_gh_server/content_commit_service.py` | Shared materialized-content Git object, exact ref-CAS, and bounded reconciliation state machine |
 | `src/mcp_gh_server/write_contracts.py` | Shared exact-state and tri-state mutation/readback contract |
 | `src/mcp_gh_server/models.py` | Pydantic result schemas used by tests and tool annotations |
+| `src/mcp_gh_server/patch_models.py` | Pydantic request/result models for exact-context patch writes |
 | `src/mcp_gh_server/settings.py` | Runtime config, loaded once via cached `get_settings()` |
 | `src/mcp_gh_server/serialization.py` | JSON-safe serialization helpers |
 | `tests/test_release_gate_0_9_0.py` | Current package/schema/inventory/registration release gate |
+| `tests/test_patch_files.py` | Exact-context patch semantics, failure ordering, one-commit/CAS, and ambiguity regressions |
 | `tests/test_write_wrappers.py` | Broad regression coverage for write and adjacent read tools |
 | `tests/test_mcp_protocol.py` | Protocol-level registration/schema/annotation contract tests |
 | `tests/test_integration.py` | Live-GitHub integration tests requiring `GITHUB_TOKEN` |
 
 Key invariant: `current_write_tool_schema.py` owns the current host-facing public write
-inventory, composing 17 non-review wrappers from `write_tool_schema.py` with the 3 dedicated
-formal-review wrappers from `pr_review_tool_schema.py`. `server.py` is the sole MCP
-registration path for those 20 current public write names. `gh_submit_pr_review` is retired
-from the current inventory and must not be restored merely because its internal legacy
-wrapper remains available to historical code/tests.
+inventory, composing 18 non-review writes with the 3 dedicated formal-review writes.
+`gh_patch_files` is explicitly supplied by `patch_write_schema.py`; the other established
+non-review facades remain sourced from `write_tool_schema.py`. `server.py` is the sole MCP
+registration path for all 21 current public write names. `gh_submit_pr_review` is retired
+from the current inventory and must not be restored merely because its internal historical
+wrapper remains available to legacy code/tests.
 
 The obsolete `legacy_*write*` compatibility adapters, `legacy_write_support.py`,
 `legacy_assignee_support.py`, and the `legacy_write_status` projection are not part of the
-0.8.0 architecture and must not be restored merely to satisfy historical tests.
+current architecture and must not be restored merely to satisfy historical tests.
 
 ## Runtime architecture
 
@@ -91,9 +105,21 @@ Branch tools distinguish contracts deliberately:
 - `gh_create_branch_from_sha` — accepts an exact 40-character commit SHA and never moves
   or overwrites an existing ref.
 
-`gh_commit_files` validates repository-relative paths and request-size bounds, builds one
-commit, and conditionally advances exactly one existing branch using exact compare-and-swap
-state. It does not support file deletion or forced ref updates.
+Repository content writes deliberately have two public request shapes but one mutation
+state machine:
+
+- `gh_commit_files` accepts complete UTF-8 replacement contents, validates path/request
+  bounds, builds one commit, and conditionally advances one existing branch by exact CAS.
+- `gh_patch_files` accepts bounded exact-context edits for existing UTF-8 regular/executable
+  files only. Every `old_text` must occur exactly once in the immutable original blob; all
+  edits resolve against that original and overlapping source spans are rejected. It preserves
+  supported modes, validates all targets before object creation, rechecks the exact branch
+  head immediately before object creation, and cannot create/delete/rename files.
+
+Both delegate Git blob/tree/commit creation, the single `updateRefs` CAS, and bounded
+exact-ref reconciliation to `content_commit_service.py`. Neither force-updates a ref, and an
+ambiguous CAS is never blindly replayed. See `docs/gh_patch_files.md` for the focused patch
+contract.
 
 PR authors cannot `approve` their own pull request — the server checks login identity before
 the POST and returns an explicit no-write error. `request_changes` has no equivalent
@@ -132,9 +158,12 @@ uv run pytest tests/test_release_gate_0_9_0.py
 # Full validation suite
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy
+uv run --with-requirements requirements-typecheck.txt pyrefly check
 uv run pytest
 git diff --check
+
+# Changed-test type validation: pass every changed Python test explicitly, for example:
+uv run --with-requirements requirements-typecheck.txt pyrefly check tests/test_patch_files.py
 
 # Optional live integration tests
 GITHUB_TOKEN=<token> uv run pytest tests/test_integration.py
@@ -162,6 +191,8 @@ MCP_GH_TRANSPORT=streamable-http uv run mcp-gh
   authority belongs to `tests/test_release_gate_0_9_0.py`.
 - Never relax an exact-state assertion, negative/fail-closed regression, schema bound,
   fine gate, or no-blind-retry invariant merely to make the suite green.
+- Do not add static-analysis suppressions or baselines merely to avoid typing a changed test;
+  narrow optional/dynamic schemas explicitly in test helpers instead.
 
 ## Local agent tooling contract
 
@@ -172,13 +203,13 @@ Use the local stack narrowly:
   authority.
 - **Serena (`no-memories`)**: exact symbols/references/dependencies/diagnostics and scoped
   structural edits after discovery is narrowed. Do not use Serena as a generic shell.
-- **RTK**: efficiency layer for routine pytest/Ruff/mypy/search output when filtering cannot
+- **RTK**: efficiency layer for routine pytest/Ruff/Pyrefly/search output when filtering cannot
   change the decision. Use native output for exact SHAs, complete diffs, decisive failures,
   release/security evidence, or anything truncation-sensitive.
 - **OpenViking**: bounded historical rationale only. Never authority for current source,
   Git/GitHub state, version/inventory, CI, runtime, or release readiness.
 - **Native git/gh/runtime tools**: authoritative local Git state, branch/commit operations,
-  authenticated GitHub reads/writes not delegated to central ChatGPT, and host/service
+  authenticated GitHub reads/writes not delegated to Central ChatGPT, and host/service
   evidence. Do not route local `git` or `gh` through the MCP server under test.
 
 OpenCode roles remain scoped to their configured profiles: `plan`/`chat-audit` for gate
@@ -190,10 +221,10 @@ to bypass a failed gate.
 
 Version 0.9.0 release authority is `docs/release_gate_0_9_0.md` plus
 `tests/test_release_gate_0_9_0.py`. Required closure evidence must belong to one exact
-candidate SHA and includes package/server/tool-schema/lock agreement, exact 61/41/20 tool
-inventory, schema snapshots, canonical single-registration proof, compatibility-path absence,
-focused write/readback and fail-closed tests, Ruff, format, mypy, full pytest, and the
-representative live replay required by the current 0.9.0 gate.
+candidate SHA and includes package/server/tool-schema/lock agreement,
+exact 62/41/21 tool inventory, schema snapshots, canonical single-registration proof,
+compatibility-path absence, focused write/readback and fail-closed tests, Ruff, format,
+Pyrefly, full pytest, and the representative live replay required by the current 0.9.0 gate.
 
 Host interception during live replay is classified separately from server fine-gate
 rejection, GitHub failure/ambiguity, and completed authoritative readback. Do not weaken
@@ -207,10 +238,12 @@ truthful metadata or safety contracts solely to move an action past host interce
   supplied token, while the server independently enforces its write/target policies.
 - Generic `gh release create` file-upload/multi-step flows are outside the public tool
   surface; release creation uses the exact canonical contract.
+- `gh_patch_files` is text-only and existing-file-only; binary/symlink edits,
+  create/delete/rename operations, fuzzy matching, and mode changes are deliberately absent.
 - Search field names follow GitHub/API output conventions rather than an invented local
   naming layer.
 - Result serialization converts `Decimal` → string, `bytes` → `base64:` prefix,
   infinities → string, and datetimes → ISO 8601.
 - Detailed current contracts live under `docs/`, especially `docs/release_gate_0_9_0.md`,
-  `docs/search-read-contract.md`, `docs/write-schema-contract.md`,
+  `docs/search-read-contract.md`, `docs/write-schema-contract.md`, `docs/gh_patch_files.md`,
   `docs/pr-review-evidence-contract.md`, and the focused Git/ref/workflow/release documents.

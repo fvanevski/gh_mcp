@@ -13,12 +13,13 @@ from mcp_gh_server.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_VERSION = "0.9.0"
-EXPECTED_TOOL_COUNT = 61
+EXPECTED_TOOL_COUNT = 62
 EXPECTED_READ_ONLY_COUNT = 41
-EXPECTED_WRITE_COUNT = 20
+EXPECTED_WRITE_COUNT = 21
 EXPECTED_PYREFLY_REQUIREMENT = "pyrefly==1.1.1"
 EXPECTED_WRITE_TOOLS = {
     "gh_commit_files",
+    "gh_patch_files",
     "gh_create_branch",
     "gh_create_branch_from_sha",
     "gh_create_comment",
@@ -206,15 +207,25 @@ def test_high_risk_write_gates_remain_default_off() -> None:
 def test_release_documentation_matches_runtime_authority() -> None:
     readme = (ROOT / "README.md").read_text()
     gate = (ROOT / "docs" / "release_gate_0_9_0.md").read_text()
-    surface = "Version 0.9.0 exposes 61 public MCP tools: 41 read-only and 20 write."
+    contract = (ROOT / "docs" / "write-schema-contract.md").read_text()
+    agents = (ROOT / "AGENTS.md").read_text()
+    surface = "Version 0.9.0 exposes 62 public MCP tools: 41 read-only and 21 write."
+    contract_surface = "62 total public MCP tools: 41 read-only and 21 write"
     pyrefly_command = "uv run --with-requirements requirements-typecheck.txt pyrefly check"
 
     assert surface in readme
     assert surface in gate
-    assert pyrefly_command in readme
-    assert pyrefly_command in gate
-    assert "uv run mypy" not in readme
-    assert "uv run mypy" not in gate
+    assert contract_surface in contract
+    assert "exact 62/41/21 tool inventory" in agents
+    assert "18 non-review writes" in agents
+    assert "21 current public write names" in agents
+    assert "gh_patch_files" in contract
+    assert "gh_patch_files" in agents
+
+    for document in (readme, gate, agents):
+        assert pyrefly_command in document
+        assert "uv run mypy" not in document
+
     for tool_name in EXPECTED_WRITE_TOOLS:
         assert tool_name in gate
     for retired in RETIRED_PUBLIC_TOOLS:
