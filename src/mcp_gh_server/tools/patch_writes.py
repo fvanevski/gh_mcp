@@ -208,8 +208,7 @@ async def _resolve_all_patches(
         original_bytes = len(original.encode())
         if original_bytes > app.settings.max_file_bytes:
             raise ValueError(
-                f"file {patch.path!r} exceeds MCP_GH_MAX_FILE_BYTES="
-                f"{app.settings.max_file_bytes}"
+                f"file {patch.path!r} exceeds MCP_GH_MAX_FILE_BYTES={app.settings.max_file_bytes}"
             )
 
         materialized, edit_count = _materialize_edits(patch.path, original, patch)
@@ -234,8 +233,7 @@ async def _resolve_all_patches(
 
     if aggregate_materialized_bytes > app.settings.max_commit_bytes:
         raise ValueError(
-            "patched file contents exceed "
-            f"MCP_GH_MAX_COMMIT_BYTES={app.settings.max_commit_bytes}"
+            f"patched file contents exceed MCP_GH_MAX_COMMIT_BYTES={app.settings.max_commit_bytes}"
         )
     return resolved
 
@@ -276,8 +274,7 @@ def _validate_patch_request(app: AppContext, patches: list[FilePatch]) -> None:
 
     if aggregate_patch_bytes > app.settings.max_commit_bytes:
         raise ValueError(
-            "patch text exceeds "
-            f"MCP_GH_MAX_COMMIT_BYTES={app.settings.max_commit_bytes}"
+            f"patch text exceeds MCP_GH_MAX_COMMIT_BYTES={app.settings.max_commit_bytes}"
         )
 
 
