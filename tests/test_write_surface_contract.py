@@ -32,6 +32,7 @@ from mcp_gh_server.server import (
     gh_edit_label,
     gh_edit_pr,
     gh_merge_pr,
+    gh_patch_files,
     gh_request_pr_changes,
     gh_run_workflow_exact,
     gh_set_issue_state,
@@ -98,6 +99,7 @@ def test_all_public_writes_are_bound_to_active_schema_modules() -> None:
         gh_merge_pr: "mcp_gh_server.write_tool_schema",
         gh_create_repo: "mcp_gh_server.write_tool_schema",
         gh_commit_files: "mcp_gh_server.write_tool_schema",
+        gh_patch_files: "mcp_gh_server.patch_write_schema",
         gh_create_release_exact: "mcp_gh_server.write_tool_schema",
         gh_run_workflow_exact: "mcp_gh_server.write_tool_schema",
         gh_create_branch: "mcp_gh_server.write_tool_schema",
@@ -106,7 +108,7 @@ def test_all_public_writes_are_bound_to_active_schema_modules() -> None:
         gh_request_pr_changes: "mcp_gh_server.pr_review_tool_schema",
         gh_comment_pr_review: "mcp_gh_server.pr_review_tool_schema",
     }
-    assert len(expected) == 20
+    assert len(expected) == 21
     for function, module in expected.items():
         assert function.__module__ == module
 
