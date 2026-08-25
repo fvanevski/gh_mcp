@@ -1,4 +1,4 @@
-"""MCP 2.0 composition root for GitHub CLI tool domains."""
+"MCP 2.0 composition root for GitHub CLI tool domains."
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from .current_write_tool_schema import (
     gh_edit_label,
     gh_edit_pr,
     gh_merge_pr,
+    gh_patch_files,
     gh_request_pr_changes,
     gh_run_workflow_exact,
     gh_set_issue_state,
@@ -128,6 +129,7 @@ __all__ = [
     "gh_list_runs",
     "gh_list_workflows",
     "gh_merge_pr",
+    "gh_patch_files",
     "gh_read_artifact_file",
     "gh_request_pr_changes",
     "gh_run_workflow_exact",

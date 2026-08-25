@@ -1,14 +1,15 @@
 """Canonical current public write-tool surface.
 
-Non-review writes come from ``write_tool_schema``. Formal pull-request review
-authority is defined only by the action-specific review facade in this module's
-composed public inventory.
+Non-review writes come from ``write_tool_schema`` plus the exact-context patch facade.
+Formal pull-request review authority is defined only by the action-specific review
+facade in this module's composed public inventory.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from .patch_write_schema import PATCH_WRITE_METADATA, gh_patch_files
 from .pr_review_tool_schema import (
     PR_REVIEW_WRITE_METADATA,
     PR_REVIEW_WRITE_TOOLS,
@@ -55,6 +56,7 @@ _NON_REVIEW_WRITE_TOOLS: tuple[PublicWriteTool, ...] = (
     gh_merge_pr,
     gh_create_repo,
     gh_commit_files,
+    gh_patch_files,
     gh_create_release_exact,
     gh_run_workflow_exact,
     gh_create_branch,
@@ -66,8 +68,11 @@ PUBLIC_WRITE_TOOLS: tuple[PublicWriteTool, ...] = (
 )
 
 WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
-    tool.__name__: _NON_REVIEW_WRITE_METADATA[tool.__name__] for tool in _NON_REVIEW_WRITE_TOOLS
+    tool.__name__: _NON_REVIEW_WRITE_METADATA[tool.__name__]
+    for tool in _NON_REVIEW_WRITE_TOOLS
+    if tool.__name__ != "gh_patch_files"
 }
+WRITE_TOOL_METADATA["gh_patch_files"] = PATCH_WRITE_METADATA
 WRITE_TOOL_METADATA.update(PR_REVIEW_WRITE_METADATA)
 
 __all__ = [
@@ -89,6 +94,7 @@ __all__ = [
     "gh_edit_label",
     "gh_edit_pr",
     "gh_merge_pr",
+    "gh_patch_files",
     "gh_request_pr_changes",
     "gh_run_workflow_exact",
     "gh_set_issue_state",
