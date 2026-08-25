@@ -54,13 +54,14 @@ class PatchClient:
 
 
 def _context(client: PatchClient, **settings: Any) -> Any:
+    values: dict[str, Any] = {
+        "allow_write_commands": True,
+        "allow_content_commits": True,
+    }
+    values.update(settings)
     app = AppContext(
         client=client,  # type: ignore[arg-type]
-        settings=Settings(
-            allow_write_commands=True,
-            allow_content_commits=True,
-            **settings,
-        ),
+        settings=Settings(**values),
     )
     return SimpleNamespace(request_context=SimpleNamespace(lifespan_context=app))
 
@@ -77,12 +78,16 @@ def _entry(path: str, sha: str, *, mode: str = "100644", kind: str = "blob") -> 
     return {"path": path, "mode": mode, "type": kind, "sha": sha}
 
 
-def _blob(sha: str, text: str) -> dict[str, Any]:
+def _blob_bytes(sha: str, raw: bytes) -> dict[str, Any]:
     return {
         "sha": sha,
         "encoding": "base64",
-        "content": base64.b64encode(text.encode()).decode(),
+        "content": base64.b64encode(raw).decode(),
     }
+
+
+def _blob(sha: str, text: str) -> dict[str, Any]:
+    return _blob_bytes(sha, text.encode())
 
 
 def _success_client(
@@ -132,6 +137,8 @@ async def _patch(
     client: PatchClient,
     head: str,
     edits: list[PatchEdit],
+    *,
+    ctx: Any | None = None,
 ) -> Any:
     return await gh_patch_files(
         "octo",
@@ -140,7 +147,7 @@ async def _patch(
         head,
         [FilePatch(path="a.txt", edits=edits)],
         "patch a.txt",
-        ctx=_context(client),
+        ctx=ctx or _context(client),
     )
 
 
@@ -177,6 +184,21 @@ async def test_unique_single_line_replacement_and_evidence() -> None:
     assert blob_payload["content"] == "alpha\nBETA\ngamma\n"
 
 
+async def test_content_commit_fine_gate_rejects_before_any_repository_read() -> None:
+    client = PatchClient()
+    head = "a" * 40
+
+    with pytest.raises(RuntimeError, match="MCP_GH_ALLOW_CONTENT_COMMITS"):
+        await _patch(
+            client,
+            head,
+            [PatchEdit(old_text="alpha", new_text="beta")],
+            ctx=_context(client, allow_content_commits=False),
+        )
+
+    assert client.calls == []
+
+
 async def test_multiline_replacement_and_deletion() -> None:
     client, head, _, _ = _success_client("start\none\ntwo\nend\n")
 
@@ -185,7 +207,7 @@ async def test_multiline_replacement_and_deletion() -> None:
         head,
         [
             PatchEdit(old_text="one\ntwo\n", new_text="ONE\n"),
-            PatchEdit(old_text="end", new_text=""),
+            PatchEdit(old_text="end\n", new_text=""),
         ],
     )
 
@@ -235,6 +257,23 @@ async def test_missing_or_nonunique_context_rejects_before_git_object_creation(
 
     with pytest.raises(ValueError, match=message):
         await _patch(client, head, [PatchEdit(old_text=old_text, new_text="x")])
+
+    assert all(kind == "read" for kind, _, _ in client.calls)
+
+
+async def test_missing_target_rejects_file_creation_before_git_object_creation() -> None:
+    head = "a" * 40
+    client = PatchClient(
+        read_results=[
+            _ref(head),
+            {"node_id": "R_repo"},
+            {"tree": {"sha": "b" * 40}},
+            _tree(),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="does not exist at the expected head"):
+        await _patch(client, head, [PatchEdit(old_text="alpha", new_text="beta")])
 
     assert all(kind == "read" for kind, _, _ in client.calls)
 
@@ -342,6 +381,35 @@ async def test_symlink_target_fails_closed_before_blob_read_or_write() -> None:
     assert all(kind == "read" for kind, _, _ in client.calls)
 
 
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        (b"alpha\x00beta", "appears to be binary"),
+        (b"alpha\xffbeta", "not valid UTF-8 text"),
+    ],
+)
+async def test_binary_or_non_utf8_target_fails_before_git_object_creation(
+    raw: bytes,
+    message: str,
+) -> None:
+    head = "a" * 40
+    old_blob = "c" * 40
+    client = PatchClient(
+        read_results=[
+            _ref(head),
+            {"node_id": "R_repo"},
+            {"tree": {"sha": "b" * 40}},
+            _tree(_entry("a.txt", old_blob)),
+            _blob_bytes(old_blob, raw),
+        ]
+    )
+
+    with pytest.raises(ValueError, match=message):
+        await _patch(client, head, [PatchEdit(old_text="alpha", new_text="beta")])
+
+    assert all(kind == "read" for kind, _, _ in client.calls)
+
+
 async def test_multi_file_patch_uses_one_commit_and_one_ref_cas() -> None:
     head = "a" * 40
     base_tree = "b" * 40
@@ -384,9 +452,7 @@ async def test_multi_file_patch_uses_one_commit_and_one_ref_cas() -> None:
     assert result.changed_file_count == 2
     assert result.applied_edit_count == 2
     graphql_writes = [
-        args
-        for kind, args, _ in client.calls
-        if kind == "write" and args[:2] == ("api", "graphql")
+        args for kind, args, _ in client.calls if kind == "write" and args[:2] == ("api", "graphql")
     ]
     commit_writes = [
         args
@@ -438,8 +504,6 @@ async def test_ambiguous_cas_reuses_bounded_reconciliation_without_replay() -> N
     assert result.readback_attempts == 2
     assert result.request_id == "req-ambiguous"
     graphql_writes = [
-        args
-        for kind, args, _ in client.calls
-        if kind == "write" and args[:2] == ("api", "graphql")
+        args for kind, args, _ in client.calls if kind == "write" and args[:2] == ("api", "graphql")
     ]
     assert len(graphql_writes) == 1

@@ -91,9 +91,7 @@ async def gh_commit_files(
         commit_message,
     )
 
-    files_committed = (
-        len(files) if committed.outcome.state_matches_requested is True else 0
-    )
+    files_committed = len(files) if committed.outcome.state_matches_requested is True else 0
     return CommitFilesResult(
         branch=branch,
         previous_head_sha=committed.previous_head_sha,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Annotated, Any, Literal, cast
 
 from mcp.server.mcpserver import Context
@@ -67,11 +68,9 @@ def _materialize_edits(path: str, original: str, patch: FilePatch) -> tuple[str,
         spans.append((start, start + len(edit.old_text), edit.new_text))
 
     ordered = sorted(spans, key=lambda item: (item[0], item[1]))
-    for previous, current in zip(ordered, ordered[1:], strict=False):
+    for previous, current in pairwise(ordered):
         if current[0] < previous[1]:
-            raise ValueError(
-                f"patch {path!r} contains overlapping exact-context source spans"
-            )
+            raise ValueError(f"patch {path!r} contains overlapping exact-context source spans")
 
     materialized = original
     for start, end, replacement in reversed(ordered):
@@ -111,10 +110,7 @@ async def _resolve_patch_target(
     for index, component in enumerate(components):
         entries = tree_cache.get(tree_sha)
         if entries is None:
-            result = await app.client.run(
-                "api",
-                f"repos/{owner}/{repo}/git/trees/{tree_sha}",
-            )
+            result = await app.client.run("api", f"repos/{owner}/{repo}/git/trees/{tree_sha}")
             entries = _tree_entries(result, tree_sha)
             tree_cache[tree_sha] = entries
 
@@ -161,10 +157,7 @@ async def _read_utf8_blob(
     path: str,
     blob_sha: str,
 ) -> str:
-    result = await app.client.run(
-        "api",
-        f"repos/{owner}/{repo}/git/blobs/{blob_sha}",
-    )
+    result = await app.client.run("api", f"repos/{owner}/{repo}/git/blobs/{blob_sha}")
     if not isinstance(result, dict):
         raise RuntimeError(f"GitHub returned a non-object blob for patch target {path!r}")
     returned_sha = result.get("sha")
@@ -175,9 +168,7 @@ async def _read_utf8_blob(
     ):
         raise RuntimeError(f"GitHub blob identity mismatch for patch target {path!r}")
     if result.get("encoding") != "base64":
-        raise ValueError(
-            f"patch target {path!r} is not available as a supported UTF-8 text blob"
-        )
+        raise ValueError(f"patch target {path!r} is not available as a supported UTF-8 text blob")
     encoded = result.get("content")
     if not isinstance(encoded, str):
         raise RuntimeError(f"GitHub did not return blob content for patch target {path!r}")
@@ -253,9 +244,7 @@ def _validate_patch_request(app: AppContext, patches: list[FilePatch]) -> None:
     if not patches:
         raise ValueError("patches must contain at least one file patch")
     if len(patches) > app.settings.max_commit_files:
-        raise ValueError(
-            f"patches exceeds MCP_GH_MAX_COMMIT_FILES={app.settings.max_commit_files}"
-        )
+        raise ValueError(f"patches exceeds MCP_GH_MAX_COMMIT_FILES={app.settings.max_commit_files}")
 
     paths: set[str] = set()
     aggregate_patch_bytes = 0
@@ -362,10 +351,7 @@ async def gh_patch_files(
     ]
     edit_count = sum(file.edit_count for file in resolved)
     changed_paths = [file.path for file in resolved]
-    prefix = (
-        f"Applied {edit_count} exact-context edit(s) across "
-        f"{len(resolved)} file(s)."
-    )
+    prefix = f"Applied {edit_count} exact-context edit(s) across {len(resolved)} file(s)."
 
     return PatchFilesResult(
         branch=branch,

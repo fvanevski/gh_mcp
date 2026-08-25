@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from mcp_gh_server.server import mcp
+
+
+def _output_properties(tool: Any) -> dict[str, Any]:
+    output_schema = tool.output_schema
+    assert output_schema is not None
+    properties = output_schema.get("properties")
+    assert isinstance(properties, dict)
+    return properties
 
 
 async def test_public_git_content_outputs_expose_shared_exact_outcome_fields() -> None:
@@ -22,14 +32,14 @@ async def test_public_git_content_outputs_expose_shared_exact_outcome_fields() -
         "gh_commit_files",
         "gh_patch_files",
     ):
-        assert exact_outcome_fields <= set(tools[name].output_schema["properties"])
+        assert exact_outcome_fields <= set(_output_properties(tools[name]))
 
 
 async def test_content_write_outputs_expose_reconciliation_evidence() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
     for name in ("gh_commit_files", "gh_patch_files"):
-        properties = tools[name].output_schema["properties"]
+        properties = _output_properties(tools[name])
         assert {"observed_head_sha", "readback_attempts"} <= set(properties)
         assert {entry["type"] for entry in properties["ref_updated"]["anyOf"]} == {
             "boolean",
@@ -60,7 +70,7 @@ async def test_patch_files_schema_is_exact_context_only_and_commit_files_is_unch
         "commit_message",
     }
 
-    patch_output = tools["gh_patch_files"].output_schema["properties"]
+    patch_output = _output_properties(tools["gh_patch_files"])
     assert {
         "changed_file_count",
         "applied_edit_count",

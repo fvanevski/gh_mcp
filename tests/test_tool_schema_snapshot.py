@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from mcp_gh_server.server import mcp
@@ -433,6 +435,14 @@ EXACT_OUTCOME_FIELDS = {
 }
 
 
+def _output_properties(tool: Any) -> dict[str, Any]:
+    output_schema = tool.output_schema
+    assert output_schema is not None
+    properties = output_schema.get("properties")
+    assert isinstance(properties, dict)
+    return properties
+
+
 @pytest.mark.asyncio
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
@@ -459,9 +469,9 @@ async def test_exact_tool_surface_snapshot() -> None:
         "gh_edit_label",
         "gh_create_milestone",
     ):
-        assert set(tools[name].output_schema["properties"]) >= EXACT_OUTCOME_FIELDS
+        assert set(_output_properties(tools[name])) >= EXACT_OUTCOME_FIELDS
 
-    rate_output = tools["gh_get_api_rate_status"].output_schema["properties"]
+    rate_output = _output_properties(tools["gh_get_api_rate_status"])
     assert {"github", "governor"} == set(rate_output)
 
     repo_create_schema = tools["gh_create_repo"].input_schema["properties"]
@@ -470,7 +480,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert repo_create_schema["owner"]["maxLength"] == 39
     assert repo_create_schema["repo"]["pattern"] == r"^[A-Za-z0-9_.-]{1,100}$"
     assert repo_create_schema["repo"]["maxLength"] == 100
-    repo_create_output = tools["gh_create_repo"].output_schema["properties"]
+    repo_create_output = _output_properties(tools["gh_create_repo"])
     assert {
         "precondition_checked",
         "write_completed",
@@ -492,7 +502,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert compare_schema["head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
     assert compare_schema["max_commits"]["anyOf"][0]["minimum"] == 1
     assert compare_schema["max_files"]["anyOf"][0]["minimum"] == 1
-    compare_output = tools["gh_compare_commits"].output_schema["properties"]
+    compare_output = _output_properties(tools["gh_compare_commits"])
     assert {
         "base_sha",
         "head_sha",
@@ -529,7 +539,7 @@ async def test_exact_tool_surface_snapshot() -> None:
         "duplicate",
         "reopened",
     ]
-    issue_state_output = tools["gh_set_issue_state"].output_schema["properties"]
+    issue_state_output = _output_properties(tools["gh_set_issue_state"])
     assert {
         "precondition_checked",
         "write_completed",
@@ -549,7 +559,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert draft_state_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
     assert draft_state_schema["expected_is_draft"]["type"] == "boolean"
     assert draft_state_schema["new_is_draft"]["type"] == "boolean"
-    draft_state_output = tools["gh_set_pr_draft_state"].output_schema["properties"]
+    draft_state_output = _output_properties(tools["gh_set_pr_draft_state"])
     assert {
         "precondition_checked",
         "write_completed",
@@ -571,7 +581,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert exact_release_schema["make_latest"]["type"] == "boolean"
     assert exact_release_schema["expected_tag_absent"]["default"] is True
     assert exact_release_schema["expected_release_absent"]["default"] is True
-    exact_release_output = tools["gh_create_release_exact"].output_schema["properties"]
+    exact_release_output = _output_properties(tools["gh_create_release_exact"])
     assert {
         "precondition_checked",
         "write_completed",
@@ -604,7 +614,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert inputs_schema["maxProperties"] == 25
     assert inputs_schema["propertyNames"]["minLength"] == 1
     assert inputs_schema["additionalProperties"]["type"] == "string"
-    exact_dispatch_output = tools["gh_run_workflow_exact"].output_schema["properties"]
+    exact_dispatch_output = _output_properties(tools["gh_run_workflow_exact"])
     assert {
         "precondition_checked",
         "write_completed",
@@ -628,7 +638,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert reviews_schema["number"]["minimum"] == 1
     assert reviews_schema["page"]["minimum"] == 1
     assert reviews_schema["per_page"]["anyOf"][0]["maximum"] == 100
-    reviews_output = tools["gh_list_pr_reviews"].output_schema["properties"]
+    reviews_output = _output_properties(tools["gh_list_pr_reviews"])
     assert {
         "number",
         "base_sha",
@@ -645,7 +655,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     review_state_schema = tools["gh_get_pr_review_state"].input_schema["properties"]
     assert review_state_schema["number"]["minimum"] == 1
     assert review_state_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
-    review_state_output = tools["gh_get_pr_review_state"].output_schema["properties"]
+    review_state_output = _output_properties(tools["gh_get_pr_review_state"])
     assert review_state_output["head_matches_expected"]["type"] == "boolean"
     assert review_state_output["exact_head_evidence"]["type"] == "boolean"
     assert {
@@ -663,7 +673,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     merge_requirements_schema = tools["gh_get_merge_requirements"].input_schema["properties"]
     assert merge_requirements_schema["number"]["minimum"] == 1
     assert merge_requirements_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
-    merge_requirements_output = tools["gh_get_merge_requirements"].output_schema["properties"]
+    merge_requirements_output = _output_properties(tools["gh_get_merge_requirements"])
     assert {
         "base_ref",
         "base_sha",
@@ -698,7 +708,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert runs_schema["head_sha"]["anyOf"][0]["pattern"] == r"^[0-9A-Fa-f]{40}$"
     assert runs_schema["check_suite_id"]["anyOf"][0]["minimum"] == 1
     assert runs_schema["page"]["minimum"] == 1
-    runs_output = tools["gh_list_runs"].output_schema["properties"]
+    runs_output = _output_properties(tools["gh_list_runs"])
     assert {"total_count", "page", "per_page", "has_more", "truncated", "warning"} <= set(
         runs_output
     )
@@ -708,7 +718,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert artifacts_schema["page"]["minimum"] == 1
     assert artifacts_schema["per_page"]["anyOf"][0]["maximum"] == 100
     assert artifacts_schema["name"]["anyOf"][0]["minLength"] == 1
-    artifacts_output = tools["gh_list_run_artifacts"].output_schema["properties"]
+    artifacts_output = _output_properties(tools["gh_list_run_artifacts"])
     assert {
         "run_id",
         "attempt",
@@ -724,7 +734,7 @@ async def test_exact_tool_surface_snapshot() -> None:
 
     artifact_schema = tools["gh_get_artifact"].input_schema["properties"]
     assert artifact_schema["artifact_id"]["minimum"] == 1
-    artifact_output = tools["gh_get_artifact"].output_schema["properties"]
+    artifact_output = _output_properties(tools["gh_get_artifact"])
     assert artifact_output["workflow_head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
     assert artifact_output["expired"]["type"] == "boolean"
 
@@ -732,7 +742,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert artifact_files_schema["artifact_id"]["minimum"] == 1
     assert artifact_files_schema["page"]["minimum"] == 1
     assert artifact_files_schema["per_page"]["anyOf"][0]["maximum"] == 100
-    artifact_files_output = tools["gh_list_artifact_files"].output_schema["properties"]
+    artifact_files_output = _output_properties(tools["gh_list_artifact_files"])
     assert artifact_files_output["workflow_head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
     assert artifact_files_output["archive_sha256"]["pattern"] == r"^[0-9a-f]{64}$"
     assert artifact_files_output["truncated"]["type"] == "boolean"
@@ -741,7 +751,7 @@ async def test_exact_tool_surface_snapshot() -> None:
     assert artifact_read_schema["artifact_id"]["minimum"] == 1
     assert artifact_read_schema["path"]["maxLength"] == 4096
     assert artifact_read_schema["max_bytes"]["anyOf"][0]["maximum"] == 1_000_000
-    artifact_read_output = tools["gh_read_artifact_file"].output_schema["properties"]
+    artifact_read_output = _output_properties(tools["gh_read_artifact_file"])
     assert artifact_read_output["workflow_head_sha"]["pattern"] == r"^[0-9a-f]{40}$"
     assert artifact_read_output["archive_sha256"]["pattern"] == r"^[0-9a-f]{64}$"
     assert artifact_read_output["sha256"]["pattern"] == r"^[0-9a-f]{64}$"
@@ -753,7 +763,7 @@ async def test_exact_tool_surface_snapshot() -> None:
         assert schema["max_bytes"]["anyOf"][0]["maximum"] == 1_000_000
         assert schema["tail_bytes"]["anyOf"][0]["maximum"] == 1_000_000
         assert schema["start_marker"]["anyOf"][0]["minLength"] == 1
-        output = tools[name].output_schema["properties"]
+        output = _output_properties(tools[name])
         assert output["text"]["type"] == "string"
         assert output["truncated"]["type"] == "boolean"
         assert output["sha256"]["pattern"] == r"^[0-9a-f]{64}$"

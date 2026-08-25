@@ -1,19 +1,23 @@
 # Public write-schema and host-legibility contract
 
-Version 0.9.0 exposes 20 public GitHub write tools (61 total public MCP tools: 41 read-only and 20 write) through one canonical host-facing MCP facade. This document defines their schema, metadata, registration, authorization, and ambiguity invariants. It does not weaken execution, exact-state, mutation-attempt, or readback requirements.
+Version 0.9.0 exposes 21 public GitHub write tools (62 total public MCP tools: 41 read-only and 21 write) through one canonical current host-facing registry. This document defines their schema, metadata, registration, authorization, and ambiguity invariants. It does not weaken execution, exact-state, mutation-attempt, or readback requirements.
 
 Historical 0.7.0, 0.7.1, 0.8.0, and 0.8.1 inventories remain recorded by their release documents. The current 0.9.0 runtime authority is defined by `docs/release_gate_0_9_0.md` and `tests/test_release_gate_0_9_0.py`.
 
 ## Composition boundary
 
-`src/mcp_gh_server/current_write_tool_schema.py` is the canonical host-facing facade for every public write. It owns:
+`src/mcp_gh_server/current_write_tool_schema.py` is the canonical current registry for every public write. It owns the exact set of functions and metadata registered by `server.py`, while focused facades own their public signatures and action-specific metadata:
+
+- the established non-review writes are sourced from `src/mcp_gh_server/write_tool_schema.py`;
+- `gh_patch_files` is sourced explicitly from `src/mcp_gh_server/patch_write_schema.py`; and
+- the three action-specific formal-review writes are sourced from `src/mcp_gh_server/pr_review_tool_schema.py`.
+
+The focused facades own:
 
 - the public function signature used to generate the MCP input schema;
 - the tool title and action-specific description;
 - truthful MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`); and
 - delegation to the authoritative canonical domain implementation.
-
-For the 0.9.0 formal review writes, the facade delegates to `src/mcp_gh_server/pr_review_tool_schema.py`, which owns the bounded review-write schemas and action-specific metadata. The pre-review-split writes remain defined by `src/mcp_gh_server/write_tool_schema.py`, whose shared bounded types and metadata the review schema imports.
 
 `src/mcp_gh_server/server.py` registers each function in `PUBLIC_WRITE_TOOLS` exactly once using the corresponding `WRITE_TOOL_METADATA` entry. It performs no compatibility `remove_tool`/re-add rebinding. Public write implementations under `src/mcp_gh_server/tools/` do not independently register the same public names with `@mcp.tool`.
 
@@ -28,9 +32,13 @@ Canonical domain implementations include:
 - exact issue-state and PR-draft transitions in their focused modules;
 - repository creation in `tools/repository_create.py`;
 - exact Git/reference writes in `tools/git_writes.py` and `tools/issue_branch_writes.py`;
-- content commits in `tools/content_writes.py`;
+- complete-content commits in `tools/content_writes.py`;
+- exact-context existing-file patches in `tools/patch_writes.py`;
+- the shared materialized-content object/CAS/readback state machine in `content_commit_service.py`;
 - exact release creation in `tools/release_exact.py`; and
 - exact workflow dispatch in `tools/workflow_dispatch.py`.
+
+`gh_commit_files` and `gh_patch_files` deliberately have different request shapes but converge on `content_commit_service.py` after validation/materialization. There is no second public or internal content-CAS state machine for patch writes.
 
 Canonical metadata-aware mutation helpers trust structured `GitHubRequestError` ambiguity metadata emitted by `GhClient`. They do not infer mutation ambiguity from bare exception-message text.
 
@@ -43,9 +51,10 @@ A host must be able to classify the target and material effect from the advertis
 - exact 40-character SHA patterns where immutable identity is required;
 - bounded branch, tag, ref, title, body, description, and commit-message strings;
 - finite enums for state/review/merge choices;
-- bounded assignee, reviewer, label, workflow-input, and commit-file collections;
+- bounded assignee, reviewer, label, workflow-input, complete-file, file-patch, and exact-context edit collections;
 - assignee elements limited to a canonical GitHub login or the exact supported `@me` selector, while reviewer elements remain canonical GitHub logins only;
-- bounded nested commit-file path/content/mode fields;
+- bounded nested complete-file path/content/mode fields for `gh_commit_files`;
+- bounded nested patch path plus `old_text`/`new_text` fields for `gh_patch_files`;
 - separate canonical `owner` and `repo` inputs for repository creation, identifying one exact prospective `OWNER/REPO` target before mutation; and
 - exact workflow identity, canonical workflow path, exact ref path, and expected ref SHA for workflow dispatch.
 
@@ -65,13 +74,13 @@ Every public write has one action-specific description that states:
 2. important authorization, exact-state, or fine-gate preconditions; and
 3. material capabilities the tool does not have, including separation from adjacent higher-risk actions when relevant.
 
-A tool governed by a separate operation fine gate names that fine gate in its host-facing description.
+A tool governed by a separate operation fine gate names that fine gate in its host-facing description. Both `gh_commit_files` and `gh_patch_files` therefore advertise the content-commit fine gate.
 
 Annotations remain semantic rather than host-policy workarounds:
 
-- all 20 writes have `readOnlyHint=false`;
+- all 21 writes have `readOnlyHint=false`;
 - additive writes have `destructiveHint=false`;
-- state-changing/destructive writes have `destructiveHint=true`;
+- state-changing/destructive writes, including both repository-content writes, have `destructiveHint=true`;
 - writes do not claim idempotence; and
 - GitHub writes remain open-world operations.
 
@@ -101,7 +110,25 @@ Repository creation and workflow dispatch require their operation-specific exact
 
 `gh_run_workflow_exact` verifies exact workflow ID/path identity, active workflow state, exact ref/SHA, same-name branch/tag ambiguity, duplicate run state, one dispatch attempt, and authoritative readback bound to the returned run ID. It never automatically redispatches an ambiguous operation.
 
-`gh_commit_files` conditionally advances exactly one existing branch using exact `beforeOid`/`afterOid` compare-and-swap semantics and never force-updates the ref.
+### Repository content writes
+
+`gh_commit_files` accepts complete UTF-8 file contents and conditionally advances exactly one existing branch using exact `beforeOid`/`afterOid` compare-and-swap semantics. It never force-updates the ref. Its existing complete-replacement public input/output contract remains unchanged by issue #80.
+
+`gh_patch_files` is the focused existing-file partial-edit primitive. Before any content Git object is created it must:
+
+- verify the branch is at the exact caller-supplied `expected_head_sha`;
+- resolve every target from that immutable commit/tree snapshot;
+- accept only existing `100644` or `100755` UTF-8 text blobs;
+- reject symlinks, unsupported modes, NUL/binary content, and non-UTF-8 targets;
+- require every `old_text` to occur exactly once in the original file;
+- resolve every edit for a file against that original immutable content rather than incrementally modified content;
+- reject overlapping original source spans;
+- preserve the original supported file mode; and
+- materialize and size-check every requested file.
+
+After materialization, `gh_patch_files` re-reads the mutable branch immediately before the first Git-object write. Head movement during validation therefore fails before creating patch blobs/tree/commit objects. Validated materialized files then enter the same `content_commit_service.py` path used by `gh_commit_files`: one set of blobs, one tree, one commit, exactly one `updateRefs` compare-and-swap with exact `beforeOid`, requested `afterOid`, and `force=false`, followed by the issue #73 bounded exact-ref reconciliation/readback contract.
+
+A multi-file patch request never creates separate commits or separate CAS attempts per file. An ambiguous CAS is never replayed. `gh_patch_files` does not create, delete, rename, or fuzzily match files and does not expose a mode-change operation. See `docs/gh_patch_files.md` for the complete exact-context contract and result evidence.
 
 ## Ambiguity authority
 
@@ -124,16 +151,24 @@ Classify representative live replay separately as:
 
 Do not weaken annotations, schema constraints, descriptions, authorization gates, or exact-state checks solely to force host pass-through.
 
+## Static-validation authority
+
+Pyrefly is the sole Python static type-check authority for current CI/review/release decisions. `requirements-typecheck.txt` pins the checker and `[tool.pyrefly]` in `pyproject.toml` defines the no-argument project scope. Because the historical test corpus is excluded from that project scope, every changed Python test is also passed explicitly to Pyrefly during review.
+
+Dynamic MCP schemas expose optional output schemas at the SDK type level. Tests that inspect an output schema must narrow/assert non-`None` schema state explicitly rather than adding Pyrefly ignores, broad suppressions, or a baseline. Mypy is not a release-validation substitute.
+
 ## Regression authority
 
 The contract is enforced by complementary tests:
 
-- `tests/test_release_gate_0_9_0.py` pins package/lock/runtime versions, exact 61/41/20 inventory, retired-tool absence, single canonical write registration, compatibility-path removal, default-off fine gates, and release documentation;
-- `tests/test_tool_schema_snapshot.py` pins the complete current tool schema surface;
-- `tests/test_write_surface_contract.py` pins all 20 public write facades and canonical module provenance;
-- `tests/test_write_schema_policy.py` audits bounded schemas, annotations, generic-executor/bypass exclusions, the narrow `@me` selector, high-risk descriptions, and exact-state/payload constraints;
+- `tests/test_release_gate_0_9_0.py` pins package/lock/runtime versions, exact 62/41/21 inventory, retired-tool absence, single canonical write registration, compatibility-path removal, default-off fine gates, current static authority, and current documentation;
+- `tests/test_tool_schema_snapshot.py` pins the complete current 62-tool schema surface and uses explicit output-schema narrowing for changed-test Pyrefly validation;
+- `tests/test_write_surface_contract.py` pins all 21 public write facades and canonical module provenance;
+- `tests/test_write_schema_policy.py` independently pins all 21 public write names, audits bounded schemas and annotations, requires the content-commit fine-gate marker for both content writes, excludes generic executor/bypass fields, and pins exact-state/payload constraints;
+- `tests/test_git_content_write_schema.py` pins the shared exact outcome/reconciliation evidence, the exact `gh_patch_files` request/evidence shape, and the unchanged `gh_commit_files` public request shape;
+- `tests/test_patch_files.py` pins unique and multiline replacement, complete-line deletion, original-snapshot resolution, missing/non-unique/overlap rejection, stale and mid-validation head rejection, mode preservation, unsupported target rejection, multi-file one-commit/one-CAS semantics, and ambiguous-CAS reconciliation without replay;
 - `tests/test_write_target_policy.py` pins exact high-risk target gates and zero-call target mismatches;
 - domain migration tests pin canonical direct tri-state outcomes and no-blind-retry behavior; and
-- `tests/test_write_transport_metadata.py` pins structured ambiguity authority and rejection of bare-`RuntimeError` text inference.
+- `tests/test_write_transport_metadata.py` pins structured ambiguity authority, rejection of bare-`RuntimeError` text inference, and the current 62/41/21 documentation inventory.
 
-A new public write or material schema/annotation change must update the independent policy set, release inventory, and relevant schema snapshots intentionally. Green tests are not authority to weaken this contract.
+A new public write or material schema/annotation change must update the independent policy set, release inventory, protocol inventory, documentation authority, and relevant schema snapshots intentionally. Green tests are not authority to weaken this contract.
