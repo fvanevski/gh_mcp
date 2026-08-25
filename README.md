@@ -11,7 +11,7 @@ action-specific formal pull-request review writes — `gh_approve_pr`,
 `gh_get_pr_review_eligibility` preflight. Each review write submits exactly one review
 through the server-configured reviewer principal, verifies the exact head and
 authenticated reviewer identity immediately before the review POST, and readbacks
-immutable review-ID state. Issue #80 additionally adds `gh_patch_files`, a focused
+immutable review-ID state. Issue #80 adds `gh_patch_files`, a focused
 exact-context text-patch write that materializes all edits against immutable original
 blob snapshots before creating Git objects and then reuses the canonical content-commit
 CAS/readback state machine. The 0.8.0 release retired the weaker generic workflow-dispatch,
