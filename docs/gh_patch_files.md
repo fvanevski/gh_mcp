@@ -34,19 +34,36 @@ Before creating any Git blob, tree, or commit object, the server:
 2. resolves every target through the immutable base tree;
 3. requires every target to be an existing regular (`100644`) or executable
    (`100755`) blob;
-4. reads each exact blob and requires supported UTF-8 text content;
-5. requires each `old_text` to occur exactly once in that original file;
-6. rejects overlapping source spans;
-7. deterministically materializes all replacements against the original snapshot;
-8. enforces the existing path, file-count, per-file byte, aggregate commit-byte,
+4. checks the blob size advertised by the Git tree and rejects a target above
+   `MCP_GH_MAX_FILE_BYTES` before requesting its blob content;
+5. reads each permitted exact blob, caps the base64 payload before decoding, rechecks
+   the decoded-byte bound, and requires supported UTF-8 text content;
+6. requires each `old_text` to occur exactly once in that original file;
+7. rejects overlapping source spans;
+8. deterministically materializes all replacements against the original snapshot;
+9. enforces the existing path, file-count, per-file byte, aggregate commit-byte,
    commit-message, ordinary write, repository-policy, and content-commit fine-gate
    bounds;
-9. rechecks the mutable branch head immediately before creating the first Git
-   object.
+10. rechecks the mutable branch head immediately before creating the first Git
+    object.
 
 A missing or non-unique context, overlapping span, missing target, symlink, binary
 or non-UTF-8 target, bound violation, or stale/moved branch therefore fails before
 content-object mutation.
+
+### Resource-bound behavior
+
+The file-size setting is a resource bound, not merely a post-decode validation rule.
+For normal GitHub blob tree entries, the advertised `size` is checked before the
+blob-content GET so an oversized existing target does not require transferring or
+decoding its complete base64 body first. The encoded and decoded payload are checked
+again as fail-closed backstops before text decoding.
+
+After all exact source spans are resolved and overlap-checked, output construction
+walks the ordered spans once and joins untouched original slices with replacements in
+one assembly. It does not rebuild the complete file once per edit. This keeps the
+materialization allocation proportional to the input/output size rather than the
+number of edits times the file size.
 
 ## Shared commit/CAS path
 
@@ -68,6 +85,13 @@ That service:
 The patch tool does not recursively call the public `gh_commit_files` facade and
 does not maintain a second CAS/readback state machine.
 
+A known CAS failure after blob/tree/commit object creation is still one mutation
+attempt: exact-ref readback may establish that the branch remained at the old head,
+but the mutation is not replayed. Likewise, successful/ambiguous CAS outcomes that
+continue to expose only the old head through the bounded readback window remain
+unresolved rather than being converted into a false negative; a distinct third-party
+head is a conclusive semantic mismatch.
+
 ## Result evidence
 
 In addition to the shared exact-write outcome fields, `gh_patch_files` returns:
@@ -86,6 +110,24 @@ An ambiguous CAS remains `write_completed=None` even if readback later proves th
 the created commit is installed. Exhausted old-head observations remain unresolved,
 not disproven. A distinct third-party head is a conclusive semantic mismatch. The
 mutation is never replayed.
+
+## Regression authority
+
+`tests/test_patch_files.py` remains the primary issue #80 functional regression
+suite. `tests/test_patch_files_review_regressions.py` adds the independent-review
+closure cases that must remain covered:
+
+- invalid repository paths reject before repository calls;
+- an oversized existing target is rejected from tree-size evidence before blob fetch;
+- an oversized materialized result rejects before Git-object creation;
+- the maximum supported edit count preserves deterministic original-snapshot
+  materialization under the single-pass output assembly;
+- a known CAS failure after object creation attempts the CAS exactly once;
+- exhausted old-head reconciliation remains unresolved without replay; and
+- a distinct third-party post-CAS head remains a conclusive mismatch without replay.
+
+These focused regressions supplement, rather than replace, the full repository Ruff,
+format, Pyrefly, pytest, schema, and release-gate validation sequence.
 
 ## Non-goals
 
