@@ -189,7 +189,7 @@ async def test_materialized_file_size_bound_fails_before_git_object_creation() -
         ]
     )
 
-    with pytest.raises(ValueError, match="patched file .* exceeds MCP_GH_MAX_FILE_BYTES=5"):
+    with pytest.raises(ValueError, match=r"patched file .* exceeds MCP_GH_MAX_FILE_BYTES=5"):
         await _patch(
             client,
             head,
