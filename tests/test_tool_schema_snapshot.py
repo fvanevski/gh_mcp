@@ -143,6 +143,10 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "branch", "expected_head_sha", "files", "commit_message"},
         {"owner", "repo", "branch", "expected_head_sha", "files", "commit_message"},
     ),
+    "gh_patch_files": (
+        {"owner", "repo", "branch", "expected_head_sha", "patches", "commit_message"},
+        {"owner", "repo", "branch", "expected_head_sha", "patches", "commit_message"},
+    ),
     "gh_create_repo": (
         {"owner", "repo", "description", "private", "auto_init"},
         {"owner", "repo"},
@@ -379,6 +383,7 @@ READ_ONLY_TOOLS = {
 DESTRUCTIVE_WRITE_TOOLS = {
     "gh_merge_pr",
     "gh_commit_files",
+    "gh_patch_files",
     "gh_run_workflow_exact",
     "gh_edit_issue",
     "gh_set_issue_state",
@@ -432,7 +437,7 @@ EXACT_OUTCOME_FIELDS = {
 async def test_exact_tool_surface_snapshot() -> None:
     tools = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 61
+    assert len(tools) == 62
     assert set(tools) == set(EXPECTED_SURFACE)
     assert "gh_create_release" not in tools
     assert "gh_upsert_label" not in tools
