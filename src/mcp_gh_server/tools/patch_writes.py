@@ -72,10 +72,14 @@ def _materialize_edits(path: str, original: str, patch: FilePatch) -> tuple[str,
         if current[0] < previous[1]:
             raise ValueError(f"patch {path!r} contains overlapping exact-context source spans")
 
-    materialized = original
-    for start, end, replacement in reversed(ordered):
-        materialized = materialized[:start] + replacement + materialized[end:]
-    return materialized, len(spans)
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, replacement in ordered:
+        pieces.append(original[cursor:start])
+        pieces.append(replacement)
+        cursor = end
+    pieces.append(original[cursor:])
+    return "".join(pieces), len(spans)
 
 
 def _tree_entries(result: object, tree_sha: str) -> list[dict[str, Any]]:
@@ -102,8 +106,8 @@ async def _resolve_patch_target(
     base_tree_sha: str,
     path: str,
     tree_cache: dict[str, list[dict[str, Any]]],
-) -> tuple[str, Literal["100644", "100755"]]:
-    """Resolve an existing exact-snapshot file to its blob SHA and preserved mode."""
+) -> tuple[str, Literal["100644", "100755"], int | None]:
+    """Resolve an existing exact-snapshot file to blob identity, mode, and advertised size."""
 
     components = path.split("/")
     tree_sha = base_tree_sha
@@ -145,7 +149,17 @@ async def _resolve_patch_target(
                 f"patch target {path!r} uses unsupported Git mode {entry_mode!r}; "
                 "only regular and executable UTF-8 text files may be patched"
             )
-        return entry_sha, cast(Literal["100644", "100755"], entry_mode)
+
+        entry_size = entry.get("size")
+        if entry_size is not None and (
+            isinstance(entry_size, bool) or not isinstance(entry_size, int) or entry_size < 0
+        ):
+            raise RuntimeError(f"GitHub returned an invalid blob size for patch target {path!r}")
+        return (
+            entry_sha,
+            cast(Literal["100644", "100755"], entry_mode),
+            cast(int | None, entry_size),
+        )
 
     raise AssertionError("patch path traversal did not resolve a final entry")
 
@@ -156,6 +170,7 @@ async def _read_utf8_blob(
     repo: str,
     path: str,
     blob_sha: str,
+    max_bytes: int,
 ) -> str:
     result = await app.client.run("api", f"repos/{owner}/{repo}/git/blobs/{blob_sha}")
     if not isinstance(result, dict):
@@ -172,10 +187,18 @@ async def _read_utf8_blob(
     encoded = result.get("content")
     if not isinstance(encoded, str):
         raise RuntimeError(f"GitHub did not return blob content for patch target {path!r}")
+
+    max_encoded_chars = 4 * ((max_bytes + 2) // 3)
+    encoded_chars = sum(not char.isspace() for char in encoded)
+    if encoded_chars > max_encoded_chars:
+        raise ValueError(f"file {path!r} exceeds MCP_GH_MAX_FILE_BYTES={max_bytes}")
+
     try:
         raw = base64.b64decode("".join(encoded.split()), validate=True)
     except (ValueError, binascii.Error) as exc:
         raise RuntimeError(f"GitHub returned invalid base64 for patch target {path!r}") from exc
+    if len(raw) > max_bytes:
+        raise ValueError(f"file {path!r} exceeds MCP_GH_MAX_FILE_BYTES={max_bytes}")
     if b"\x00" in raw:
         raise ValueError(f"patch target {path!r} appears to be binary and is unsupported")
     try:
@@ -196,7 +219,7 @@ async def _resolve_all_patches(
     aggregate_materialized_bytes = 0
 
     for patch in patches:
-        blob_sha, mode = await _resolve_patch_target(
+        blob_sha, mode, advertised_size = await _resolve_patch_target(
             app,
             owner,
             repo,
@@ -204,13 +227,19 @@ async def _resolve_all_patches(
             patch.path,
             tree_cache,
         )
-        original = await _read_utf8_blob(app, owner, repo, patch.path, blob_sha)
-        original_bytes = len(original.encode())
-        if original_bytes > app.settings.max_file_bytes:
+        if advertised_size is not None and advertised_size > app.settings.max_file_bytes:
             raise ValueError(
                 f"file {patch.path!r} exceeds MCP_GH_MAX_FILE_BYTES={app.settings.max_file_bytes}"
             )
 
+        original = await _read_utf8_blob(
+            app,
+            owner,
+            repo,
+            patch.path,
+            blob_sha,
+            app.settings.max_file_bytes,
+        )
         materialized, edit_count = _materialize_edits(patch.path, original, patch)
         if materialized == original:
             raise ValueError(f"patch {patch.path!r} does not change the original file")
