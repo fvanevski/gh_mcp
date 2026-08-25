@@ -221,10 +221,10 @@ to bypass a failed gate.
 
 Version 0.9.0 release authority is `docs/release_gate_0_9_0.md` plus
 `tests/test_release_gate_0_9_0.py`. Required closure evidence must belong to one exact
-candidate SHA and includes package/server/tool-schema/lock agreement, exact 62/41/21 tool
-inventory, schema snapshots, canonical single-registration proof, compatibility-path absence,
-focused write/readback and fail-closed tests, Ruff, format, Pyrefly, full pytest, and the
-representative live replay required by the current 0.9.0 gate.
+candidate SHA and includes package/server/tool-schema/lock agreement,
+exact 62/41/21 tool inventory, schema snapshots, canonical single-registration proof,
+compatibility-path absence, focused write/readback and fail-closed tests, Ruff, format,
+Pyrefly, full pytest, and the representative live replay required by the current 0.9.0 gate.
 
 Host interception during live replay is classified separately from server fine-gate
 rejection, GitHub failure/ambiguity, and completed authoritative readback. Do not weaken

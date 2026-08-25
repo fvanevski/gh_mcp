@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import httpx2
 import pytest
@@ -15,6 +16,14 @@ from mcp_types import InputRequiredResult
 
 from mcp_gh_server.server import mcp
 from mcp_gh_server.settings import get_settings
+
+
+def _first_text(result: Any) -> str:
+    content = result.content
+    assert content
+    text = getattr(content[0], "text", None)
+    assert isinstance(text, str)
+    return text
 
 
 def _write_fake_gh(tmp_path: Path) -> None:
@@ -271,7 +280,7 @@ else:
 
 @pytest.mark.asyncio
 async def test_registered_tool_schemas_and_annotations() -> None:
-    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    tools: dict[str, Any] = {tool.name: tool for tool in await mcp.list_tools()}
 
     assert len(tools) == 62
     assert "gh_run_workflow" not in tools
@@ -925,7 +934,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_write, InputRequiredResult)
             assert denied_write.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_write.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_write)
 
             denied_exact_branch = await session.call_tool(
                 "gh_create_branch_from_sha",
@@ -939,7 +948,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_exact_branch, InputRequiredResult)
             assert denied_exact_branch.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_exact_branch.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_exact_branch)
 
             denied_review = await session.call_tool(
                 "gh_approve_pr",
@@ -954,7 +963,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_review, InputRequiredResult)
             assert denied_review.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_review.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_review)
 
             denied_merge = await session.call_tool(
                 "gh_merge_pr",
@@ -969,7 +978,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_merge, InputRequiredResult)
             assert denied_merge.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_merge.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_merge)
 
             denied_issue_state = await session.call_tool(
                 "gh_set_issue_state",
@@ -985,7 +994,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
             )
             assert not isinstance(denied_issue_state, InputRequiredResult)
             assert denied_issue_state.is_error is True
-            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in denied_issue_state.content[0].text
+            assert "MCP_GH_ALLOW_WRITE_COMMANDS" in _first_text(denied_issue_state)
 
             server_info_after_denial = await session.call_tool("gh_server_info", {})
             assert server_info_after_denial.is_error is False

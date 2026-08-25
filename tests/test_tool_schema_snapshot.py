@@ -445,7 +445,7 @@ def _output_properties(tool: Any) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_exact_tool_surface_snapshot() -> None:
-    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    tools: dict[str, Any] = {tool.name: tool for tool in await mcp.list_tools()}
 
     assert len(tools) == 62
     assert set(tools) == set(EXPECTED_SURFACE)
