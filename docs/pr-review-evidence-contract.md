@@ -45,6 +45,39 @@ GitHub references:
 
 The aggregate remains valid only while the pull request's base and head SHAs stay unchanged across the multi-request read. A head mismatch, base/head movement during the read, truncated review evidence, or truncated review-thread evidence prevents a satisfied exact-head conclusion.
 
+## Exact-head thread-detail workflow
+
+Issue #83 keeps `gh_get_pr_review_state` compact and adds `gh_get_pr_review_thread` for the
+narrow case where one returned thread needs comment-body context. The detail tool accepts only
+the canonical repository/PR identity, one exact expected PR head SHA, one opaque thread node
+ID, and bounded comment/body limits. It accepts no caller-supplied GraphQL, REST path, URL,
+query fragment, cursor, or mutation control.
+
+The server reads the PR identity before requesting thread detail, requires the current head to
+match `expected_head_sha`, resolves exactly `node(id: thread_id)`, and then proves from the
+returned `PullRequestReviewThread` that both `repository.nameWithOwner` and
+`pullRequest.number` match the caller's requested target. The returned node ID must also equal
+the requested opaque ID. Missing/inaccessible nodes, wrong node types, repository mismatch,
+PR mismatch, and node-ID mismatch fail distinctly before detail can be represented as valid.
+After collecting the bounded thread/comment result, the server re-reads PR base/head identity;
+any movement discards the collected detail and returns `exact_head_evidence=false`.
+
+Comment ordering is the order supplied by GitHub's bounded `comments(first: ...)` connection.
+Connection completeness and body completeness are independent evidence dimensions:
+
+- `comments_evidence` reports total/returned counts, `has_more`, `truncated`, and an explicit
+  warning when the requested/server comment bound leaves additional comments;
+- each returned body is processed through the shared UTF-8 bounded-text helper, so
+  `body_bytes_returned`, `body_total_bytes`, `body_truncated`, `body_sha256`, and
+  `body_warning` describe that comment independently; and
+- `body_sha256` and `body_total_bytes` cover the complete body supplied by GitHub before the
+  UTF-8-safe returned prefix is truncated.
+
+A stable PR head can therefore produce `exact_head_evidence=true` while comments or bodies
+are intentionally bounded; callers must inspect the independent completeness fields rather
+than equating exact identity with complete discussion content. The aggregate
+`gh_get_pr_review_state` contract remains unchanged and continues to omit comment bodies.
+
 ## Formal review identity contract
 
 Issue #75 separates three authorities that must not be conflated:

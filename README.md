@@ -4,7 +4,7 @@ A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
 runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
-Version 0.9.0 exposes 63 public MCP tools: 42 read-only and 21 write.
+Version 0.9.0 exposes 64 public MCP tools: 43 read-only and 21 write.
 The 0.9.0 release splits the former generic `gh_submit_pr_review` into three
 action-specific formal pull-request review writes — `gh_approve_pr`,
 `gh_request_pr_changes`, and `gh_comment_pr_review` — and adds the read-only
@@ -16,7 +16,10 @@ exact-context text-patch write that materializes all edits against immutable ori
 blob snapshots before creating Git objects and then reuses the canonical content-commit
 CAS/readback state machine. Issue #82 adds the read-only `gh_list_repository_tree` structural
 discovery primitive, pinned to one exact commit SHA with bounded completeness evidence and
-safe root/nested directory traversal. The 0.8.0 release retired the weaker generic workflow-dispatch,
+safe root/nested directory traversal. Issue #83 adds `gh_get_pr_review_thread`, an exact-head
+bounded detail read for one opaque review-thread node ID, including ownership proof, ordered
+comment provenance, independent comment/body truncation evidence, and complete-body digests.
+The 0.8.0 release retired the weaker generic workflow-dispatch,
 release-creation, and label-upsert writes, removed obsolete write-compatibility
 infrastructure, and registered every public write exactly once through the canonical
 host-facing schema facade. Historical 0.7.0/0.7.1, 0.8.0, and 0.8.1 release records
@@ -24,7 +27,7 @@ remain available under `docs/` but do not define the current runtime inventory.
 
 ## Tools
 
-### Read-only (42)
+### Read-only (43)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -47,6 +50,10 @@ remain available under `docs/` but do not define the current runtime inventory.
   preserving pagination and exact-head evidence.
 - `gh_get_pr_review_state`: aggregate exact-head review/request/thread evidence without
   treating truncated evidence as complete.
+- `gh_get_pr_review_thread`: resolve one exact opaque thread ID from that aggregate workflow,
+  prove repository/PR ownership at the expected PR head, and return bounded ordered comments
+  with provenance plus independent connection/body completeness metadata and complete-body
+  SHA-256 digests.
 - `gh_get_pr_review_eligibility`: read-only exact-head preflight reporting the PR author,
   ordinary GitHub identity, configured reviewer identity, and whether an independent
   APPROVED review or ordinary COMMENTED review is currently eligible.
@@ -299,8 +306,7 @@ At `INFO`, repository-content tools log content-free reachability markers using 
 own tool names, including `gh_get_file_contents`, `gh_list_repository_tree`,
 `gh_commit_files`, and `gh_patch_files`.
 
-The four focused PR snapshot/review reads emit the same marker using their own tool
-name.
+The focused PR snapshot/review reads emit the same marker using their own tool name.
 
 The version probe emits the equivalent marker with `tool=gh_server_info`.
 
