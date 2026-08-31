@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context
@@ -189,6 +189,66 @@ async def _repository_is_empty(
     return is_empty
 
 
+async def read_exact_commit_payload(
+    client: GhClient,
+    owner: str,
+    repo: str,
+    commit_sha: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """Read one exact commit payload while preserving missing/auth/error classification."""
+
+    request = GitCommitInput(owner=owner, repo=repo, commit_sha=commit_sha)
+    validate_repository(request.owner, request.repo)
+    normalized_sha = request.commit_sha.casefold()
+    try:
+        payload = await client.run(
+            "api",
+            f"repos/{request.owner}/{request.repo}/git/commits/{normalized_sha}",
+            "-X",
+            "GET",
+        )
+    except GitHubRequestError as error:
+        if error.status_code == 404:
+            await _confirm_contents_read_access(
+                client,
+                request.owner,
+                request.repo,
+                resource_kind="commit",
+            )
+        elif error.status_code != 409 or not await _repository_is_empty(
+            client,
+            request.owner,
+            request.repo,
+            resource_kind="commit",
+        ):
+            raise
+        return normalized_sha, None
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub exact-commit lookup returned a non-object response")
+    returned_sha = payload.get("sha")
+    if (
+        not isinstance(returned_sha, str)
+        or not OBJECT_SHA_RE.fullmatch(returned_sha)
+        or returned_sha.casefold() != normalized_sha
+    ):
+        raise RuntimeError(
+            "GitHub exact-commit lookup did not preserve the requested commit SHA; "
+            "refusing ambiguous evidence"
+        )
+    return normalized_sha, payload
+
+
+def exact_commit_tree_sha(payload: dict[str, Any]) -> str:
+    """Extract one exact root tree SHA from a validated exact-commit payload."""
+
+    tree = payload.get("tree")
+    tree_sha = tree.get("sha") if isinstance(tree, dict) else None
+    if not isinstance(tree_sha, str) or not OBJECT_SHA_RE.fullmatch(tree_sha):
+        raise RuntimeError("GitHub exact-commit lookup returned no exact tree SHA")
+    return tree_sha.casefold()
+
+
 @mcp.tool(
     title="Get exact Git reference",
     description=(
@@ -326,53 +386,17 @@ async def gh_get_commit(
     """Read one exact Git commit object without revision guessing or prefix matching."""
 
     logger.info("MCP tool invocation reached server: tool=gh_get_commit")
-    request = GitCommitInput(owner=owner, repo=repo, commit_sha=commit_sha)
-    validate_repository(request.owner, request.repo)
-    normalized_sha = request.commit_sha.casefold()
     app = app_from_context(ctx)
-
-    try:
-        payload = await app.client.run(
-            "api",
-            f"repos/{request.owner}/{request.repo}/git/commits/{normalized_sha}",
-            "-X",
-            "GET",
-        )
-    except GitHubRequestError as error:
-        if error.status_code == 404:
-            await _confirm_contents_read_access(
-                app.client,
-                request.owner,
-                request.repo,
-                resource_kind="commit",
-            )
-        elif error.status_code != 409 or not await _repository_is_empty(
-            app.client,
-            request.owner,
-            request.repo,
-            resource_kind="commit",
-        ):
-            raise
+    normalized_sha, payload = await read_exact_commit_payload(
+        app.client,
+        owner,
+        repo,
+        commit_sha,
+    )
+    if payload is None:
         return GitCommitInfo(commit_sha=normalized_sha, found=False)
 
-    if not isinstance(payload, dict):
-        raise RuntimeError("GitHub exact-commit lookup returned a non-object response")
-    returned_sha = payload.get("sha")
-    if (
-        not isinstance(returned_sha, str)
-        or not OBJECT_SHA_RE.fullmatch(returned_sha)
-        or returned_sha.casefold() != normalized_sha
-    ):
-        raise RuntimeError(
-            "GitHub exact-commit lookup did not preserve the requested commit SHA; "
-            "refusing ambiguous evidence"
-        )
-
-    tree = payload.get("tree")
-    tree_sha = tree.get("sha") if isinstance(tree, dict) else None
-    if not isinstance(tree_sha, str) or not OBJECT_SHA_RE.fullmatch(tree_sha):
-        raise RuntimeError("GitHub exact-commit lookup returned no exact tree SHA")
-
+    tree_sha = exact_commit_tree_sha(payload)
     raw_parents = payload.get("parents")
     if not isinstance(raw_parents, list):
         raise RuntimeError("GitHub exact-commit lookup returned no parent list")

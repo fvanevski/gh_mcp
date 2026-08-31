@@ -62,7 +62,12 @@ from .tools.pull_requests import (
     gh_list_prs,
 )
 from .tools.releases import gh_get_release, gh_list_releases
-from .tools.repositories import gh_get_file_contents, gh_get_repo, gh_list_repos
+from .tools.repositories import (
+    gh_get_file_contents,
+    gh_get_repo,
+    gh_list_repos,
+    gh_list_repository_tree,
+)
 
 # Public writes are registered exactly once from the canonical current host-facing
 # schema. Domain implementation modules do not self-register these names.
@@ -124,6 +129,7 @@ __all__ = [
     "gh_list_prs",
     "gh_list_releases",
     "gh_list_repos",
+    "gh_list_repository_tree",
     "gh_list_run_artifacts",
     "gh_list_run_jobs",
     "gh_list_runs",
