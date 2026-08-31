@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .evidence import PaginationEvidence
 
@@ -76,6 +76,19 @@ class PullRequestReviewThreadComment(BaseModel):
     body_truncated: bool
     body_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     body_warning: str | None = None
+
+    @model_validator(mode="after")
+    def validate_body_evidence(self) -> PullRequestReviewThreadComment:
+        actual_returned = len(self.body.encode("utf-8"))
+        if self.body_bytes_returned != actual_returned:
+            raise ValueError("body_bytes_returned must equal the UTF-8 byte length of body")
+        if self.body_bytes_returned > self.body_total_bytes:
+            raise ValueError("body_bytes_returned cannot exceed body_total_bytes")
+        if self.body_truncated != (self.body_bytes_returned < self.body_total_bytes):
+            raise ValueError("body_truncated must reflect incomplete returned body bytes")
+        if self.body_truncated and not self.body_warning:
+            raise ValueError("truncated review-comment body evidence requires a warning")
+        return self
 
 
 class PullRequestReviewThreadResult(BaseModel):

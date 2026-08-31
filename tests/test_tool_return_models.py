@@ -44,7 +44,11 @@ from mcp_gh_server.models import (
 )
 from mcp_gh_server.pr_draft_state_models import PullRequestDraftStateTransitionResult
 from mcp_gh_server.pr_review_eligibility_models import PullRequestReviewEligibility
-from mcp_gh_server.pr_review_models import PullRequestReviewsPage, PullRequestReviewState
+from mcp_gh_server.pr_review_models import (
+    PullRequestReviewsPage,
+    PullRequestReviewState,
+    PullRequestReviewThreadResult,
+)
 from mcp_gh_server.pr_write_models import (
     PullRequestApproval,
     PullRequestChangesRequested,
@@ -78,6 +82,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_list_pr_commits": PullRequestCommitsPage,
     "gh_list_pr_reviews": PullRequestReviewsPage,
     "gh_get_pr_review_state": PullRequestReviewState,
+    "gh_get_pr_review_thread": PullRequestReviewThreadResult,
     "gh_get_pr_review_eligibility": PullRequestReviewEligibility,
     "gh_get_merge_requirements": PullRequestMergeRequirements,
     "gh_get_pr_checks": PullRequestChecks,
@@ -126,7 +131,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 62
+    assert len(EXPECTED_RETURN_MODELS) == 63
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)
         assert get_type_hints(function)["return"] == expected

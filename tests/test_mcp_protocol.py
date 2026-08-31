@@ -282,7 +282,7 @@ else:
 async def test_registered_tool_schemas_and_annotations() -> None:
     tools: dict[str, Any] = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 63
+    assert len(tools) == 64
     assert "gh_run_workflow" not in tools
     assert "gh_create_release" not in tools
     assert "gh_submit_pr_review" not in tools
@@ -299,6 +299,7 @@ async def test_registered_tool_schemas_and_annotations() -> None:
     assert "gh_list_pr_files" in tools
     assert "gh_list_pr_commits" in tools
     assert "gh_get_pr_review_eligibility" in tools
+    assert "gh_get_pr_review_thread" in tools
     assert "gh_approve_pr" in tools
     assert "gh_request_pr_changes" in tools
     assert "gh_comment_pr_review" in tools
