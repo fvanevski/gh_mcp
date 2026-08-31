@@ -45,6 +45,7 @@ Integration tests skip when `GITHUB_TOKEN` is absent; all other tests run offlin
 | `src/mcp_gh_server/content_commit_service.py` | Shared materialized-content Git object, exact ref-CAS, and bounded reconciliation state machine |
 | `src/mcp_gh_server/write_contracts.py` | Shared exact-state and tri-state mutation/readback contract |
 | `src/mcp_gh_server/models.py` | Pydantic result schemas used by tests and tool annotations |
+| `src/mcp_gh_server/repository_tree_models.py` | Typed request/entry/result contract for exact repository-tree reads |
 | `src/mcp_gh_server/patch_models.py` | Pydantic request/result models for exact-context patch writes |
 | `src/mcp_gh_server/settings.py` | Runtime config, loaded once via cached `get_settings()` |
 | `src/mcp_gh_server/serialization.py` | JSON-safe serialization helpers |
@@ -222,7 +223,7 @@ to bypass a failed gate.
 Version 0.9.0 release authority is `docs/release_gate_0_9_0.md` plus
 `tests/test_release_gate_0_9_0.py`. Required closure evidence must belong to one exact
 candidate SHA and includes package/server/tool-schema/lock agreement,
-exact 62/41/21 tool inventory, schema snapshots, canonical single-registration proof,
+exact 63/42/21 tool inventory, schema snapshots, canonical single-registration proof,
 compatibility-path absence, focused write/readback and fail-closed tests, Ruff, format,
 Pyrefly, full pytest, and the representative live replay required by the current 0.9.0 gate.
 
@@ -245,5 +246,6 @@ truthful metadata or safety contracts solely to move an action past host interce
 - Result serialization converts `Decimal` → string, `bytes` → `base64:` prefix,
   infinities → string, and datetimes → ISO 8601.
 - Detailed current contracts live under `docs/`, especially `docs/release_gate_0_9_0.md`,
-  `docs/search-read-contract.md`, `docs/write-schema-contract.md`, `docs/gh_patch_files.md`,
-  `docs/pr-review-evidence-contract.md`, and the focused Git/ref/workflow/release documents.
+  `docs/search-read-contract.md`, `docs/repository-tree-read-contract.md`,
+  `docs/write-schema-contract.md`, `docs/gh_patch_files.md`, `docs/pr-review-evidence-contract.md`,
+  and the focused Git/ref/workflow/release documents.
