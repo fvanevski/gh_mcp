@@ -62,9 +62,10 @@ def _repository_tree_entry(
         or "\\" in relative_path
         or any(ord(character) < 32 or ord(character) == 127 for character in relative_path)
         or any(part in {"", ".", ".."} for part in relative_path.split("/"))
+        or not isinstance(object_type, str)
         or object_type not in _TREE_MODES_BY_TYPE
         or not isinstance(mode, str)
-        or mode not in _TREE_MODES_BY_TYPE[cast(str, object_type)]
+        or mode not in _TREE_MODES_BY_TYPE[object_type]
         or not isinstance(sha, str)
         or not OBJECT_SHA_RE.fullmatch(sha)
     ):
@@ -116,7 +117,8 @@ async def _read_repository_tree(
         or returned_sha.casefold() != tree_sha
     ):
         raise RuntimeError(
-            "GitHub Git tree read did not preserve the requested tree SHA; refusing ambiguous evidence"
+            "GitHub Git tree read did not preserve the requested tree SHA; "
+            "refusing ambiguous evidence"
         )
     raw_entries = payload.get("tree")
     source_truncated = payload.get("truncated")
@@ -153,7 +155,8 @@ async def _resolve_repository_directory_tree(
         )
         if truncated:
             raise RuntimeError(
-                "GitHub reported truncated directory traversal evidence; refusing ambiguous path resolution"
+                "GitHub reported truncated directory traversal evidence; "
+                "refusing ambiguous path resolution"
             )
         wanted_path = f"{current_path}/{component}" if current_path else component
         matches = [entry for entry in entries if entry.path == wanted_path]
@@ -294,7 +297,9 @@ async def gh_list_repository_tree(
     path: Annotated[
         str,
         Field(
-            description="Normalized repository-relative directory path; empty means repository root.",
+            description=(
+                "Normalized repository-relative directory path; empty means repository root."
+            ),
             max_length=4096,
         ),
     ] = "",
@@ -358,10 +363,13 @@ async def gh_list_repository_tree(
     warnings: list[str] = []
     if bound_truncated:
         warnings.append(
-            f"Result exceeded the applied max_entries bound of {limit}; additional GitHub tree entries were omitted."
+            f"Result exceeded the applied max_entries bound of {limit}; "
+            "additional GitHub tree entries were omitted."
         )
     if source_truncated:
-        warnings.append("GitHub reported truncated tree evidence; the repository structure is incomplete.")
+        warnings.append(
+            "GitHub reported truncated tree evidence; the repository structure is incomplete."
+        )
     truncated = bound_truncated or source_truncated
     return RepositoryTreeResult(
         commit_sha=normalized_sha,

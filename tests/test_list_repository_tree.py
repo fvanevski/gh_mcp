@@ -105,7 +105,11 @@ async def test_root_non_recursive_listing_preserves_exact_git_evidence() -> None
     assert result.truncated is False
     assert result.evidence_complete is True
     assert result.warning is None
-    assert [(item.path, item.name, item.type, item.mode, item.sha, item.size) for item in result.entries] == [
+    observed_entries = [
+        (item.path, item.name, item.type, item.mode, item.sha, item.size)
+        for item in result.entries
+    ]
+    assert observed_entries == [
         ("README.md", "README.md", "blob", "100644", "c" * 40, 42),
         ("src", "src", "tree", "040000", "d" * 40, None),
         ("vendor", "vendor", "commit", "160000", "e" * 40, None),
@@ -322,13 +326,46 @@ async def test_mismatched_commit_and_tree_evidence_fail_closed() -> None:
     ("type", "mode"),
     [("blob", "040000"), ("tree", "100644"), ("commit", "100644"), ("tag", "100644")],
 )
-async def test_malformed_tree_object_type_or_mode_fails_closed(type: str, mode: str) -> None:
+async def test_malformed_tree_object_type_or_mode_fails_closed(
+    type: str,
+    mode: str,
+) -> None:
     commit_sha = "a" * 40
     root_sha = "b" * 40
     client = FakeGhClient(
         [
             _commit(commit_sha, root_sha),
             _tree(root_sha, [_entry("bad", type=type, mode=mode, sha="c" * 40)]),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="malformed Git tree entry"):
+        await gh_list_repository_tree(
+            "octo",
+            "repo",
+            commit_sha,
+            ctx=_context(client),
+        )
+
+
+@pytest.mark.parametrize("object_type", [[], {}])
+async def test_non_string_tree_object_type_fails_closed(object_type: object) -> None:
+    commit_sha = "a" * 40
+    root_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            _commit(commit_sha, root_sha),
+            _tree(
+                root_sha,
+                [
+                    {
+                        "path": "bad",
+                        "type": object_type,
+                        "mode": "100644",
+                        "sha": "c" * 40,
+                    }
+                ],
+            ),
         ]
     )
 
