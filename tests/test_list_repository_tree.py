@@ -239,10 +239,10 @@ async def test_non_exact_commit_sha_fails_before_github(commit_sha: str) -> None
     assert client.calls == []
 
 
-async def test_missing_directory_and_file_as_directory_are_distinct() -> None:
+async def test_missing_directory_component_is_rejected() -> None:
     commit_sha = "a" * 40
     root_sha = "b" * 40
-    missing_client = FakeGhClient(
+    client = FakeGhClient(
         [
             _commit(commit_sha, root_sha),
             _tree(root_sha, [_entry("src", type="tree", mode="040000", sha="c" * 40)]),
@@ -255,25 +255,38 @@ async def test_missing_directory_and_file_as_directory_are_distinct() -> None:
             "repo",
             commit_sha,
             path="docs",
-            ctx=_context(missing_client),
+            ctx=_context(client),
         )
 
-    blob_client = FakeGhClient(
+
+@pytest.mark.parametrize(
+    ("path", "object_type", "mode"),
+    [("README.md", "blob", "100644"), ("vendor", "commit", "160000")],
+)
+async def test_blob_or_submodule_cannot_be_used_as_directory(
+    path: str,
+    object_type: str,
+    mode: str,
+) -> None:
+    commit_sha = "a" * 40
+    root_sha = "b" * 40
+    client = FakeGhClient(
         [
             _commit(commit_sha, root_sha),
             _tree(
                 root_sha,
-                [_entry("README.md", type="blob", mode="100644", sha="d" * 40, size=10)],
+                [_entry(path, type=object_type, mode=mode, sha="d" * 40, size=10)],
             ),
         ]
     )
-    with pytest.raises(ValueError, match=r"not a directory: 'README.md'.*blob"):
+
+    with pytest.raises(ValueError, match=rf"not a directory: '{path}'.*{object_type}"):
         await gh_list_repository_tree(
             "octo",
             "repo",
             commit_sha,
-            path="README.md",
-            ctx=_context(blob_client),
+            path=path,
+            ctx=_context(client),
         )
 
 
@@ -328,6 +341,22 @@ async def test_malformed_tree_object_type_or_mode_fails_closed(type: str, mode: 
         )
 
 
+@pytest.mark.parametrize("max_entries", [0, -1])
+async def test_invalid_entry_bound_fails_before_github(max_entries: int) -> None:
+    client = FakeGhClient([])
+
+    with pytest.raises(ValidationError):
+        await gh_list_repository_tree(
+            "octo",
+            "repo",
+            "a" * 40,
+            max_entries=max_entries,
+            ctx=_context(client),
+        )
+
+    assert client.calls == []
+
+
 async def test_application_entry_bound_is_explicitly_incomplete() -> None:
     commit_sha = "a" * 40
     root_sha = "b" * 40
@@ -360,6 +389,39 @@ async def test_application_entry_bound_is_explicitly_incomplete() -> None:
     assert "max_entries" in result.warning
 
 
+async def test_server_hard_entry_bound_caps_request() -> None:
+    commit_sha = "a" * 40
+    root_sha = "b" * 40
+    client = FakeGhClient(
+        [
+            _commit(commit_sha, root_sha),
+            _tree(
+                root_sha,
+                [
+                    _entry("a.txt", type="blob", mode="100644", sha="c" * 40, size=1),
+                    _entry("b.txt", type="blob", mode="100644", sha="d" * 40, size=1),
+                ],
+            ),
+        ],
+        hard_max_results=1,
+    )
+
+    result = await gh_list_repository_tree(
+        "octo",
+        "repo",
+        commit_sha,
+        max_entries=50,
+        ctx=_context(client),
+    )
+
+    assert [item.path for item in result.entries] == ["a.txt"]
+    assert result.entries_returned == 1
+    assert result.truncated is True
+    assert result.evidence_complete is False
+    assert result.warning is not None
+    assert "bound of 1" in result.warning
+
+
 async def test_github_source_truncation_is_explicitly_incomplete() -> None:
     commit_sha = "a" * 40
     root_sha = "b" * 40
@@ -386,6 +448,28 @@ async def test_github_source_truncation_is_explicitly_incomplete() -> None:
     assert result.evidence_complete is False
     assert result.warning is not None
     assert "GitHub reported truncated" in result.warning
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"sha": "b" * 40, "tree": {}, "truncated": False},
+        {"sha": "b" * 40, "tree": [], "truncated": "false"},
+    ],
+)
+async def test_malformed_tree_payload_fails_closed(payload: object) -> None:
+    commit_sha = "a" * 40
+    root_sha = "b" * 40
+    client = FakeGhClient([_commit(commit_sha, root_sha), payload])
+
+    with pytest.raises(RuntimeError, match="Git tree"):
+        await gh_list_repository_tree(
+            "octo",
+            "repo",
+            commit_sha,
+            ctx=_context(client),
+        )
 
 
 async def test_truncated_traversal_evidence_fails_closed() -> None:
