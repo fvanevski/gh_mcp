@@ -374,6 +374,17 @@ def validate_repo_path(path: str) -> None:
         raise ValueError(f"invalid repository-relative file path: {path!r}")
 
 
+def validate_repo_directory_path(path: str) -> None:
+    """Validate a repository-relative directory path while allowing the root sentinel."""
+
+    if path == "":
+        return
+    try:
+        validate_repo_path(path)
+    except ValueError as exc:
+        raise ValueError(f"invalid repository-relative directory path: {path!r}") from exc
+
+
 def validate_branch(branch: str) -> None:
     invalid = re.search(r"[\x00-\x20~^:?*\[]", branch)
     if (

@@ -4,7 +4,7 @@ A Python MCP server for the ``gh`` CLI. It uses the official MCP Python SDK 2.x,
 runs `gh` asynchronously without a terminal, and returns structured results from
 direct JSON output or a post-write readback.
 
-Version 0.9.0 exposes 62 public MCP tools: 41 read-only and 21 write.
+Version 0.9.0 exposes 63 public MCP tools: 42 read-only and 21 write.
 The 0.9.0 release splits the former generic `gh_submit_pr_review` into three
 action-specific formal pull-request review writes — `gh_approve_pr`,
 `gh_request_pr_changes`, and `gh_comment_pr_review` — and adds the read-only
@@ -14,7 +14,9 @@ authenticated reviewer identity immediately before the review POST, and readback
 immutable review-ID state. Issue #80 additionally adds `gh_patch_files`, a focused
 exact-context text-patch write that materializes all edits against immutable original
 blob snapshots before creating Git objects and then reuses the canonical content-commit
-CAS/readback state machine. The 0.8.0 release retired the weaker generic workflow-dispatch,
+CAS/readback state machine. Issue #82 adds the read-only `gh_list_repository_tree` structural
+discovery primitive, pinned to one exact commit SHA with bounded completeness evidence and
+safe root/nested directory traversal. The 0.8.0 release retired the weaker generic workflow-dispatch,
 release-creation, and label-upsert writes, removed obsolete write-compatibility
 infrastructure, and registered every public write exactly once through the canonical
 host-facing schema facade. Historical 0.7.0/0.7.1, 0.8.0, and 0.8.1 release records
@@ -22,7 +24,7 @@ remain available under `docs/` but do not define the current runtime inventory.
 
 ## Tools
 
-### Read-only (41)
+### Read-only (42)
 
 - `gh_server_info`: report the deployed MCP server and tool-schema version without
   contacting GitHub or starting a subprocess.
@@ -77,6 +79,9 @@ remain available under `docs/` but do not define the current runtime inventory.
 - `gh_list_labels`: list labels in a repository.
 - `gh_list_milestones`: list milestones in a repository.
 - `gh_get_file_contents`: read a complete file at an exact branch, tag, or commit ref.
+- `gh_list_repository_tree`: list immediate or recursive structural entries for a repository
+  root or nested directory at one exact commit SHA, with exact tree/object identity and
+  explicit truncation/completeness metadata but no file content.
 - `gh_get_ref`: resolve one exact branch or tag Git ref, preserving direct
   object identity and returning the peeled commit SHA for annotated tags.
 - `gh_get_commit`: read one exact 40-character Git commit SHA with its immutable
@@ -291,7 +296,8 @@ and
 [plugin availability](https://help.openai.com/en/articles/20001256).
 
 At `INFO`, repository-content tools log content-free reachability markers using their
-own tool names, including `gh_get_file_contents`, `gh_commit_files`, and `gh_patch_files`.
+own tool names, including `gh_get_file_contents`, `gh_list_repository_tree`,
+`gh_commit_files`, and `gh_patch_files`.
 
 The four focused PR snapshot/review reads emit the same marker using their own tool
 name.
@@ -353,9 +359,9 @@ noninteractive GitHub reads and return bounded structured results:
 4. Page through `gh_list_pr_files` and `gh_list_pr_commits` as needed. The server
    rechecks the SHA pair after each numbered-PR page and rejects the result if the
    snapshot changed during the read. GitHub may omit or truncate an individual
-   file's `patch`, and the server also bounds patch fragments and commit messages;
-   inspect their truncation fields and use the unified diff plus
-   `gh_get_file_contents` at the returned SHAs for complete file inspection.
+   file's `patch`, and the server also bounds patch fragments and commit messages.
+   Use `gh_list_repository_tree` when structural path discovery is needed, then use
+   `gh_get_file_contents` at the same returned SHA for complete file inspection.
 5. If the PR changes during review, restart from the new exact SHA pair rather than
    combining observations from different snapshots.
 

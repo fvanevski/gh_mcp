@@ -75,6 +75,6 @@ def test_release_documentation_describes_current_090_inventory() -> None:
     readme = Path("README.md").read_text()
     contract = Path("docs/write-schema-contract.md").read_text()
 
-    assert "Version 0.9.0 exposes 62 public MCP tools: 41 read-only and 21 write." in readme
+    assert "Version 0.9.0 exposes 63 public MCP tools: 42 read-only and 21 write." in readme
     assert "Version 0.9.0 exposes 21 public GitHub write tools" in contract
-    assert "62 total public MCP tools: 41 read-only and 21 write" in contract
+    assert "63 total public MCP tools: 42 read-only and 21 write" in contract

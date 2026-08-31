@@ -1,6 +1,6 @@
 # Public write-schema and host-legibility contract
 
-Version 0.9.0 exposes 21 public GitHub write tools (62 total public MCP tools: 41 read-only and 21 write) through one canonical current host-facing registry. This document defines their schema, metadata, registration, authorization, and ambiguity invariants. It does not weaken execution, exact-state, mutation-attempt, or readback requirements.
+Version 0.9.0 exposes 21 public GitHub write tools (63 total public MCP tools: 42 read-only and 21 write) through one canonical current host-facing registry. This document defines their schema, metadata, registration, authorization, and ambiguity invariants. It does not weaken execution, exact-state, mutation-attempt, or readback requirements.
 
 Historical 0.7.0, 0.7.1, 0.8.0, and 0.8.1 inventories remain recorded by their release documents. The current 0.9.0 runtime authority is defined by `docs/release_gate_0_9_0.md` and `tests/test_release_gate_0_9_0.py`.
 
@@ -161,14 +161,14 @@ Dynamic MCP schemas expose optional output schemas at the SDK type level. Tests 
 
 The contract is enforced by complementary tests:
 
-- `tests/test_release_gate_0_9_0.py` pins package/lock/runtime versions, exact 62/41/21 inventory, retired-tool absence, single canonical write registration, compatibility-path removal, default-off fine gates, current static authority, and current documentation;
-- `tests/test_tool_schema_snapshot.py` pins the complete current 62-tool schema surface and uses explicit output-schema narrowing for changed-test Pyrefly validation;
+- `tests/test_release_gate_0_9_0.py` pins package/lock/runtime versions, exact 63/42/21 inventory, retired-tool absence, single canonical write registration, compatibility-path removal, default-off fine gates, current static authority, and current documentation;
+- `tests/test_tool_schema_snapshot.py` pins the complete current 63-tool schema surface and uses explicit output-schema narrowing for changed-test Pyrefly validation;
 - `tests/test_write_surface_contract.py` pins all 21 public write facades and canonical module provenance;
 - `tests/test_write_schema_policy.py` independently pins all 21 public write names, audits bounded schemas and annotations, requires the content-commit fine-gate marker for both content writes, excludes generic executor/bypass fields, and pins exact-state/payload constraints;
 - `tests/test_git_content_write_schema.py` pins the shared exact outcome/reconciliation evidence, the exact `gh_patch_files` request/evidence shape, and the unchanged `gh_commit_files` public request shape;
 - `tests/test_patch_files.py` pins unique and multiline replacement, complete-line deletion, original-snapshot resolution, missing/non-unique/overlap rejection, stale and mid-validation head rejection, mode preservation, unsupported target rejection, multi-file one-commit/one-CAS semantics, and ambiguous-CAS reconciliation without replay;
 - `tests/test_write_target_policy.py` pins exact high-risk target gates and zero-call target mismatches;
 - domain migration tests pin canonical direct tri-state outcomes and no-blind-retry behavior; and
-- `tests/test_write_transport_metadata.py` pins structured ambiguity authority, rejection of bare-`RuntimeError` text inference, and the current 62/41/21 documentation inventory.
+- `tests/test_write_transport_metadata.py` pins structured ambiguity authority, rejection of bare-`RuntimeError` text inference, and the current 63/42/21 documentation inventory.
 
 A new public write or material schema/annotation change must update the independent policy set, release inventory, protocol inventory, documentation authority, and relevant schema snapshots intentionally. Green tests are not authority to weaken this contract.

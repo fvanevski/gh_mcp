@@ -129,6 +129,10 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "path", "ref"},
         {"owner", "repo", "path", "ref"},
     ),
+    "gh_list_repository_tree": (
+        {"owner", "repo", "commit_sha", "path", "recursive", "max_entries"},
+        {"owner", "repo", "commit_sha"},
+    ),
     "gh_get_ref": (
         {"owner", "repo", "ref"},
         {"owner", "repo", "ref"},
@@ -360,6 +364,7 @@ READ_ONLY_TOOLS = {
     "gh_get_repo",
     "gh_list_repos",
     "gh_get_file_contents",
+    "gh_list_repository_tree",
     "gh_get_ref",
     "gh_get_commit",
     "gh_compare_commits",
@@ -447,7 +452,7 @@ def _output_properties(tool: Any) -> dict[str, Any]:
 async def test_exact_tool_surface_snapshot() -> None:
     tools: dict[str, Any] = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 62
+    assert len(tools) == 63
     assert set(tools) == set(EXPECTED_SURFACE)
     assert "gh_create_release" not in tools
     assert "gh_upsert_label" not in tools
@@ -496,6 +501,31 @@ async def test_exact_tool_surface_snapshot() -> None:
         "description",
         "initialized",
     } == set(repo_create_output)
+
+    tree_schema = tools["gh_list_repository_tree"].input_schema["properties"]
+    assert tree_schema["commit_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert tree_schema["path"]["default"] == ""
+    assert tree_schema["path"]["maxLength"] == 4096
+    assert tree_schema["recursive"]["default"] is False
+    assert tree_schema["max_entries"]["anyOf"][0]["minimum"] == 1
+    tree_output = _output_properties(tools["gh_list_repository_tree"])
+    assert {
+        "commit_sha",
+        "root_tree_sha",
+        "path",
+        "directory_tree_sha",
+        "recursive",
+        "entries",
+        "entries_returned",
+        "truncated",
+        "evidence_complete",
+        "warning",
+    } == set(tree_output)
+    assert tree_output["commit_sha"]["pattern"] == r"^[0-9a-f]{40}$"
+    assert tree_output["root_tree_sha"]["pattern"] == r"^[0-9a-f]{40}$"
+    assert tree_output["directory_tree_sha"]["pattern"] == r"^[0-9a-f]{40}$"
+    assert tree_output["truncated"]["type"] == "boolean"
+    assert tree_output["evidence_complete"]["type"] == "boolean"
 
     compare_schema = tools["gh_compare_commits"].input_schema["properties"]
     assert compare_schema["base_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
