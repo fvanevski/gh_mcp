@@ -54,9 +54,9 @@ from mcp_gh_server.pr_write_models import (
     PullRequestMerge,
 )
 from mcp_gh_server.rate_status_models import ApiRateStatus
-from mcp_gh_server.repository_tree_models import RepositoryTreeResult
 from mcp_gh_server.release_exact_models import ReleaseExactResult
 from mcp_gh_server.repository_create_models import RepositoryCreateResult
+from mcp_gh_server.repository_tree_models import RepositoryTreeResult
 from mcp_gh_server.workflow_dispatch_models import WorkflowDispatchExactResult
 
 EXPECTED_RETURN_MODELS: dict[str, object] = {

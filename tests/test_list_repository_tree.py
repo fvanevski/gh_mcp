@@ -106,7 +106,14 @@ async def test_root_non_recursive_listing_preserves_exact_git_evidence() -> None
     assert result.evidence_complete is True
     assert result.warning is None
     observed_entries = [
-        (item.path, item.name, item.type, item.mode, item.sha, item.size)
+        (
+            item.path,
+            item.name,
+            item.type,
+            item.mode,
+            item.sha,
+            item.size,
+        )
         for item in result.entries
     ]
     assert observed_entries == [

@@ -167,7 +167,8 @@ async def _resolve_repository_directory_tree(
         match = matches[0]
         if match.type != "tree":
             raise ValueError(
-                f"repository path is not a directory: {wanted_path!r} (Git object type {match.type})"
+                "repository path is not a directory: "
+                f"{wanted_path!r} (Git object type {match.type})"
             )
         current_tree_sha = match.sha
         current_path = wanted_path
