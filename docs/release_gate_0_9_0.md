@@ -7,7 +7,7 @@ define the current runtime inventory.
 
 ## Version and inventory authority
 
-Version 0.9.0 exposes 62 public MCP tools: 41 read-only and 21 write.
+Version 0.9.0 exposes 63 public MCP tools: 42 read-only and 21 write.
 
 For the 0.9.0 candidate, the authoritative sources are:
 
@@ -20,7 +20,7 @@ For the 0.9.0 candidate, the authoritative sources are:
   `tests/test_tool_return_models.py`; and
 - release integration assertions in `tests/test_release_gate_0_9_0.py`.
 
-Those sources must all report `0.9.0` and the 62/41/21 inventory for the release candidate,
+Those sources must all report `0.9.0` and the 63/42/21 inventory for the release candidate,
 and the committed Pyrefly pin/configuration must remain present without a general baseline.
 
 ## Scope
@@ -64,6 +64,12 @@ The 0.9.0 changes:
    all files, rechecks the exact branch head immediately before the first Git-object write,
    then delegates one commit, one exact `updateRefs` CAS, and bounded authoritative ref
    reconciliation to the same canonical service used by `gh_commit_files`.
+
+6. **`gh_list_repository_tree`** — read-only structural discovery pinned to one exact
+   40-character commit SHA. It resolves the commit's exact root tree, traverses normalized
+   root/nested directory components through exact tree-object reads, supports immediate or
+   recursive listing, preserves object type/mode/SHA/blob-size evidence, and reports both
+   application-bound and GitHub-source truncation without returning file contents.
 
 The retired `gh_submit_pr_review` generic review action is not a public registration, alias,
 or compatibility shim in 0.9.0.
@@ -144,18 +150,23 @@ implementation. No ambiguous content CAS may be blindly replayed.
 
 ## Read-plane contract additions
 
-The 0.9.0 read-plane addition is:
+The 0.9.0 read-plane additions are:
 
 - `gh_get_pr_review_eligibility` — a read-only, fail-closed preflight that binds the
   requested exact head SHA, reports author/ordinary/reviewer identity, and reports approval
   and COMMENTED-review eligibility. It performs no review write and never mints a reviewer
   installation token during the read-only preflight.
+- `gh_list_repository_tree` — a bounded exact-commit repository directory/tree discovery
+  primitive. Empty `path` means repository root; nested paths are normalized and traversed
+  component-by-component through exact tree objects; `recursive=false` returns immediate
+  children and `recursive=true` returns descendants. `entries_returned`, `truncated`,
+  `evidence_complete`, and `warning` expose application/server and source completeness.
 
 These changes preserve:
 
 - public tool names for all unchanged tools;
 - read/write annotations;
-- the 41/21 split;
+- the 42/21 split;
 - write authorization or fine gates;
 - historical 0.7.x/0.8.x release-gate records; and
 - the historical issue #75 live evidence recorded below at its original exact heads.
@@ -202,13 +213,18 @@ credentials are configured.
   multi-file one-commit/one-CAS behavior, and ambiguous-CAS reconciliation without replay.
 - `tests/test_git_content_write_schema.py` — pins patch exact-outcome/evidence fields while
   preserving the existing `gh_commit_files` public contract.
-- `tests/test_tool_schema_snapshot.py` — pins the complete current 62-tool schema surface,
+- `tests/test_tool_schema_snapshot.py` — pins the complete current 63-tool schema surface,
   including `gh_patch_files`, the four review tool schemas, and the absence of
   `gh_submit_pr_review`.
 - `tests/test_write_surface_contract.py` — pins all 21 public write facades and canonical
   module provenance, including the three review writes bound to `pr_review_tool_schema` and
   `gh_patch_files` bound to its focused patch facade.
-- `tests/test_release_gate_0_9_0.py` — pins the 62/41/21 inventory, repository Pyrefly
+- `tests/test_list_repository_tree.py` — pins exact-commit root/nested/recursive tree
+  traversal, unsafe-path and malformed-evidence rejection, source/application truncation,
+  public schema/annotations, and preservation of the focused file-read contract.
+- `docs/repository-tree-read-contract.md` — records the structural-discovery workflow,
+  exact-state traversal, result bounds, and completeness semantics for issue #82.
+- `tests/test_release_gate_0_9_0.py` — pins the 63/42/21 inventory, repository Pyrefly
   authority, checker version file, no-baseline policy, and current validation documentation.
 - `docs/gh_patch_files.md` — records the focused exact-context patch-write contract and
   acceptance/failure semantics.
@@ -229,6 +245,7 @@ uv run pytest tests/test_release_gate_0_9_0.py \
   tests/test_write_surface_contract.py \
   tests/test_git_content_write_schema.py \
   tests/test_patch_files.py \
+  tests/test_list_repository_tree.py \
   tests/test_pr_review_identity.py \
   tests/test_reviewer_auth.py \
   tests/test_reviewer_client_isolation.py \
