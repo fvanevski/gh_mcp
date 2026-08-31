@@ -559,7 +559,7 @@ async def test_stdio_write_denial_does_not_elicit_or_lock_session() -> None:
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is True
         tools_after_failure = await session.list_tools()
-        assert len(tools_after_failure.tools) == 63
+        assert len(tools_after_failure.tools) == 64
 
 
 @pytest.mark.asyncio
@@ -595,7 +595,7 @@ async def test_stdio_write_executes_once_without_elicitation_using_fake_gh(tmp_p
         )
         assert not isinstance(result, InputRequiredResult)
         assert result.is_error is False
-        assert len((await session.list_tools()).tools) == 63
+        assert len((await session.list_tools()).tools) == 64
 
 
 @pytest.mark.asyncio
@@ -669,7 +669,7 @@ async def test_streamable_http_write_denial_keeps_session_usable(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is True
-            assert len((await session.list_tools()).tools) == 63
+            assert len((await session.list_tools()).tools) == 64
     finally:
         get_settings.cache_clear()
 
@@ -702,7 +702,7 @@ async def test_streamable_http_write_executes_without_nested_input_round(
             )
             assert not isinstance(result, InputRequiredResult)
             assert result.is_error is False
-            assert len((await session.list_tools()).tools) == 63
+            assert len((await session.list_tools()).tools) == 64
     finally:
         get_settings.cache_clear()
 
@@ -749,7 +749,7 @@ async def test_streamable_http_exact_sha_branch_keeps_session_live(
             server_info = await session.call_tool("gh_server_info", {})
             assert server_info.is_error is False
             assert server_info.structured_content["server_version"] == "0.9.0"
-            assert len((await session.list_tools()).tools) == 63
+            assert len((await session.list_tools()).tools) == 64
     finally:
         get_settings.cache_clear()
 
@@ -800,7 +800,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
                 "server_version": "0.9.0",
                 "tool_schema_version": "0.9.0",
                 "transport": "streamable-http",
-                "tool_count": 63,
+                "tool_count": 64,
                 "write_commands_enabled": False,
                 "content_commits_enabled": False,
                 "pr_merge_enabled": False,
@@ -1014,7 +1014,7 @@ async def test_streamable_http_content_route_keeps_namespace_live(
 
             second_file_result = await session.call_tool("gh_get_file_contents", file_arguments)
             assert second_file_result.is_error is False
-            assert len((await session.list_tools()).tools) == 63
+            assert len((await session.list_tools()).tools) == 64
     finally:
         get_settings.cache_clear()
 
@@ -1101,6 +1101,6 @@ async def test_streamable_http_formal_review_then_merge_without_nested_input(
             assert not isinstance(merge, InputRequiredResult)
             assert merge.is_error is False
             assert merge.structured_content["merged"] is True
-            assert len((await session.list_tools()).tools) == 63
+            assert len((await session.list_tools()).tools) == 64
     finally:
         get_settings.cache_clear()
