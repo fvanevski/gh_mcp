@@ -267,7 +267,7 @@ async def test_missing_directory_and_file_as_directory_are_distinct() -> None:
             ),
         ]
     )
-    with pytest.raises(ValueError, match="not a directory: 'README.md'.*blob"):
+    with pytest.raises(ValueError, match=r"not a directory: 'README.md'.*blob"):
         await gh_list_repository_tree(
             "octo",
             "repo",

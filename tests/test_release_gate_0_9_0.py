@@ -13,8 +13,8 @@ from mcp_gh_server.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_VERSION = "0.9.0"
-EXPECTED_TOOL_COUNT = 62
-EXPECTED_READ_ONLY_COUNT = 41
+EXPECTED_TOOL_COUNT = 63
+EXPECTED_READ_ONLY_COUNT = 42
 EXPECTED_WRITE_COUNT = 21
 EXPECTED_PYREFLY_REQUIREMENT = "pyrefly==1.1.1"
 EXPECTED_WRITE_TOOLS = {
@@ -209,14 +209,14 @@ def test_release_documentation_matches_runtime_authority() -> None:
     gate = (ROOT / "docs" / "release_gate_0_9_0.md").read_text()
     contract = (ROOT / "docs" / "write-schema-contract.md").read_text()
     agents = (ROOT / "AGENTS.md").read_text()
-    surface = "Version 0.9.0 exposes 62 public MCP tools: 41 read-only and 21 write."
-    contract_surface = "62 total public MCP tools: 41 read-only and 21 write"
+    surface = "Version 0.9.0 exposes 63 public MCP tools: 42 read-only and 21 write."
+    contract_surface = "63 total public MCP tools: 42 read-only and 21 write"
     pyrefly_command = "uv run --with-requirements requirements-typecheck.txt pyrefly check"
 
     assert surface in readme
     assert surface in gate
     assert contract_surface in contract
-    assert "exact 62/41/21 tool inventory" in agents
+    assert "exact 63/42/21 tool inventory" in agents
     assert "18 non-review writes" in agents
     assert "21 current public write names" in agents
     assert "gh_patch_files" in contract

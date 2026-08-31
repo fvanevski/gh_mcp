@@ -54,6 +54,7 @@ from mcp_gh_server.pr_write_models import (
     PullRequestMerge,
 )
 from mcp_gh_server.rate_status_models import ApiRateStatus
+from mcp_gh_server.repository_tree_models import RepositoryTreeResult
 from mcp_gh_server.release_exact_models import ReleaseExactResult
 from mcp_gh_server.repository_create_models import RepositoryCreateResult
 from mcp_gh_server.workflow_dispatch_models import WorkflowDispatchExactResult
@@ -88,6 +89,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
     "gh_get_repo": RepoInfo,
     "gh_list_repos": SearchResults,
     "gh_get_file_contents": RepositoryFile,
+    "gh_list_repository_tree": RepositoryTreeResult,
     "gh_get_ref": GitRefInfo,
     "gh_get_commit": GitCommitInfo,
     "gh_compare_commits": CommitComparisonResult,
@@ -124,7 +126,7 @@ EXPECTED_RETURN_MODELS: dict[str, object] = {
 
 
 def test_exact_tool_return_models() -> None:
-    assert len(EXPECTED_RETURN_MODELS) == 61
+    assert len(EXPECTED_RETURN_MODELS) == 62
     for name, expected in EXPECTED_RETURN_MODELS.items():
         function = getattr(server, name)
         assert get_type_hints(function)["return"] == expected
