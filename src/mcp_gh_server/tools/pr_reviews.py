@@ -869,7 +869,10 @@ async def gh_get_pr_review_thread(
         raise ValueError(
             f"thread_id must contain 1-{_REVIEW_THREAD_ID_MAX_LENGTH} characters"
         )
-    if max_comments is not None and not 1 <= max_comments <= _GITHUB_THREAD_COMMENTS_PER_PAGE_MAX:
+    if (
+        max_comments is not None
+        and not 1 <= max_comments <= _GITHUB_THREAD_COMMENTS_PER_PAGE_MAX
+    ):
         raise ValueError(
             f"max_comments must be between 1 and {_GITHUB_THREAD_COMMENTS_PER_PAGE_MAX}"
         )

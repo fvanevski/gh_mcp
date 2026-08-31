@@ -378,7 +378,9 @@ async def test_review_thread_server_comment_cap_is_explicit() -> None:
         _thread_graphql(comments=[], total_count=1, has_next_page=True),
     ],
 )
-async def test_review_thread_rejects_inconsistent_comment_pagination(payload: dict[str, Any]) -> None:
+async def test_review_thread_rejects_inconsistent_comment_pagination(
+    payload: dict[str, Any],
+) -> None:
     head = "b" * 40
     client = FakeGhClient([_pr(head_sha=head), payload])
 
@@ -448,7 +450,7 @@ async def test_review_thread_allows_deleted_author_and_missing_database_id() -> 
 
 async def test_review_thread_graphql_errors_fail_closed() -> None:
     head = "b" * 40
-    client = FakeGhClient([_pr(head_sha=head), {"errors": [{"message": "denied"}] }])
+    client = FakeGhClient([_pr(head_sha=head), {"errors": [{"message": "denied"}]}])
 
     with pytest.raises(RuntimeError, match="GraphQL returned errors"):
         await gh_get_pr_review_thread(
