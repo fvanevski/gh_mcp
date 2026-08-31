@@ -52,7 +52,7 @@ from .tools.issues import (
 )
 from .tools.merge_requirements import gh_get_merge_requirements
 from .tools.pr_review_eligibility import gh_get_pr_review_eligibility
-from .tools.pr_reviews import gh_get_pr_review_state, gh_list_pr_reviews
+from .tools.pr_reviews import gh_get_pr_review_state, gh_get_pr_review_thread, gh_list_pr_reviews
 from .tools.pull_requests import (
     gh_get_pr,
     gh_get_pr_checks,
@@ -112,6 +112,7 @@ __all__ = [
     "gh_get_pr_diff",
     "gh_get_pr_review_eligibility",
     "gh_get_pr_review_state",
+    "gh_get_pr_review_thread",
     "gh_get_ref",
     "gh_get_release",
     "gh_get_repo",
