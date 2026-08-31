@@ -269,6 +269,13 @@ changed-scope validation. No general `pyrefly-baseline.json`, broad suppression,
 or checker substitution is part of the release contract. Mypy may remain installed for
 historical developer use but is not release validation authority.
 
+Issue #82 additionally requires the live read-only integration replay in
+`tests/test_integration.py::TestRepositoryTree::test_exact_commit_tree_to_file_replay` with
+`GITHUB_TOKEN` available. The replay dynamically resolves `cli/cli`'s default branch once,
+binds its exact commit SHA, then proves root and nested structural reads, a deliberately
+bounded recursive result with explicit incompleteness, complete blob retrieval through
+`gh_get_file_contents` at that same commit, and missing/blob-as-directory rejection.
+
 Issue #80 additionally requires a disposable live patch exercise on one exact branch head.
 The live acceptance record must demonstrate at least a small exact-context edit against a
 sufficiently large existing text file to show that the caller does not need to submit the full
