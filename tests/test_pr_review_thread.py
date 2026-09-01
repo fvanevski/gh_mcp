@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from itertools import pairwise
 from types import SimpleNamespace
 from typing import Any
 
@@ -191,7 +192,7 @@ async def test_review_thread_passes_magic_prefix_thread_id_as_raw_field() -> Non
     assert graphql_args[thread_id_index - 1] == "-f"
     assert not any(
         left == "-F" and right == thread_field
-        for left, right in zip(graphql_args, graphql_args[1:], strict=False)
+        for left, right in pairwise(graphql_args)
     )
 
 
