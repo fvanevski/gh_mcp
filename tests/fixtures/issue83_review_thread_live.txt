@@ -1,0 +1,3 @@
+Issue #83 disposable live review-thread fixture.
+Target line for inline review comment.
+Head-movement marker: v1.
