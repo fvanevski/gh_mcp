@@ -421,12 +421,16 @@ async def test_review_thread_rejects_malformed_comment_evidence(
         )
 
 
-async def test_review_thread_allows_deleted_author_and_missing_database_id() -> None:
+async def test_review_thread_allows_absent_optional_comment_metadata() -> None:
     head = "b" * 40
+    comment = _comment("PRRC_one", "body", author=None, database_id=None)
+    comment["authorAssociation"] = None
+    comment["updatedAt"] = None
+    comment["url"] = None
     client = FakeGhClient(
         [
             _pr(head_sha=head),
-            _thread_graphql(comments=[_comment("PRRC_one", "body", author=None, database_id=None)]),
+            _thread_graphql(comments=[comment]),
             _pr(head_sha=head),
         ]
     )
@@ -442,6 +446,9 @@ async def test_review_thread_allows_deleted_author_and_missing_database_id() -> 
 
     assert result.comments[0].author is None
     assert result.comments[0].database_id is None
+    assert result.comments[0].author_association is None
+    assert result.comments[0].updated_at is None
+    assert result.comments[0].url is None
 
 
 async def test_review_thread_graphql_errors_fail_closed() -> None:
