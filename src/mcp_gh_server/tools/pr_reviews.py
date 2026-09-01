@@ -554,7 +554,10 @@ async def _read_review_thread_detail(
         raise RuntimeError("GitHub returned more review comments than the requested bound")
     expected_returned = min(total_count, comment_limit)
     if len(nodes) != expected_returned:
-        raise RuntimeError("GitHub review-comment nodes conflict with totalCount and requested bound")
+        raise RuntimeError(
+            "GitHub review-comment nodes conflict with totalCount "
+            "and requested bound"
+        )
     has_next_page = page_info.get("hasNextPage")
     if not isinstance(has_next_page, bool):
         raise RuntimeError("GitHub returned malformed review-comment page information")
@@ -866,20 +869,13 @@ async def gh_get_pr_review_thread(
     if not OBJECT_SHA_RE.fullmatch(expected):
         raise ValueError("expected_head_sha must be an exact 40-character Git object id")
     if not thread_id or len(thread_id) > _REVIEW_THREAD_ID_MAX_LENGTH:
-        raise ValueError(
-            f"thread_id must contain 1-{_REVIEW_THREAD_ID_MAX_LENGTH} characters"
-        )
-    if (
-        max_comments is not None
-        and not 1 <= max_comments <= _GITHUB_THREAD_COMMENTS_PER_PAGE_MAX
-    ):
+        raise ValueError(f"thread_id must contain 1-{_REVIEW_THREAD_ID_MAX_LENGTH} characters")
+    if max_comments is not None and not 1 <= max_comments <= _GITHUB_THREAD_COMMENTS_PER_PAGE_MAX:
         raise ValueError(
             f"max_comments must be between 1 and {_GITHUB_THREAD_COMMENTS_PER_PAGE_MAX}"
         )
     if max_body_bytes is not None and not 1 <= max_body_bytes <= _PUBLIC_REVIEW_BODY_BYTES_MAX:
-        raise ValueError(
-            f"max_body_bytes must be between 1 and {_PUBLIC_REVIEW_BODY_BYTES_MAX}"
-        )
+        raise ValueError(f"max_body_bytes must be between 1 and {_PUBLIC_REVIEW_BODY_BYTES_MAX}")
 
     initial_metadata = await _get_pr_metadata(app, owner, repo, number)
     initial_base, initial_head = _extract_pr_shas(initial_metadata)

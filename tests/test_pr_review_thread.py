@@ -408,9 +408,7 @@ async def test_review_thread_rejects_malformed_comment_evidence(
     comment: dict[str, Any], message: str
 ) -> None:
     head = "b" * 40
-    client = FakeGhClient(
-        [_pr(head_sha=head), _thread_graphql(comments=[comment])]
-    )
+    client = FakeGhClient([_pr(head_sha=head), _thread_graphql(comments=[comment])])
 
     with pytest.raises(RuntimeError, match=message):
         await gh_get_pr_review_thread(
@@ -428,9 +426,7 @@ async def test_review_thread_allows_deleted_author_and_missing_database_id() -> 
     client = FakeGhClient(
         [
             _pr(head_sha=head),
-            _thread_graphql(
-                comments=[_comment("PRRC_one", "body", author=None, database_id=None)]
-            ),
+            _thread_graphql(comments=[_comment("PRRC_one", "body", author=None, database_id=None)]),
             _pr(head_sha=head),
         ]
     )
