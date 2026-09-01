@@ -190,10 +190,7 @@ async def test_review_thread_passes_magic_prefix_thread_id_as_raw_field() -> Non
     thread_field = f"threadId={thread_id}"
     thread_id_index = graphql_args.index(thread_field)
     assert graphql_args[thread_id_index - 1] == "-f"
-    assert not any(
-        left == "-F" and right == thread_field
-        for left, right in pairwise(graphql_args)
-    )
+    assert not any(left == "-F" and right == thread_field for left, right in pairwise(graphql_args))
 
 
 async def test_review_thread_initial_head_mismatch_issues_no_graphql_read() -> None:
