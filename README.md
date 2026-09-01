@@ -672,7 +672,7 @@ For PR review, changed Python tests must also be passed explicitly to the change
 historical test corpus.
 
 The 0.9.0 release passes only when package/server/tool-schema/lock versions, the exact
-62/41/21 executable inventory, schema snapshots, canonical registration invariants,
+64/43/21 executable inventory, schema snapshots, canonical registration invariants,
 compatibility-path absence, focused negative/fail-closed regressions, static checks,
 and the full test suite agree on the same exact candidate SHA. Any source change
 invalidates affected validation and requires rerunning it.
