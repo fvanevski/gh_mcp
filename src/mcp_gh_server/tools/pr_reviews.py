@@ -508,7 +508,7 @@ async def _read_review_thread_detail(
         "graphql",
         "-f",
         f"query={_REVIEW_THREAD_DETAIL_QUERY}",
-        "-F",
+        "-f",
         f"threadId={thread_id}",
         "-F",
         f"first={comment_limit}",

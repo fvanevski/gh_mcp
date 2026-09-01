@@ -99,6 +99,13 @@ writes perform authoritative readback and return explicit tri-state outcome meta
 A partial or ambiguous result instructs callers to read authoritative state before any
 subsequent write.
 
+Caller-controlled opaque strings passed through `gh api` are also part of the security
+boundary. Bind such values with `-f` / `--raw-field`; do not pass them through typed
+`-F` / `--field`, whose `@<path>` value syntax reads local file contents before the request.
+Reserve `-F` for intentionally typed scalar parameters whose values are not opaque
+caller-controlled strings. A read-only MCP tool must not acquire an implicit local-file read
+capability through CLI field coercion.
+
 Branch tools distinguish contracts deliberately:
 
 - `gh_create_branch` — issue-linked branch creation with exact repository/issue/base-OID

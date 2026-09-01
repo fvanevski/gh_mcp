@@ -62,6 +62,12 @@ PR mismatch, and node-ID mismatch fail distinctly before detail can be represent
 After collecting the bounded thread/comment result, the server re-reads PR base/head identity;
 any movement discards the collected detail and returns `exact_head_evidence=false`.
 
+The opaque thread ID is bound to the GraphQL variable with `gh api -f` / `--raw-field`, not
+`-F` / `--field`. This distinction is security-significant: typed `-F` treats a value beginning
+with `@` as a filename and reads local file contents before constructing the request. An opaque
+caller-controlled thread ID must remain a literal string even when it begins with `@`; the
+read-only review surface must never become an implicit local-file read primitive.
+
 Comment ordering is the order supplied by GitHub's bounded `comments(first: ...)` connection.
 Connection completeness and body completeness are independent evidence dimensions:
 

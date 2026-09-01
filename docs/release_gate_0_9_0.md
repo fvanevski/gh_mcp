@@ -283,11 +283,30 @@ changed-scope validation. No general `pyrefly-baseline.json`, broad suppression,
 or checker substitution is part of the release contract. Mypy may remain installed for
 historical developer use but is not release validation authority.
 
-Issue #83 additionally requires a live read-only replay against a real pull request with at
-least one unresolved review thread. The replay must bind one exact PR head, obtain the opaque
-thread ID from `gh_get_pr_review_state`, pass that exact ID to `gh_get_pr_review_thread`, and
-show ordered comments plus explicit comment/body completeness without introducing any
-mutation. The live record is external evidence and is not implied by deterministic tests.
+Issue #83 additionally requires a live exercise against a disposable real pull request. The
+fixture must contain at least one review thread with two comments and enough controlled state
+to exercise resolved/unresolved and ownership/head-safety behavior. The evidence packet must
+record, on explicit exact PR identities:
+
+- `gh_get_pr_review_state` discovering the opaque thread ID and location;
+- `gh_get_pr_review_thread` returning both comments in GitHub connection order with stable
+  comment identity, author/timestamp provenance, and complete-body digest evidence;
+- a deliberately small `max_body_bytes` proving per-body truncation metadata while the complete
+  body byte count and SHA-256 remain authoritative;
+- a deliberately small `max_comments` proving comment-connection truncation independently of
+  body truncation;
+- both resolved and unresolved thread reads with truthful lifecycle/location state;
+- a thread ID from another PR/repository failing ownership validation;
+- head movement or an equivalent controlled exact-head race proving that collected detail is
+  discarded rather than returned as exact-head evidence; and
+- no mutation performed by `gh_get_pr_review_state` or `gh_get_pr_review_thread` themselves.
+
+Fixture setup/transition operations needed to create comments, resolve a thread, or advance the
+disposable PR are external test orchestration and must be recorded separately from the
+read-only tool calls. Deterministic regressions remain required as well, including the
+`@<path>` opaque-ID case proving that `thread_id` is passed through `gh api --raw-field` and
+cannot trigger local-file expansion. The live record is external evidence and is not implied
+by deterministic tests.
 
 Issue #82 additionally requires the live read-only integration replay in
 `tests/test_integration.py::TestRepositoryTree::test_exact_commit_tree_to_file_replay` with

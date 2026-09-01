@@ -151,11 +151,48 @@ async def test_review_thread_returns_ordered_comments_and_thread_state() -> None
     graphql_args = client.calls[1][0]
     assert graphql_args[:2] == ("api", "graphql")
     assert "threadId=PRRT_thread" in graphql_args
+    thread_id_index = graphql_args.index("threadId=PRRT_thread")
+    assert graphql_args[thread_id_index - 1] == "-f"
     assert "first=10" in graphql_args
+    first_index = graphql_args.index("first=10")
+    assert graphql_args[first_index - 1] == "-F"
     query_arg = next(arg for arg in graphql_args if arg.startswith("query="))
     assert "node(id: $threadId)" in query_arg
     assert "mutation" not in query_arg.casefold()
     assert "--input" not in graphql_args
+
+
+async def test_review_thread_passes_magic_prefix_thread_id_as_raw_field() -> None:
+    head = "b" * 40
+    thread_id = "@/dev/zero"
+    client = FakeGhClient(
+        [
+            _pr(head_sha=head),
+            _thread_graphql(thread_id=thread_id),
+            _pr(head_sha=head),
+        ]
+    )
+
+    result = await gh_get_pr_review_thread(
+        "octo",
+        "repo",
+        19,
+        head,
+        thread_id,
+        ctx=_context(client),
+    )
+
+    assert result.exact_head_evidence is True
+    assert result.thread is not None
+    assert result.thread.id == thread_id
+    graphql_args = client.calls[1][0]
+    thread_field = f"threadId={thread_id}"
+    thread_id_index = graphql_args.index(thread_field)
+    assert graphql_args[thread_id_index - 1] == "-f"
+    assert not any(
+        left == "-F" and right == thread_field
+        for left, right in zip(graphql_args, graphql_args[1:], strict=False)
+    )
 
 
 async def test_review_thread_initial_head_mismatch_issues_no_graphql_read() -> None:
