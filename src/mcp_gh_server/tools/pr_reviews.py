@@ -554,7 +554,9 @@ async def _read_review_thread_detail(
         raise RuntimeError("GitHub returned more review comments than the requested bound")
     expected_returned = min(total_count, comment_limit)
     if len(nodes) != expected_returned:
-        raise RuntimeError("GitHub review-comment nodes conflict with totalCount and requested bound")
+        raise RuntimeError(
+            "GitHub review-comment nodes conflict with totalCount and requested bound"
+        )
     has_next_page = page_info.get("hasNextPage")
     if not isinstance(has_next_page, bool):
         raise RuntimeError("GitHub returned malformed review-comment page information")
