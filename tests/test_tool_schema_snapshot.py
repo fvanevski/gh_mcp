@@ -77,6 +77,18 @@ EXPECTED_SURFACE: dict[str, tuple[set[str], set[str]]] = {
         {"owner", "repo", "number", "expected_head_sha"},
         {"owner", "repo", "number", "expected_head_sha"},
     ),
+    "gh_get_pr_review_thread": (
+        {
+            "owner",
+            "repo",
+            "number",
+            "expected_head_sha",
+            "thread_id",
+            "max_comments",
+            "max_body_bytes",
+        },
+        {"owner", "repo", "number", "expected_head_sha", "thread_id"},
+    ),
     "gh_get_merge_requirements": (
         {"owner", "repo", "number", "expected_head_sha"},
         {"owner", "repo", "number", "expected_head_sha"},
@@ -358,6 +370,7 @@ READ_ONLY_TOOLS = {
     "gh_list_pr_commits",
     "gh_list_pr_reviews",
     "gh_get_pr_review_state",
+    "gh_get_pr_review_thread",
     "gh_get_pr_review_eligibility",
     "gh_get_merge_requirements",
     "gh_get_pr_checks",
@@ -452,7 +465,7 @@ def _output_properties(tool: Any) -> dict[str, Any]:
 async def test_exact_tool_surface_snapshot() -> None:
     tools: dict[str, Any] = {tool.name: tool for tool in await mcp.list_tools()}
 
-    assert len(tools) == 63
+    assert len(tools) == 64
     assert set(tools) == set(EXPECTED_SURFACE)
     assert "gh_create_release" not in tools
     assert "gh_upsert_label" not in tools
@@ -699,6 +712,27 @@ async def test_exact_tool_surface_snapshot() -> None:
         "unresolved_review_threads",
         "requirements_satisfied",
     } <= set(review_state_output)
+
+    review_thread_schema = tools["gh_get_pr_review_thread"].input_schema["properties"]
+    assert review_thread_schema["number"]["minimum"] == 1
+    assert review_thread_schema["expected_head_sha"]["pattern"] == r"^[0-9A-Fa-f]{40}$"
+    assert review_thread_schema["thread_id"]["minLength"] == 1
+    assert review_thread_schema["thread_id"]["maxLength"] == 512
+    assert review_thread_schema["max_comments"]["anyOf"][0]["maximum"] == 100
+    assert review_thread_schema["max_body_bytes"]["anyOf"][0]["maximum"] == 1_000_000
+    review_thread_output = _output_properties(tools["gh_get_pr_review_thread"])
+    assert review_thread_output["head_matches_expected"]["type"] == "boolean"
+    assert review_thread_output["exact_head_evidence"]["type"] == "boolean"
+    assert {
+        "number",
+        "base_sha",
+        "expected_head_sha",
+        "current_head_sha",
+        "thread",
+        "comments_evidence",
+        "comments",
+        "warning",
+    } <= set(review_thread_output)
 
     merge_requirements_schema = tools["gh_get_merge_requirements"].input_schema["properties"]
     assert merge_requirements_schema["number"]["minimum"] == 1

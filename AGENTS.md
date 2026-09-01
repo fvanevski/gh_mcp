@@ -99,6 +99,13 @@ writes perform authoritative readback and return explicit tri-state outcome meta
 A partial or ambiguous result instructs callers to read authoritative state before any
 subsequent write.
 
+Caller-controlled opaque strings passed through `gh api` are also part of the security
+boundary. Bind such values with `-f` / `--raw-field`; do not pass them through typed
+`-F` / `--field`, whose `@<path>` value syntax reads local file contents before the request.
+Reserve `-F` for intentionally typed scalar parameters whose values are not opaque
+caller-controlled strings. A read-only MCP tool must not acquire an implicit local-file read
+capability through CLI field coercion.
+
 Branch tools distinguish contracts deliberately:
 
 - `gh_create_branch` — issue-linked branch creation with exact repository/issue/base-OID
@@ -138,8 +145,11 @@ For issue #75 / version 0.9.0 review workflows, require `server_version` and
    reviewing workflow requires current numbered-PR evidence.
 4. Use `gh_get_file_contents` at exact SHAs for complete file content.
 5. If the PR head changes, invalidate the old review and restart from the new exact head.
-6. Use `gh_get_pr_review_eligibility` as the exact-head preflight for formal review.
-7. Use `gh_approve_pr` for an independent APPROVED review, `gh_request_pr_changes` for
+6. Use `gh_get_pr_review_state` for compact exact-head review/request/thread state. When one
+   returned thread needs discussion context, pass only that opaque thread ID to
+   `gh_get_pr_review_thread` with explicit comment/body bounds; do not broaden the aggregate.
+7. Use `gh_get_pr_review_eligibility` as the exact-head preflight for formal review.
+8. Use `gh_approve_pr` for an independent APPROVED review, `gh_request_pr_changes` for
    CHANGES_REQUESTED, or `gh_comment_pr_review` for the ordinary-principal COMMENTED
    fallback when GitHub approval is not eligible.
 
@@ -223,7 +233,7 @@ to bypass a failed gate.
 Version 0.9.0 release authority is `docs/release_gate_0_9_0.md` plus
 `tests/test_release_gate_0_9_0.py`. Required closure evidence must belong to one exact
 candidate SHA and includes package/server/tool-schema/lock agreement,
-exact 63/42/21 tool inventory, schema snapshots, canonical single-registration proof,
+exact 64/43/21 tool inventory, schema snapshots, canonical single-registration proof,
 compatibility-path absence, focused write/readback and fail-closed tests, Ruff, format,
 Pyrefly, full pytest, and the representative live replay required by the current 0.9.0 gate.
 

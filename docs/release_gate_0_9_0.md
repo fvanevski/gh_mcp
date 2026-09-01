@@ -7,7 +7,7 @@ define the current runtime inventory.
 
 ## Version and inventory authority
 
-Version 0.9.0 exposes 63 public MCP tools: 42 read-only and 21 write.
+Version 0.9.0 exposes 64 public MCP tools: 43 read-only and 21 write.
 
 For the 0.9.0 candidate, the authoritative sources are:
 
@@ -20,7 +20,7 @@ For the 0.9.0 candidate, the authoritative sources are:
   `tests/test_tool_return_models.py`; and
 - release integration assertions in `tests/test_release_gate_0_9_0.py`.
 
-Those sources must all report `0.9.0` and the 63/42/21 inventory for the release candidate,
+Those sources must all report `0.9.0` and the 64/43/21 inventory for the release candidate,
 and the committed Pyrefly pin/configuration must remain present without a general baseline.
 
 ## Scope
@@ -70,6 +70,12 @@ The 0.9.0 changes:
    root/nested directory components through exact tree-object reads, supports immediate or
    recursive listing, preserves object type/mode/SHA/blob-size evidence, and reports both
    application-bound and GitHub-source truncation without returning file contents.
+
+7. **`gh_get_pr_review_thread`** — read-only exact-head review-thread detail. It accepts one
+   opaque thread node ID obtained from compact review-state evidence, proves exact node ID plus
+   repository/PR ownership, preserves resolved/outdated location state, and returns ordered
+   bounded comments with provenance, independent pagination/body completeness, and SHA-256
+   over each complete body before UTF-8-safe return truncation.
 
 The retired `gh_submit_pr_review` generic review action is not a public registration, alias,
 or compatibility shim in 0.9.0.
@@ -161,12 +167,15 @@ The 0.9.0 read-plane additions are:
   component-by-component through exact tree objects; `recursive=false` returns immediate
   children and `recursive=true` returns descendants. `entries_returned`, `truncated`,
   `evidence_complete`, and `warning` expose application/server and source completeness.
+- `gh_get_pr_review_thread` — a bounded exact-head detail primitive for one opaque review
+  thread ID. It reuses shared bounded UTF-8/digest evidence for each body and keeps
+  comment-connection completeness independent from per-body truncation.
 
 These changes preserve:
 
 - public tool names for all unchanged tools;
 - read/write annotations;
-- the 42/21 split;
+- the 43/21 split;
 - write authorization or fine gates;
 - historical 0.7.x/0.8.x release-gate records; and
 - the historical issue #75 live evidence recorded below at its original exact heads.
@@ -213,7 +222,7 @@ credentials are configured.
   multi-file one-commit/one-CAS behavior, and ambiguous-CAS reconciliation without replay.
 - `tests/test_git_content_write_schema.py` — pins patch exact-outcome/evidence fields while
   preserving the existing `gh_commit_files` public contract.
-- `tests/test_tool_schema_snapshot.py` — pins the complete current 63-tool schema surface,
+- `tests/test_tool_schema_snapshot.py` — pins the complete current 64-tool schema surface,
   including `gh_patch_files`, the four review tool schemas, and the absence of
   `gh_submit_pr_review`.
 - `tests/test_write_surface_contract.py` — pins all 21 public write facades and canonical
@@ -222,9 +231,13 @@ credentials are configured.
 - `tests/test_list_repository_tree.py` — pins exact-commit root/nested/recursive tree
   traversal, unsafe-path and malformed-evidence rejection, source/application truncation,
   public schema/annotations, and preservation of the focused file-read contract.
+- `tests/test_pr_review_thread.py` — pins exact-head admission/readback, exact node and
+  repository/PR ownership, resolved/outdated state, ordered provenance, UTF-8 body bounds and
+  complete-body digests, independent comment/body truncation, malformed pagination/evidence
+  rejection, and zero-call invalid-input failures.
 - `docs/repository-tree-read-contract.md` — records the structural-discovery workflow,
   exact-state traversal, result bounds, and completeness semantics for issue #82.
-- `tests/test_release_gate_0_9_0.py` — pins the 63/42/21 inventory, repository Pyrefly
+- `tests/test_release_gate_0_9_0.py` — pins the 64/43/21 inventory, repository Pyrefly
   authority, checker version file, no-baseline policy, and current validation documentation.
 - `docs/gh_patch_files.md` — records the focused exact-context patch-write contract and
   acceptance/failure semantics.
@@ -246,6 +259,7 @@ uv run pytest tests/test_release_gate_0_9_0.py \
   tests/test_git_content_write_schema.py \
   tests/test_patch_files.py \
   tests/test_list_repository_tree.py \
+  tests/test_pr_review_thread.py \
   tests/test_pr_review_identity.py \
   tests/test_reviewer_auth.py \
   tests/test_reviewer_client_isolation.py \
@@ -268,6 +282,31 @@ defines the no-argument project scope. Changed test files are supplied explicitl
 changed-scope validation. No general `pyrefly-baseline.json`, broad suppression, scope weakening,
 or checker substitution is part of the release contract. Mypy may remain installed for
 historical developer use but is not release validation authority.
+
+Issue #83 additionally requires a live exercise against a disposable real pull request. The
+fixture must contain at least one review thread with two comments and enough controlled state
+to exercise resolved/unresolved and ownership/head-safety behavior. The evidence packet must
+record, on explicit exact PR identities:
+
+- `gh_get_pr_review_state` discovering the opaque thread ID and location;
+- `gh_get_pr_review_thread` returning both comments in GitHub connection order with stable
+  comment identity, author/timestamp provenance, and complete-body digest evidence;
+- a deliberately small `max_body_bytes` proving per-body truncation metadata while the complete
+  body byte count and SHA-256 remain authoritative;
+- a deliberately small `max_comments` proving comment-connection truncation independently of
+  body truncation;
+- both resolved and unresolved thread reads with truthful lifecycle/location state;
+- a thread ID from another PR/repository failing ownership validation;
+- head movement or an equivalent controlled exact-head race proving that collected detail is
+  discarded rather than returned as exact-head evidence; and
+- no mutation performed by `gh_get_pr_review_state` or `gh_get_pr_review_thread` themselves.
+
+Fixture setup/transition operations needed to create comments, resolve a thread, or advance the
+disposable PR are external test orchestration and must be recorded separately from the
+read-only tool calls. Deterministic regressions remain required as well, including the
+`@<path>` opaque-ID case proving that `thread_id` is passed through `gh api --raw-field` and
+cannot trigger local-file expansion. The live record is external evidence and is not implied
+by deterministic tests.
 
 Issue #82 additionally requires the live read-only integration replay in
 `tests/test_integration.py::TestRepositoryTree::test_exact_commit_tree_to_file_replay` with
@@ -315,8 +354,8 @@ weakened merely to alter host classification.
 
 A deployed `gh_server_info` result is not sufficient to prove that a ChatGPT connector has
 refreshed its cached tool namespace. Before closing the gate, rediscover the connector and
-verify that `gh_get_pr_review_eligibility`, `gh_approve_pr`, `gh_request_pr_changes`,
-`gh_comment_pr_review`, and `gh_patch_files` are callable and that the retired
+verify that `gh_get_pr_review_eligibility`, `gh_get_pr_review_thread`, `gh_approve_pr`,
+`gh_request_pr_changes`, `gh_comment_pr_review`, and `gh_patch_files` are callable and that the retired
 `gh_submit_pr_review` is absent. A stale host namespace must be classified separately from
 the server's executable inventory.
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .evidence import PaginationEvidence
 
@@ -45,6 +45,65 @@ class PullRequestReviewThread(BaseModel):
     original_line: int | None = None
     is_outdated: bool
     comment_count: int = Field(ge=0)
+
+
+class PullRequestReviewThreadDetail(BaseModel):
+    """Exact review-thread identity, location, and lifecycle state."""
+
+    id: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    line: int | None = None
+    original_line: int | None = None
+    is_resolved: bool
+    is_outdated: bool
+    comment_count: int = Field(ge=0)
+
+
+class PullRequestReviewThreadComment(BaseModel):
+    """One review comment with bounded body evidence and provenance."""
+
+    id: str = Field(min_length=1)
+    database_id: int | None = Field(default=None, ge=1)
+    author: str | None = None
+    author_association: str | None = None
+    created_at: str = Field(min_length=1)
+    updated_at: str | None = None
+    url: str | None = None
+    reply_to_id: str | None = None
+    body: str
+    body_bytes_returned: int = Field(ge=0)
+    body_total_bytes: int = Field(ge=0)
+    body_truncated: bool
+    body_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    body_warning: str | None = None
+
+    @model_validator(mode="after")
+    def validate_body_evidence(self) -> PullRequestReviewThreadComment:
+        actual_returned = len(self.body.encode("utf-8"))
+        if self.body_bytes_returned != actual_returned:
+            raise ValueError("body_bytes_returned must equal the UTF-8 byte length of body")
+        if self.body_bytes_returned > self.body_total_bytes:
+            raise ValueError("body_bytes_returned cannot exceed body_total_bytes")
+        if self.body_truncated != (self.body_bytes_returned < self.body_total_bytes):
+            raise ValueError("body_truncated must reflect incomplete returned body bytes")
+        if self.body_truncated and not self.body_warning:
+            raise ValueError("truncated review-comment body evidence requires a warning")
+        return self
+
+
+class PullRequestReviewThreadResult(BaseModel):
+    """Bounded thread-detail evidence bound to one exact pull-request head."""
+
+    number: int = Field(ge=1)
+    base_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    expected_head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    current_head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    head_matches_expected: bool
+    exact_head_evidence: bool
+    thread: PullRequestReviewThreadDetail | None = None
+    comments_evidence: PaginationEvidence | None = None
+    comments: list[PullRequestReviewThreadComment] = Field(default_factory=list)
+    warning: str | None = None
 
 
 ReviewDecision = Literal["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]

@@ -53,6 +53,7 @@ class TestSettingsValidation:
         assert settings.max_pr_file_patch_bytes == 8_000
         assert settings.max_pr_commit_message_bytes == 4_000
         assert settings.max_failed_run_log_bytes == 500_000
+        assert settings.max_review_comment_body_bytes == 100_000
         assert settings.max_action_log_bytes == 500_000
         assert settings.max_action_log_jobs == 100
         assert settings.transport == "stdio"
