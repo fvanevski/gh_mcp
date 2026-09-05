@@ -244,7 +244,9 @@ async def test_existing_nonterminal_matching_dispatch_fails_closed_without_write
         ]
     )
 
-    with pytest.raises(WorkflowDispatchDuplicateError, match=r"nonterminal.*no write was attempted"):
+    with pytest.raises(
+        WorkflowDispatchDuplicateError, match=r"nonterminal.*no write was attempted"
+    ):
         await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert [kind for kind, _, _ in client.calls] == ["read", "read", "read"]
