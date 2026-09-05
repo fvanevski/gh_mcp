@@ -20,11 +20,11 @@ from mcp_gh_server.server import AppContext
 from mcp_gh_server.settings import Settings
 from mcp_gh_server.tools.workflow_dispatch import (
     _WORKFLOW_DISPATCH_RESERVATIONS,
-    _WorkflowDispatchReservation,
     MAX_WORKFLOW_INPUT_CHARACTERS,
     MAX_WORKFLOW_INPUTS,
     WorkflowDispatchDuplicateError,
     WorkflowDispatchRefAmbiguityError,
+    _WorkflowDispatchReservation,
     gh_run_workflow_exact,
 )
 from mcp_gh_server.workflow_dispatch_models import WorkflowDispatchExactResult
