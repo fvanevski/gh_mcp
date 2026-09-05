@@ -187,6 +187,7 @@ def _successful_reads(sha: str, run_id: int) -> list[Any]:
     return [
         _ref(sha),
         _runs(),
+        _runs(),
         *_missing_ref(),
         _ref(sha),
         _workflow(),
@@ -238,8 +239,8 @@ async def test_existing_nonterminal_matching_dispatch_fails_closed_without_write
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
-            _runs(total_count=1),
             _runs(total_count=0),
+            _runs(total_count=1),
         ]
     )
 
@@ -248,8 +249,8 @@ async def test_existing_nonterminal_matching_dispatch_fails_closed_without_write
 
     assert [kind for kind, _, _ in client.calls] == ["read", "read", "read"]
     assert client.payloads == []
-    list_args = client.calls[1][1]
-    completed_args = client.calls[2][1]
+    completed_args = client.calls[1][1]
+    list_args = client.calls[2][1]
     assert list_args[1] == "repos/octo/repo/actions/workflows/17/runs"
     assert f"head_sha={sha}" in list_args
     assert "event=workflow_dispatch" in list_args
@@ -279,8 +280,40 @@ async def test_completed_historical_dispatch_does_not_block_new_dispatch() -> No
     assert result.state_matches_requested is True
     assert result.run_id == 91
     assert sum(kind == "write" for kind, _, _ in client.calls) == 1
-    completed_args = client.calls[2][1]
+    completed_args = client.calls[1][1]
     assert "status=completed" in completed_args
+
+
+async def test_concurrent_new_dispatch_between_terminal_probes_fails_closed() -> None:
+    sha = _sha(32)
+    client = WorkflowDispatchClient(
+        read_results=[
+            _ref(sha),
+            _runs(total_count=1),
+            _runs(total_count=2),
+        ]
+    )
+
+    with pytest.raises(WorkflowDispatchDuplicateError, match="1 matching nonterminal"):
+        await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 0
+
+
+async def test_terminal_history_counter_regression_is_uncertain_and_never_dispatches() -> None:
+    sha = _sha(33)
+    client = WorkflowDispatchClient(
+        read_results=[
+            _ref(sha),
+            _runs(total_count=1),
+            _runs(total_count=0),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="history changed.*no write was attempted"):
+        await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 0
 
 
 async def test_same_name_branch_and_tag_fails_closed_even_at_same_sha() -> None:
@@ -288,6 +321,7 @@ async def test_same_name_branch_and_tag_fails_closed_even_at_same_sha() -> None:
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
+            _runs(),
             _runs(),
             _ref(sha, ref="refs/tags/main"),
         ]
@@ -316,6 +350,7 @@ async def test_workflow_identity_or_state_mismatch_fails_immediately_before_writ
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
+            _runs(),
             _runs(),
             *_missing_ref(),
             _ref(sha),
@@ -409,6 +444,7 @@ async def test_annotated_tag_dispatch_uses_peeled_commit_and_short_tag_name() ->
             _annotated_ref(tag_sha),
             _tag_object(tag_sha, commit_sha),
             _runs(),
+            _runs(),
             *_missing_ref(),
             _annotated_ref(tag_sha),
             _tag_object(tag_sha, commit_sha),
@@ -437,6 +473,7 @@ async def test_ref_movement_after_duplicate_guard_stops_before_write() -> None:
         read_results=[
             _ref(expected),
             _runs(),
+            _runs(),
             *_missing_ref(),
             _ref(moved),
         ]
@@ -455,6 +492,7 @@ async def test_post_dispatch_ref_movement_is_bound_to_returned_run_and_fails_clo
     client = WorkflowDispatchClient(
         read_results=[
             _ref(expected),
+            _runs(),
             _runs(),
             *_missing_ref(),
             _ref(expected),
@@ -484,6 +522,7 @@ async def test_returned_run_id_mismatch_does_not_accept_another_run() -> None:
         read_results=[
             _ref(sha),
             _runs(),
+            _runs(),
             *_missing_ref(),
             _ref(sha),
             _workflow(),
@@ -507,6 +546,7 @@ async def test_malformed_success_receipt_never_guesses_created_run_from_discover
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
+            _runs(),
             _runs(),
             *_missing_ref(),
             _ref(sha),
@@ -532,6 +572,7 @@ async def test_known_dispatch_failure_is_not_replayed() -> None:
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
+            _runs(),
             _runs(),
             *_missing_ref(),
             _ref(sha),
@@ -566,6 +607,7 @@ async def test_successful_dispatch_with_delayed_exact_run_readback_is_not_replay
         read_results=[
             _ref(sha),
             _runs(),
+            _runs(),
             *_missing_ref(),
             _ref(sha),
             _workflow(),
@@ -595,6 +637,7 @@ async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_on
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
+            _runs(),
             _runs(),
             *_missing_ref(),
             _ref(sha),
@@ -664,6 +707,7 @@ async def test_ambiguous_transport_stays_unknown_even_when_fallback_readback_mat
         read_results=[
             _ref(sha),
             _runs(),
+            _runs(),
             *_missing_ref(),
             _ref(sha),
             _workflow(),
@@ -698,6 +742,7 @@ async def test_multiple_fallback_matches_are_ambiguous_and_never_redispatched() 
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
+            _runs(),
             _runs(),
             *_missing_ref(),
             _ref(sha),
