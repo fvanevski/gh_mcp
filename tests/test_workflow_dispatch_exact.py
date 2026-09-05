@@ -21,9 +21,9 @@ from mcp_gh_server.settings import Settings
 from mcp_gh_server.tools.workflow_dispatch import (
     MAX_WORKFLOW_INPUT_CHARACTERS,
     MAX_WORKFLOW_INPUTS,
+    _WORKFLOW_DISPATCH_RESERVATIONS,
     WorkflowDispatchDuplicateError,
     WorkflowDispatchRefAmbiguityError,
-    _WORKFLOW_DISPATCH_RESERVATIONS,
     _WorkflowDispatchReservation,
     gh_run_workflow_exact,
 )
