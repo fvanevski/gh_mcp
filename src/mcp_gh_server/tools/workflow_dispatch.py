@@ -33,6 +33,7 @@ from .git import gh_get_ref
 
 MAX_WORKFLOW_INPUTS = 25
 MAX_WORKFLOW_INPUT_CHARACTERS = 65_535
+_GITHUB_FILTERED_RUNS_MAX = 1_000
 
 
 class WorkflowDispatchDuplicateError(RuntimeError):
@@ -195,6 +196,14 @@ async def _require_no_matching_dispatch(
         per_page=1,
         page=1,
     )
+    if (
+        completed.total_count >= _GITHUB_FILTERED_RUNS_MAX
+        or runs.total_count >= _GITHUB_FILTERED_RUNS_MAX
+    ):
+        raise WorkflowDispatchUncertainError(
+            "GitHub workflow_dispatch history reached the 1,000-result filtered search boundary "
+            f"for workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+        )
     if runs.total_count == 0:
         if completed.total_count > 0:
             raise WorkflowDispatchUncertainError(

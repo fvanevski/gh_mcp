@@ -318,6 +318,22 @@ async def test_terminal_history_counter_regression_is_uncertain_and_never_dispat
     assert sum(kind == "write" for kind, _, _ in client.calls) == 0
 
 
+async def test_filtered_history_search_boundary_is_uncertain_and_never_dispatches() -> None:
+    sha = _sha(34)
+    client = WorkflowDispatchClient(
+        read_results=[
+            _ref(sha),
+            _runs(total_count=1_000),
+            _runs(total_count=1_000),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match=r"1,000-result.*no write was attempted"):
+        await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 0
+
+
 async def test_same_name_branch_and_tag_fails_closed_even_at_same_sha() -> None:
     sha = _sha(4)
     client = WorkflowDispatchClient(

@@ -116,6 +116,11 @@ new dispatch that appears between the probes increase the later all-status count
 closed instead of being missed. A completed count larger than the later all-status count is treated
 as uncertain state, such as a concurrent deletion, and no mutation is attempted.
 
+GitHub limits filtered workflow-run searches to 1,000 results. If either exact filtered count
+reaches that boundary, the tool cannot prove that the two counts describe the complete matching
+history, so it returns an uncertain precondition and performs no mutation rather than inferring
+that all matching runs are terminal.
+
 The server-local reservation uses the same workflow/head identity. It is an additional fail-closed
 coordination layer, not a replacement for the authoritative `gh_list_runs` query. Coordination is
 process-local; independently running MCP server processes and unrelated GitHub actors do not share
