@@ -21,10 +21,10 @@ from mcp_gh_server.settings import Settings
 from mcp_gh_server.tools.workflow_dispatch import (
     MAX_WORKFLOW_INPUT_CHARACTERS,
     MAX_WORKFLOW_INPUTS,
-    _WORKFLOW_DISPATCH_RESERVATIONS,
-    _WorkflowDispatchReservation,
     WorkflowDispatchDuplicateError,
     WorkflowDispatchRefAmbiguityError,
+    _WORKFLOW_DISPATCH_RESERVATIONS,
+    _WorkflowDispatchReservation,
     gh_run_workflow_exact,
 )
 from mcp_gh_server.workflow_dispatch_models import WorkflowDispatchExactResult
@@ -244,7 +244,7 @@ async def test_existing_nonterminal_matching_dispatch_fails_closed_without_write
         ]
     )
 
-    with pytest.raises(WorkflowDispatchDuplicateError, match="nonterminal.*no write was attempted"):
+    with pytest.raises(WorkflowDispatchDuplicateError, match=r"nonterminal.*no write was attempted"):
         await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert [kind for kind, _, _ in client.calls] == ["read", "read", "read"]
@@ -310,7 +310,7 @@ async def test_terminal_history_counter_regression_is_uncertain_and_never_dispat
         ]
     )
 
-    with pytest.raises(RuntimeError, match="history changed.*no write was attempted"):
+    with pytest.raises(RuntimeError, match=r"history changed.*no write was attempted":
         await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 0
