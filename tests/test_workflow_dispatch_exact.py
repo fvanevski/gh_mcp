@@ -310,7 +310,7 @@ async def test_terminal_history_counter_regression_is_uncertain_and_never_dispat
         ]
     )
 
-    with pytest.raises(RuntimeError, match=r"history changed.*no write was attempted":
+    with pytest.raises(RuntimeError, match=r"history changed.*no write was attempted"):
         await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 0
