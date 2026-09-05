@@ -56,8 +56,8 @@ the tool:
 6. queries `gh_list_runs` first with the exact workflow ID, head SHA, `workflow_dispatch` event,
    and `status=completed`, then repeats the same exact query without a status filter; it rejects
    when the resulting counts prove that at least one matching run is still nonterminal, and when
-   positive counts are equal it re-reads the completed count and requires that terminal population
-   to remain stable before dispatching; counter-regression, replacement, and search-boundary races
+   positive counts are equal it re-reads the completed count and requires that terminal count to
+   remain stable before dispatching; counter-regression, replacement, and search-boundary races
    are uncertain and perform no mutation;
 7. rejects a same-name branch/tag counterpart because GitHub's dispatch API accepts only the
    short branch-or-tag name and cannot otherwise preserve the caller's namespace identity;
@@ -121,7 +121,7 @@ deletion, and no mutation is attempted.
 When the first two counts are equal and positive, equality alone is not sufficient evidence: a
 completed run could have been deleted and replaced by a nonterminal run while preserving the same
 total. The tool therefore performs a second exact `status=completed` count and requires it to equal
-the first completed count. Any change in that terminal population is `UNCERTAIN` and no mutation is
+the first completed count. Any change in that terminal count is `UNCERTAIN` and no mutation is
 attempted. This closes the observed equal-count replacement race while preserving the completed-
 history allowance. As with the exact-ref precondition, GitHub does not expose a server-side atomic
 compare-and-dispatch primitive; an unrelated actor can always mutate workflow-run state after the

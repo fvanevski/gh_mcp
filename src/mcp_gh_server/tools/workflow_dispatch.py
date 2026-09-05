@@ -223,8 +223,6 @@ async def _require_no_matching_dispatch(
             f"{nonterminal_count} matching nonterminal workflow_dispatch run(s) already exist for "
             f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
         )
-    if runs.total_count == 0:
-        return 0
 
     completed_recheck = await gh_list_runs(
         owner,
@@ -245,8 +243,8 @@ async def _require_no_matching_dispatch(
         )
     if completed_recheck.total_count != completed.total_count:
         raise WorkflowDispatchUncertainError(
-            "GitHub completed workflow_dispatch population changed while reconciling terminal "
-            f"state for workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+            "GitHub completed workflow_dispatch count changed while reconciling terminal state "
+            f"for workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
         )
     return runs.total_count
 

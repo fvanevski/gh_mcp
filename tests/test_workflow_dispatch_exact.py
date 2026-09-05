@@ -333,7 +333,7 @@ async def test_equal_count_terminal_replacement_race_is_uncertain_and_never_disp
 
     with pytest.raises(
         WorkflowDispatchUncertainError,
-        match=r"completed workflow_dispatch population changed.*no write was attempted",
+        match=r"completed workflow_dispatch count changed.*no write was attempted",
     ):
         await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
