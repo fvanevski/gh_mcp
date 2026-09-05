@@ -104,6 +104,7 @@ async def test_cancelled_inflight_dispatch_leaves_fail_closed_reservation() -> N
             _ref(sha),
             _workflow(),
             _runs(),
+            _runs(),
         ],
         write_entered=write_entered,
         release_write=release_write,
