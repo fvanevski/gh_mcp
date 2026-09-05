@@ -260,7 +260,7 @@ async def test_existing_nonterminal_matching_dispatch_fails_closed_without_write
 
 
 async def test_completed_historical_dispatch_does_not_block_new_dispatch() -> None:
-    sha = _sha(4)
+    sha = _sha(30)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
@@ -624,8 +624,42 @@ async def test_ambiguous_transport_and_delayed_readback_returns_unknown_write_on
     assert "re-read authoritative state" in result.warning
 
 
-async def test_ambiguous_transport_stays_unknown_even_when_fallback_readback_matches() -> None:
+async def test_ambiguous_transport_with_completed_history_never_reuses_old_run() -> None:
     sha = _sha(18)
+    client = WorkflowDispatchClient(
+        read_results=[
+            _ref(sha),
+            _runs(total_count=1),
+            _runs(total_count=1),
+            *_missing_ref(),
+            _ref(sha),
+            _workflow(),
+        ],
+        write_results=[
+            GitHubRequestError(
+                "connection reset",
+                ambiguous=True,
+                retryable=True,
+                metadata=GitHubRequestMetadata(request_id="req-ambiguous-history"),
+            )
+        ],
+    )
+
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 1
+    assert result.write_completed is None
+    assert result.readback_completed is False
+    assert result.state_matches_requested is None
+    assert result.matching_run_count is None
+    assert result.run_id is None
+    assert result.warning is not None
+    assert "outcome is unknown" in result.warning
+    assert "authoritative readback also failed" in result.warning
+
+
+async def test_ambiguous_transport_stays_unknown_even_when_fallback_readback_matches() -> None:
+    sha = _sha(31)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),

@@ -126,8 +126,15 @@ A normal successful dispatch must return `workflow_run_id`, `run_url`, and `html
 GitHub confirms the POST but returns malformed or missing run-detail metadata, the result reports
 the write as completed but the readback as incomplete.
 
-For a transport-ambiguous POST, the tool performs one exact filtered re-read and never performs a
-second POST. The standardized exact-write fields retain their existing meanings:
+For a transport-ambiguous POST, filtered fallback readback is permitted only when the exact
+pre-dispatch workflow/head/event query proved that there was **no** matching historical run. If
+completed matching history already existed, an identity-less post-write list query could not prove
+which run (if any) came from the attempted mutation, so readback remains incomplete and the local
+reservation stays fail-closed. This prevents a pre-existing completed run from being misreported as
+the result of the new attempt.
+
+When that zero-history condition holds, the tool performs one exact filtered re-read and never
+performs a second POST. The standardized exact-write fields retain their existing meanings:
 
 - `precondition_checked` — the exact-state precondition completed successfully before mutation;
 - `write_completed` — `true`, `false`, or `null` when transport leaves completion unknown;
@@ -152,8 +159,9 @@ Issue #55 coverage requires:
 - successful readback to bind to the exact returned run ID and verify workflow ID,
   `workflow_dispatch` event, and head SHA;
 - malformed run-detail responses, returned-run mismatch, delayed readback, transport ambiguity,
-  multiple fallback matches, concurrent same-key invocation, completed local-reservation release,
-  and cancellation to preserve the no-blind-retry invariant; and
+  historical-run fallback non-reuse, multiple fallback matches, concurrent same-key invocation,
+  completed local-reservation release, and cancellation to preserve the no-blind-retry invariant;
+  and
 - the master write gate, workflow-dispatch fine gate, exact repository/workflow target policy, and
   same-process reservation behavior to remain fail-closed.
 

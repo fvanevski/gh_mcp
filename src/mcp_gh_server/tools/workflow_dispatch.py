@@ -171,8 +171,8 @@ async def _require_no_matching_dispatch(
     expected_ref_sha: str,
     *,
     ctx: Context[AppContext],
-) -> None:
-    """Fail closed if any nonterminal dispatch exists for the exact workflow/head."""
+) -> int:
+    """Reject nonterminal duplicates and return the completed-history baseline count."""
 
     runs = await gh_list_runs(
         owner,
@@ -185,7 +185,7 @@ async def _require_no_matching_dispatch(
         page=1,
     )
     if runs.total_count == 0:
-        return
+        return 0
 
     completed = await gh_list_runs(
         owner,
@@ -206,7 +206,7 @@ async def _require_no_matching_dispatch(
 
     nonterminal_count = runs.total_count - completed.total_count
     if nonterminal_count == 0:
-        return
+        return runs.total_count
     raise WorkflowDispatchDuplicateError(
         f"{nonterminal_count} matching nonterminal workflow_dispatch run(s) already exist for "
         f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
@@ -542,6 +542,7 @@ async def gh_run_workflow_exact(
     resolved_ref_sha = normalized_expected_sha
     dispatch_receipt: _WorkflowDispatchReceipt | None = None
     receipt_warning: str | None = None
+    baseline_matching_run_count = 0
     key = _dispatch_key(owner, repo, workflow_id, normalized_expected_sha)
 
     async def read_ref_sha() -> str:
@@ -550,12 +551,13 @@ async def gh_run_workflow_exact(
         return resolved_ref_sha
 
     async def precondition() -> WritePrecondition[str]:
+        nonlocal baseline_matching_run_count
         await require_write_precondition(
             read_ref_sha,
             normalized_expected_sha,
             label=f"workflow dispatch ref refs/{ref}",
         )
-        await _require_no_matching_dispatch(
+        baseline_matching_run_count = await _require_no_matching_dispatch(
             owner,
             repo,
             workflow_id,
@@ -622,6 +624,12 @@ async def gh_run_workflow_exact(
         if receipt_warning is not None:
             raise RuntimeError(
                 "successful workflow dispatch returned no authoritative run identity for readback"
+            )
+        if baseline_matching_run_count > 0:
+            raise RuntimeError(
+                "workflow dispatch fallback readback cannot distinguish a newly created run from "
+                f"{baseline_matching_run_count} pre-existing completed matching run(s) without "
+                "an authoritative returned run id"
             )
         return await _read_matching_dispatch(
             owner,
