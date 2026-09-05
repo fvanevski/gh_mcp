@@ -53,9 +53,10 @@ the tool:
 4. reconciles any prior same-process reservation before a new attempt;
 5. resolves the exact canonical `heads/...` or `tags/...` ref and requires its peeled commit SHA
    to equal `expected_ref_sha`;
-6. queries `gh_list_runs` using the exact workflow ID, head SHA, and `workflow_dispatch` event;
-   when matches exist, it repeats the exact query with `status=completed` and rejects only when
-   the total counts prove that at least one matching run is still nonterminal;
+6. queries `gh_list_runs` first with the exact workflow ID, head SHA, `workflow_dispatch` event,
+   and `status=completed`, then repeats the same exact query without a status filter; it rejects
+   when the resulting counts prove that at least one matching run is still nonterminal, and treats
+   counter-regression/deletion races as uncertain rather than dispatching;
 7. rejects a same-name branch/tag counterpart because GitHub's dispatch API accepts only the
    short branch-or-tag name and cannot otherwise preserve the caller's namespace identity;
 8. re-resolves the requested exact ref immediately before mutation;
@@ -107,10 +108,13 @@ The authoritative remote duplicate identity is:
 - a nonterminal run status.
 
 Historical `completed` runs do not permanently reserve a trusted controller/head. The tool derives
-this without scanning historical pages: it compares the total count from the exact workflow/head/
-event query with the total count from the same query filtered to `status=completed`. Equality proves
-there is no matching nonterminal run; a smaller completed count proves at least one matching run is
-still nonterminal and therefore blocks the mutation.
+this without scanning historical pages: it reads the `status=completed` total first, then the total
+count from the same exact workflow/head/event query without a status filter. Equality proves there
+is no matching nonterminal run; a smaller completed count proves at least one matching run is still
+nonterminal and therefore blocks the mutation. Reading completed history first makes a concurrent
+new dispatch that appears between the probes increase the later all-status count and therefore fail
+closed instead of being missed. A completed count larger than the later all-status count is treated
+as uncertain state, such as a concurrent deletion, and no mutation is attempted.
 
 The server-local reservation uses the same workflow/head identity. It is an additional fail-closed
 coordination layer, not a replacement for the authoritative `gh_list_runs` query. Coordination is

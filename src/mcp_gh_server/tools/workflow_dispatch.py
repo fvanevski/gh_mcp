@@ -174,19 +174,6 @@ async def _require_no_matching_dispatch(
 ) -> int:
     """Reject nonterminal duplicates and return the completed-history baseline count."""
 
-    runs = await gh_list_runs(
-        owner,
-        repo,
-        ctx=ctx,
-        workflow_id=workflow_id,
-        head_sha=expected_ref_sha,
-        event="workflow_dispatch",
-        per_page=1,
-        page=1,
-    )
-    if runs.total_count == 0:
-        return 0
-
     completed = await gh_list_runs(
         owner,
         repo,
@@ -198,6 +185,23 @@ async def _require_no_matching_dispatch(
         per_page=1,
         page=1,
     )
+    runs = await gh_list_runs(
+        owner,
+        repo,
+        ctx=ctx,
+        workflow_id=workflow_id,
+        head_sha=expected_ref_sha,
+        event="workflow_dispatch",
+        per_page=1,
+        page=1,
+    )
+    if runs.total_count == 0:
+        if completed.total_count > 0:
+            raise WorkflowDispatchUncertainError(
+                "GitHub workflow_dispatch history changed while reconciling terminal state for "
+                f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+            )
+        return 0
     if completed.total_count > runs.total_count:
         raise WorkflowDispatchUncertainError(
             "GitHub returned inconsistent workflow_dispatch counts while reconciling "
