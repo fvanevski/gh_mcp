@@ -98,6 +98,7 @@ async def test_cancelled_inflight_dispatch_leaves_fail_closed_reservation() -> N
         read_results=[
             _ref(sha),
             _runs(),
+            _runs(),
             GitHubRequestError("missing tag", status_code=404),
             [],
             _ref(sha),
