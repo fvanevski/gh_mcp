@@ -21,6 +21,8 @@ from mcp_gh_server.settings import Settings
 from mcp_gh_server.tools.workflow_dispatch import (
     MAX_WORKFLOW_INPUT_CHARACTERS,
     MAX_WORKFLOW_INPUTS,
+    _WORKFLOW_DISPATCH_RESERVATIONS,
+    _WorkflowDispatchReservation,
     WorkflowDispatchDuplicateError,
     WorkflowDispatchRefAmbiguityError,
     gh_run_workflow_exact,
@@ -231,26 +233,54 @@ async def test_stale_ref_fails_before_duplicate_query_or_dispatch() -> None:
     assert client.payloads == []
 
 
-async def test_existing_matching_dispatch_fails_closed_without_write() -> None:
+async def test_existing_nonterminal_matching_dispatch_fails_closed_without_write() -> None:
     sha = _sha(3)
     client = WorkflowDispatchClient(
         read_results=[
             _ref(sha),
-            _runs(_run(91, sha, status="completed")),
-            _workflow(),
+            _runs(total_count=1),
+            _runs(total_count=0),
         ]
     )
 
-    with pytest.raises(WorkflowDispatchDuplicateError, match="no write was attempted"):
+    with pytest.raises(WorkflowDispatchDuplicateError, match="nonterminal.*no write was attempted"):
         await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert [kind for kind, _, _ in client.calls] == ["read", "read", "read"]
     assert client.payloads == []
     list_args = client.calls[1][1]
+    completed_args = client.calls[2][1]
     assert list_args[1] == "repos/octo/repo/actions/workflows/17/runs"
     assert f"head_sha={sha}" in list_args
     assert "event=workflow_dispatch" in list_args
     assert not any(argument.startswith("status=") for argument in list_args)
+    assert f"head_sha={sha}" in completed_args
+    assert "event=workflow_dispatch" in completed_args
+    assert "status=completed" in completed_args
+
+
+async def test_completed_historical_dispatch_does_not_block_new_dispatch() -> None:
+    sha = _sha(4)
+    client = WorkflowDispatchClient(
+        read_results=[
+            _ref(sha),
+            _runs(total_count=1),
+            _runs(total_count=1),
+            *_missing_ref(),
+            _ref(sha),
+            _workflow(),
+            _run(91, sha),
+        ],
+        write_results=[GitHubRequestResult(value=_receipt(91))],
+    )
+
+    result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+
+    assert result.state_matches_requested is True
+    assert result.run_id == 91
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 1
+    completed_args = client.calls[2][1]
+    assert "status=completed" in completed_args
 
 
 async def test_same_name_branch_and_tag_fails_closed_even_at_same_sha() -> None:
@@ -662,8 +692,38 @@ async def test_multiple_fallback_matches_are_ambiguous_and_never_redispatched() 
     assert "Do not retry automatically" in result.warning
 
 
-async def test_concurrent_same_key_invocations_serialize_and_dispatch_once() -> None:
+async def test_completed_local_reservation_is_released_before_new_dispatch() -> None:
     sha = _sha(20)
+    key = ("octo", "repo", 17, sha)
+    _WORKFLOW_DISPATCH_RESERVATIONS[key] = _WorkflowDispatchReservation(
+        run_id=104,
+        outcome_unknown=False,
+    )
+    client = WorkflowDispatchClient(
+        read_results=[
+            _run(104, sha, status="completed"),
+            _ref(sha),
+            _runs(total_count=1),
+            _runs(total_count=1),
+            *_missing_ref(),
+            _ref(sha),
+            _workflow(),
+            _run(105, sha),
+        ],
+        write_results=[GitHubRequestResult(value=_receipt(105))],
+    )
+
+    try:
+        result = await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+        assert result.state_matches_requested is True
+        assert result.run_id == 105
+        assert sum(kind == "write" for kind, _, _ in client.calls) == 1
+    finally:
+        _WORKFLOW_DISPATCH_RESERVATIONS.pop(key, None)
+
+
+async def test_concurrent_same_key_invocations_serialize_and_dispatch_once() -> None:
+    sha = _sha(21)
     write_entered = asyncio.Event()
     release_write = asyncio.Event()
     client = WorkflowDispatchClient(

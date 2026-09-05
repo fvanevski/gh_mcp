@@ -968,7 +968,7 @@ WRITE_TOOL_METADATA: dict[str, WriteToolMetadata] = {
             "positive workflow ID only when GitHub immediately re-verifies the caller's exact "
             "canonical workflow path and active state. The tool also verifies the exact "
             "branch/tag ref against expected_ref_sha, rejects same-name branch/tag ambiguity "
-            "and an existing workflow_dispatch run for the workflow/head, accepts only a "
+            "and an existing nonterminal workflow_dispatch run for the workflow/head, accepts only a "
             "bounded typed input object, requests return_run_details, and binds authoritative "
             "readback to the exact returned run ID. It never redispatches automatically."
         ),

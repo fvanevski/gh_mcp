@@ -53,8 +53,9 @@ the tool:
 4. reconciles any prior same-process reservation before a new attempt;
 5. resolves the exact canonical `heads/...` or `tags/...` ref and requires its peeled commit SHA
    to equal `expected_ref_sha`;
-6. queries `gh_list_runs` using the exact workflow ID, head SHA, and `workflow_dispatch` event and
-   rejects any existing matching run regardless of status;
+6. queries `gh_list_runs` using the exact workflow ID, head SHA, and `workflow_dispatch` event;
+   when matches exist, it repeats the exact query with `status=completed` and rejects only when
+   the total counts prove that at least one matching run is still nonterminal;
 7. rejects a same-name branch/tag counterpart because GitHub's dispatch API accepts only the
    short branch-or-tag name and cannot otherwise preserve the caller's namespace identity;
 8. re-resolves the requested exact ref immediately before mutation;
@@ -71,9 +72,11 @@ the tool:
 A successful or transport-ambiguous local attempt leaves a same-process reservation. This closes
 the propagation window in which GitHub has accepted a dispatch but the workflow-runs list has not
 yet exposed it. A later exact invocation cannot dispatch again merely because list discovery is
-stale. A known run reservation is reconciled by exact run ID; if that run has been deleted, the
-normal exact duplicate query is required before the reservation can be cleared. An unresolved
-transport-ambiguous reservation remains fail-closed.
+stale. A known run reservation is reconciled by exact run ID: while that run is nonterminal it
+blocks another dispatch; once its status is `completed`, the local reservation is released and the
+normal exact remote precondition decides whether another intentional dispatch may proceed. If a
+known reserved run has been deleted, the normal exact duplicate query is required before the
+reservation can be cleared. An unresolved transport-ambiguous reservation remains fail-closed.
 
 ## GitHub API atomicity boundary
 
@@ -101,13 +104,20 @@ The authoritative remote duplicate identity is:
 - exact numeric workflow ID;
 - exact expected head SHA;
 - `workflow_dispatch` event; and
-- any run status.
+- a nonterminal run status.
+
+Historical `completed` runs do not permanently reserve a trusted controller/head. The tool derives
+this without scanning historical pages: it compares the total count from the exact workflow/head/
+event query with the total count from the same query filtered to `status=completed`. Equality proves
+there is no matching nonterminal run; a smaller completed count proves at least one matching run is
+still nonterminal and therefore blocks the mutation.
 
 The server-local reservation uses the same workflow/head identity. It is an additional fail-closed
 coordination layer, not a replacement for the authoritative `gh_list_runs` query. Coordination is
 process-local; independently running MCP server processes and unrelated GitHub actors do not share
-this in-memory reservation. Once GitHub exposes a run, the exact remote duplicate query provides
-the cross-process evidence available from the public API.
+this in-memory reservation. A known local reservation remains blocking while its exact run ID is
+nonterminal and is released after that run becomes `completed`; an unresolved transport outcome
+remains fail-closed regardless of filtered discovery.
 
 ## Readback and ambiguity
 
@@ -134,7 +144,7 @@ Issue #55 coverage requires:
 
 - the generic `gh_run_workflow` name to be absent from the public MCP registry and schema snapshot;
 - wrong or disallowed workflow identity, stale ref SHA, same-name branch/tag ambiguity, and an
-  existing matching dispatch to fail before mutation;
+  existing matching nonterminal dispatch to fail before mutation while completed history does not;
 - malformed input objects, more than 25 inputs, and aggregate input character overflow to fail
   before mutation;
 - annotated-tag peeling and the final exact-ref precondition to remain intact;
@@ -142,8 +152,8 @@ Issue #55 coverage requires:
 - successful readback to bind to the exact returned run ID and verify workflow ID,
   `workflow_dispatch` event, and head SHA;
 - malformed run-detail responses, returned-run mismatch, delayed readback, transport ambiguity,
-  multiple fallback matches, concurrent same-key invocation, and cancellation to preserve the
-  no-blind-retry invariant; and
+  multiple fallback matches, concurrent same-key invocation, completed local-reservation release,
+  and cancellation to preserve the no-blind-retry invariant; and
 - the master write gate, workflow-dispatch fine gate, exact repository/workflow target policy, and
   same-process reservation behavior to remain fail-closed.
 

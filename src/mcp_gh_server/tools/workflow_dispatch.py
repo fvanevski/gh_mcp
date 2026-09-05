@@ -36,7 +36,7 @@ MAX_WORKFLOW_INPUT_CHARACTERS = 65_535
 
 
 class WorkflowDispatchDuplicateError(RuntimeError):
-    """A guarded workflow dispatch already exists for the exact workflow/head/event."""
+    """A nonterminal guarded workflow dispatch exists for the exact workflow/head/event."""
 
 
 class WorkflowDispatchRefAmbiguityError(RuntimeError):
@@ -172,7 +172,7 @@ async def _require_no_matching_dispatch(
     *,
     ctx: Context[AppContext],
 ) -> None:
-    """Fail closed if any workflow_dispatch run already exists for the exact workflow/head."""
+    """Fail closed if any nonterminal dispatch exists for the exact workflow/head."""
 
     runs = await gh_list_runs(
         owner,
@@ -187,19 +187,29 @@ async def _require_no_matching_dispatch(
     if runs.total_count == 0:
         return
 
-    detail = ""
-    if runs.items and isinstance(runs.items[0], dict):
-        item = runs.items[0]
-        run_id = item.get("databaseId")
-        status = item.get("status")
-        if isinstance(run_id, int) and run_id > 0:
-            detail = f" (run {run_id}"
-            if isinstance(status, str) and status:
-                detail += f", status {status}"
-            detail += ")"
+    completed = await gh_list_runs(
+        owner,
+        repo,
+        ctx=ctx,
+        workflow_id=workflow_id,
+        head_sha=expected_ref_sha,
+        event="workflow_dispatch",
+        status="completed",
+        per_page=1,
+        page=1,
+    )
+    if completed.total_count > runs.total_count:
+        raise WorkflowDispatchUncertainError(
+            "GitHub returned inconsistent workflow_dispatch counts while reconciling "
+            f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+        )
+
+    nonterminal_count = runs.total_count - completed.total_count
+    if nonterminal_count == 0:
+        return
     raise WorkflowDispatchDuplicateError(
-        "matching workflow_dispatch run already exists for "
-        f"workflow {workflow_id} at head {expected_ref_sha}{detail}; no write was attempted"
+        f"{nonterminal_count} matching nonterminal workflow_dispatch run(s) already exist for "
+        f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
     )
 
 
@@ -418,10 +428,13 @@ async def _require_no_local_reservation(
             and run.head_sha == expected_ref_sha
             and run.event == "workflow_dispatch"
         ):
+            if run.status == "completed":
+                del _WORKFLOW_DISPATCH_RESERVATIONS[key]
+                return
             raise WorkflowDispatchDuplicateError(
-                "matching workflow_dispatch was already issued by this server for "
-                f"workflow {workflow_id} at head {expected_ref_sha} (run {run.run_id}); "
-                "no write was attempted"
+                "matching nonterminal workflow_dispatch was already issued by this server for "
+                f"workflow {workflow_id} at head {expected_ref_sha} (run {run.run_id}, "
+                f"status {run.status}); no write was attempted"
             )
         raise WorkflowDispatchUncertainError(
             f"prior workflow dispatch run {run.run_id} no longer matches the exact requested "
