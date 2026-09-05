@@ -24,6 +24,7 @@ from mcp_gh_server.tools.workflow_dispatch import (
     MAX_WORKFLOW_INPUTS,
     WorkflowDispatchDuplicateError,
     WorkflowDispatchRefAmbiguityError,
+    WorkflowDispatchUncertainError,
     _WorkflowDispatchReservation,
     gh_run_workflow_exact,
 )
@@ -269,6 +270,7 @@ async def test_completed_historical_dispatch_does_not_block_new_dispatch() -> No
             _ref(sha),
             _runs(total_count=1),
             _runs(total_count=1),
+            _runs(total_count=1),
             *_missing_ref(),
             _ref(sha),
             _workflow(),
@@ -313,6 +315,46 @@ async def test_terminal_history_counter_regression_is_uncertain_and_never_dispat
     )
 
     with pytest.raises(RuntimeError, match=r"history changed.*no write was attempted"):
+        await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 0
+
+
+async def test_equal_count_terminal_replacement_race_is_uncertain_and_never_dispatches() -> None:
+    sha = _sha(35)
+    client = WorkflowDispatchClient(
+        read_results=[
+            _ref(sha),
+            _runs(total_count=1),
+            _runs(total_count=1),
+            _runs(total_count=0),
+        ]
+    )
+
+    with pytest.raises(
+        WorkflowDispatchUncertainError,
+        match=r"completed workflow_dispatch population changed.*no write was attempted",
+    ):
+        await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
+
+    assert sum(kind == "write" for kind, _, _ in client.calls) == 0
+
+
+async def test_terminal_recheck_search_boundary_is_uncertain_and_never_dispatches() -> None:
+    sha = _sha(36)
+    client = WorkflowDispatchClient(
+        read_results=[
+            _ref(sha),
+            _runs(total_count=999),
+            _runs(total_count=999),
+            _runs(total_count=1_000),
+        ]
+    )
+
+    with pytest.raises(
+        WorkflowDispatchUncertainError,
+        match=r"1,000-result.*rechecking terminal state.*no write was attempted",
+    ):
         await gh_run_workflow_exact(*_exact_args(sha), ctx=_context(client))
 
     assert sum(kind == "write" for kind, _, _ in client.calls) == 0
@@ -692,6 +734,7 @@ async def test_ambiguous_transport_with_completed_history_never_reuses_old_run()
             _ref(sha),
             _runs(total_count=1),
             _runs(total_count=1),
+            _runs(total_count=1),
             *_missing_ref(),
             _ref(sha),
             _workflow(),
@@ -800,6 +843,7 @@ async def test_completed_local_reservation_is_released_before_new_dispatch() -> 
         read_results=[
             _run(104, sha, status="completed"),
             _ref(sha),
+            _runs(total_count=1),
             _runs(total_count=1),
             _runs(total_count=1),
             *_missing_ref(),

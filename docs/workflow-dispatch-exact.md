@@ -55,8 +55,10 @@ the tool:
    to equal `expected_ref_sha`;
 6. queries `gh_list_runs` first with the exact workflow ID, head SHA, `workflow_dispatch` event,
    and `status=completed`, then repeats the same exact query without a status filter; it rejects
-   when the resulting counts prove that at least one matching run is still nonterminal, and treats
-   counter-regression/deletion races as uncertain rather than dispatching;
+   when the resulting counts prove that at least one matching run is still nonterminal, and when
+   positive counts are equal it re-reads the completed count and requires that terminal population
+   to remain stable before dispatching; counter-regression, replacement, and search-boundary races
+   are uncertain and perform no mutation;
 7. rejects a same-name branch/tag counterpart because GitHub's dispatch API accepts only the
    short branch-or-tag name and cannot otherwise preserve the caller's namespace identity;
 8. re-resolves the requested exact ref immediately before mutation;
@@ -109,17 +111,27 @@ The authoritative remote duplicate identity is:
 
 Historical `completed` runs do not permanently reserve a trusted controller/head. The tool derives
 this without scanning historical pages: it reads the `status=completed` total first, then the total
-count from the same exact workflow/head/event query without a status filter. Equality proves there
-is no matching nonterminal run; a smaller completed count proves at least one matching run is still
-nonterminal and therefore blocks the mutation. Reading completed history first makes a concurrent
-new dispatch that appears between the probes increase the later all-status count and therefore fail
-closed instead of being missed. A completed count larger than the later all-status count is treated
-as uncertain state, such as a concurrent deletion, and no mutation is attempted.
+count from the same exact workflow/head/event query without a status filter. A smaller completed
+count proves at least one matching run is still nonterminal and therefore blocks the mutation.
+Reading completed history first makes a concurrent new dispatch that appears between those probes
+increase the later all-status count and therefore fail closed instead of being missed. A completed
+count larger than the later all-status count is treated as uncertain state, such as a concurrent
+deletion, and no mutation is attempted.
 
-GitHub limits filtered workflow-run searches to 1,000 results. If either exact filtered count
-reaches that boundary, the tool cannot prove that the two counts describe the complete matching
-history, so it returns an uncertain precondition and performs no mutation rather than inferring
-that all matching runs are terminal.
+When the first two counts are equal and positive, equality alone is not sufficient evidence: a
+completed run could have been deleted and replaced by a nonterminal run while preserving the same
+total. The tool therefore performs a second exact `status=completed` count and requires it to equal
+the first completed count. Any change in that terminal population is `UNCERTAIN` and no mutation is
+attempted. This closes the observed equal-count replacement race while preserving the completed-
+history allowance. As with the exact-ref precondition, GitHub does not expose a server-side atomic
+compare-and-dispatch primitive; an unrelated actor can always mutate workflow-run state after the
+last observation and before GitHub processes the POST, so the tool makes no stronger atomicity
+claim.
+
+GitHub limits filtered workflow-run searches to 1,000 results. If the initial completed count, the
+all-status count, or the terminal recheck reaches that boundary, the tool cannot prove that the
+observed history is complete and stable, so it returns an uncertain precondition and performs no
+mutation rather than inferring that all matching runs are terminal.
 
 The server-local reservation uses the same workflow/head identity. It is an additional fail-closed
 coordination layer, not a replacement for the authoritative `gh_list_runs` query. Coordination is
@@ -169,7 +181,8 @@ Issue #55 coverage requires:
   `workflow_dispatch` event, and head SHA;
 - malformed run-detail responses, returned-run mismatch, delayed readback, transport ambiguity,
   historical-run fallback non-reuse, multiple fallback matches, concurrent same-key invocation,
-  completed local-reservation release, and cancellation to preserve the no-blind-retry invariant;
+  completed local-reservation release, equal-count completed-to-nonterminal replacement races,
+  terminal-recheck search saturation, and cancellation to preserve the no-blind-retry invariant;
   and
 - the master write gate, workflow-dispatch fine gate, exact repository/workflow target policy, and
   same-process reservation behavior to remain fail-closed.

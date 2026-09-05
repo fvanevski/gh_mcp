@@ -218,12 +218,37 @@ async def _require_no_matching_dispatch(
         )
 
     nonterminal_count = runs.total_count - completed.total_count
-    if nonterminal_count == 0:
-        return runs.total_count
-    raise WorkflowDispatchDuplicateError(
-        f"{nonterminal_count} matching nonterminal workflow_dispatch run(s) already exist for "
-        f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+    if nonterminal_count != 0:
+        raise WorkflowDispatchDuplicateError(
+            f"{nonterminal_count} matching nonterminal workflow_dispatch run(s) already exist for "
+            f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+        )
+    if runs.total_count == 0:
+        return 0
+
+    completed_recheck = await gh_list_runs(
+        owner,
+        repo,
+        ctx=ctx,
+        workflow_id=workflow_id,
+        head_sha=expected_ref_sha,
+        event="workflow_dispatch",
+        status="completed",
+        per_page=1,
+        page=1,
     )
+    if completed_recheck.total_count >= _GITHUB_FILTERED_RUNS_MAX:
+        raise WorkflowDispatchUncertainError(
+            "GitHub workflow_dispatch history reached the 1,000-result filtered search boundary "
+            f"while rechecking terminal state for workflow {workflow_id} at head "
+            f"{expected_ref_sha}; no write was attempted"
+        )
+    if completed_recheck.total_count != completed.total_count:
+        raise WorkflowDispatchUncertainError(
+            "GitHub completed workflow_dispatch population changed while reconciling terminal "
+            f"state for workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+        )
+    return runs.total_count
 
 
 async def _require_active_workflow_identity(
