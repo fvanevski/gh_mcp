@@ -33,10 +33,11 @@ from .git import gh_get_ref
 
 MAX_WORKFLOW_INPUTS = 25
 MAX_WORKFLOW_INPUT_CHARACTERS = 65_535
+_GITHUB_FILTERED_RUNS_MAX = 1_000
 
 
 class WorkflowDispatchDuplicateError(RuntimeError):
-    """A guarded workflow dispatch already exists for the exact workflow/head/event."""
+    """A nonterminal guarded workflow dispatch exists for the exact workflow/head/event."""
 
 
 class WorkflowDispatchRefAmbiguityError(RuntimeError):
@@ -171,9 +172,20 @@ async def _require_no_matching_dispatch(
     expected_ref_sha: str,
     *,
     ctx: Context[AppContext],
-) -> None:
-    """Fail closed if any workflow_dispatch run already exists for the exact workflow/head."""
+) -> int:
+    """Reject nonterminal duplicates and return the completed-history baseline count."""
 
+    completed = await gh_list_runs(
+        owner,
+        repo,
+        ctx=ctx,
+        workflow_id=workflow_id,
+        head_sha=expected_ref_sha,
+        event="workflow_dispatch",
+        status="completed",
+        per_page=1,
+        page=1,
+    )
     runs = await gh_list_runs(
         owner,
         repo,
@@ -184,23 +196,57 @@ async def _require_no_matching_dispatch(
         per_page=1,
         page=1,
     )
+    if (
+        completed.total_count >= _GITHUB_FILTERED_RUNS_MAX
+        or runs.total_count >= _GITHUB_FILTERED_RUNS_MAX
+    ):
+        raise WorkflowDispatchUncertainError(
+            "GitHub workflow_dispatch history reached the 1,000-result filtered search boundary "
+            f"for workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+        )
     if runs.total_count == 0:
-        return
+        if completed.total_count > 0:
+            raise WorkflowDispatchUncertainError(
+                "GitHub workflow_dispatch history changed while reconciling terminal state for "
+                f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+            )
+        return 0
+    if completed.total_count > runs.total_count:
+        raise WorkflowDispatchUncertainError(
+            "GitHub returned inconsistent workflow_dispatch counts while reconciling "
+            f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+        )
 
-    detail = ""
-    if runs.items and isinstance(runs.items[0], dict):
-        item = runs.items[0]
-        run_id = item.get("databaseId")
-        status = item.get("status")
-        if isinstance(run_id, int) and run_id > 0:
-            detail = f" (run {run_id}"
-            if isinstance(status, str) and status:
-                detail += f", status {status}"
-            detail += ")"
-    raise WorkflowDispatchDuplicateError(
-        "matching workflow_dispatch run already exists for "
-        f"workflow {workflow_id} at head {expected_ref_sha}{detail}; no write was attempted"
+    nonterminal_count = runs.total_count - completed.total_count
+    if nonterminal_count != 0:
+        raise WorkflowDispatchDuplicateError(
+            f"{nonterminal_count} matching nonterminal workflow_dispatch run(s) already exist for "
+            f"workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+        )
+
+    completed_recheck = await gh_list_runs(
+        owner,
+        repo,
+        ctx=ctx,
+        workflow_id=workflow_id,
+        head_sha=expected_ref_sha,
+        event="workflow_dispatch",
+        status="completed",
+        per_page=1,
+        page=1,
     )
+    if completed_recheck.total_count >= _GITHUB_FILTERED_RUNS_MAX:
+        raise WorkflowDispatchUncertainError(
+            "GitHub workflow_dispatch history reached the 1,000-result filtered search boundary "
+            f"while rechecking terminal state for workflow {workflow_id} at head "
+            f"{expected_ref_sha}; no write was attempted"
+        )
+    if completed_recheck.total_count != completed.total_count:
+        raise WorkflowDispatchUncertainError(
+            "GitHub completed workflow_dispatch count changed while reconciling terminal state "
+            f"for workflow {workflow_id} at head {expected_ref_sha}; no write was attempted"
+        )
+    return runs.total_count
 
 
 async def _require_active_workflow_identity(
@@ -418,10 +464,13 @@ async def _require_no_local_reservation(
             and run.head_sha == expected_ref_sha
             and run.event == "workflow_dispatch"
         ):
+            if run.status == "completed":
+                del _WORKFLOW_DISPATCH_RESERVATIONS[key]
+                return
             raise WorkflowDispatchDuplicateError(
-                "matching workflow_dispatch was already issued by this server for "
-                f"workflow {workflow_id} at head {expected_ref_sha} (run {run.run_id}); "
-                "no write was attempted"
+                "matching nonterminal workflow_dispatch was already issued by this server for "
+                f"workflow {workflow_id} at head {expected_ref_sha} (run {run.run_id}, "
+                f"status {run.status}); no write was attempted"
             )
         raise WorkflowDispatchUncertainError(
             f"prior workflow dispatch run {run.run_id} no longer matches the exact requested "
@@ -529,6 +578,7 @@ async def gh_run_workflow_exact(
     resolved_ref_sha = normalized_expected_sha
     dispatch_receipt: _WorkflowDispatchReceipt | None = None
     receipt_warning: str | None = None
+    baseline_matching_run_count = 0
     key = _dispatch_key(owner, repo, workflow_id, normalized_expected_sha)
 
     async def read_ref_sha() -> str:
@@ -537,12 +587,13 @@ async def gh_run_workflow_exact(
         return resolved_ref_sha
 
     async def precondition() -> WritePrecondition[str]:
+        nonlocal baseline_matching_run_count
         await require_write_precondition(
             read_ref_sha,
             normalized_expected_sha,
             label=f"workflow dispatch ref refs/{ref}",
         )
-        await _require_no_matching_dispatch(
+        baseline_matching_run_count = await _require_no_matching_dispatch(
             owner,
             repo,
             workflow_id,
@@ -609,6 +660,12 @@ async def gh_run_workflow_exact(
         if receipt_warning is not None:
             raise RuntimeError(
                 "successful workflow dispatch returned no authoritative run identity for readback"
+            )
+        if baseline_matching_run_count > 0:
+            raise RuntimeError(
+                "workflow dispatch fallback readback cannot distinguish a newly created run from "
+                f"{baseline_matching_run_count} pre-existing completed matching run(s) without "
+                "an authoritative returned run id"
             )
         return await _read_matching_dispatch(
             owner,

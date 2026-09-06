@@ -53,8 +53,12 @@ the tool:
 4. reconciles any prior same-process reservation before a new attempt;
 5. resolves the exact canonical `heads/...` or `tags/...` ref and requires its peeled commit SHA
    to equal `expected_ref_sha`;
-6. queries `gh_list_runs` using the exact workflow ID, head SHA, and `workflow_dispatch` event and
-   rejects any existing matching run regardless of status;
+6. queries `gh_list_runs` first with the exact workflow ID, head SHA, `workflow_dispatch` event,
+   and `status=completed`, then repeats the same exact query without a status filter; it rejects
+   when the resulting counts prove that at least one matching run is still nonterminal, and when
+   positive counts are equal it re-reads the completed count and requires that terminal count to
+   remain stable before dispatching; counter-regression, replacement, and search-boundary races
+   are uncertain and perform no mutation;
 7. rejects a same-name branch/tag counterpart because GitHub's dispatch API accepts only the
    short branch-or-tag name and cannot otherwise preserve the caller's namespace identity;
 8. re-resolves the requested exact ref immediately before mutation;
@@ -71,9 +75,11 @@ the tool:
 A successful or transport-ambiguous local attempt leaves a same-process reservation. This closes
 the propagation window in which GitHub has accepted a dispatch but the workflow-runs list has not
 yet exposed it. A later exact invocation cannot dispatch again merely because list discovery is
-stale. A known run reservation is reconciled by exact run ID; if that run has been deleted, the
-normal exact duplicate query is required before the reservation can be cleared. An unresolved
-transport-ambiguous reservation remains fail-closed.
+stale. A known run reservation is reconciled by exact run ID: while that run is nonterminal it
+blocks another dispatch; once its status is `completed`, the local reservation is released and the
+normal exact remote precondition decides whether another intentional dispatch may proceed. If a
+known reserved run has been deleted, the normal exact duplicate query is required before the
+reservation can be cleared. An unresolved transport-ambiguous reservation remains fail-closed.
 
 ## GitHub API atomicity boundary
 
@@ -101,13 +107,38 @@ The authoritative remote duplicate identity is:
 - exact numeric workflow ID;
 - exact expected head SHA;
 - `workflow_dispatch` event; and
-- any run status.
+- a nonterminal run status.
+
+Historical `completed` runs do not permanently reserve a trusted controller/head. The tool derives
+this without scanning historical pages: it reads the `status=completed` total first, then the total
+count from the same exact workflow/head/event query without a status filter. A smaller completed
+count proves at least one matching run is still nonterminal and therefore blocks the mutation.
+Reading completed history first makes a concurrent new dispatch that appears between those probes
+increase the later all-status count and therefore fail closed instead of being missed. A completed
+count larger than the later all-status count is treated as uncertain state, such as a concurrent
+deletion, and no mutation is attempted.
+
+When the first two counts are equal and positive, equality alone is not sufficient evidence: a
+completed run could have been deleted and replaced by a nonterminal run while preserving the same
+total. The tool therefore performs a second exact `status=completed` count and requires it to equal
+the first completed count. Any change in that terminal count is `UNCERTAIN` and no mutation is
+attempted. This closes the observed equal-count replacement race while preserving the completed-
+history allowance. As with the exact-ref precondition, GitHub does not expose a server-side atomic
+compare-and-dispatch primitive; an unrelated actor can always mutate workflow-run state after the
+last observation and before GitHub processes the POST, so the tool makes no stronger atomicity
+claim.
+
+GitHub limits filtered workflow-run searches to 1,000 results. If the initial completed count, the
+all-status count, or the terminal recheck reaches that boundary, the tool cannot prove that the
+observed history is complete and stable, so it returns an uncertain precondition and performs no
+mutation rather than inferring that all matching runs are terminal.
 
 The server-local reservation uses the same workflow/head identity. It is an additional fail-closed
 coordination layer, not a replacement for the authoritative `gh_list_runs` query. Coordination is
 process-local; independently running MCP server processes and unrelated GitHub actors do not share
-this in-memory reservation. Once GitHub exposes a run, the exact remote duplicate query provides
-the cross-process evidence available from the public API.
+this in-memory reservation. A known local reservation remains blocking while its exact run ID is
+nonterminal and is released after that run becomes `completed`; an unresolved transport outcome
+remains fail-closed regardless of filtered discovery.
 
 ## Readback and ambiguity
 
@@ -116,8 +147,15 @@ A normal successful dispatch must return `workflow_run_id`, `run_url`, and `html
 GitHub confirms the POST but returns malformed or missing run-detail metadata, the result reports
 the write as completed but the readback as incomplete.
 
-For a transport-ambiguous POST, the tool performs one exact filtered re-read and never performs a
-second POST. The standardized exact-write fields retain their existing meanings:
+For a transport-ambiguous POST, filtered fallback readback is permitted only when the exact
+pre-dispatch workflow/head/event query proved that there was **no** matching historical run. If
+completed matching history already existed, an identity-less post-write list query could not prove
+which run (if any) came from the attempted mutation, so readback remains incomplete and the local
+reservation stays fail-closed. This prevents a pre-existing completed run from being misreported as
+the result of the new attempt.
+
+When that zero-history condition holds, the tool performs one exact filtered re-read and never
+performs a second POST. The standardized exact-write fields retain their existing meanings:
 
 - `precondition_checked` — the exact-state precondition completed successfully before mutation;
 - `write_completed` — `true`, `false`, or `null` when transport leaves completion unknown;
@@ -134,7 +172,7 @@ Issue #55 coverage requires:
 
 - the generic `gh_run_workflow` name to be absent from the public MCP registry and schema snapshot;
 - wrong or disallowed workflow identity, stale ref SHA, same-name branch/tag ambiguity, and an
-  existing matching dispatch to fail before mutation;
+  existing matching nonterminal dispatch to fail before mutation while completed history does not;
 - malformed input objects, more than 25 inputs, and aggregate input character overflow to fail
   before mutation;
 - annotated-tag peeling and the final exact-ref precondition to remain intact;
@@ -142,8 +180,10 @@ Issue #55 coverage requires:
 - successful readback to bind to the exact returned run ID and verify workflow ID,
   `workflow_dispatch` event, and head SHA;
 - malformed run-detail responses, returned-run mismatch, delayed readback, transport ambiguity,
-  multiple fallback matches, concurrent same-key invocation, and cancellation to preserve the
-  no-blind-retry invariant; and
+  historical-run fallback non-reuse, multiple fallback matches, concurrent same-key invocation,
+  completed local-reservation release, equal-count completed-to-nonterminal replacement races,
+  terminal-recheck search saturation, and cancellation to preserve the no-blind-retry invariant;
+  and
 - the master write gate, workflow-dispatch fine gate, exact repository/workflow target policy, and
   same-process reservation behavior to remain fail-closed.
 
